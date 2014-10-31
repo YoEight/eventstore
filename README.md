@@ -1,0 +1,4 @@
+eventstore
+==========
+
+EventStore Haskell Client
