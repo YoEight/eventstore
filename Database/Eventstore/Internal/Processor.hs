@@ -20,7 +20,6 @@ import Control.Concurrent.STM
 import Control.Exception
 import Data.ByteString.Builder
 import Data.Foldable (for_)
-import Data.IORef
 import Data.Monoid
 import Data.Word
 import System.IO
@@ -45,7 +44,7 @@ data Env
       , _port      :: Int
       , _settings  :: Settings
       , _chan      :: TChan Msg
-      , _finalizer :: IORef (IO ())
+      , _finalizer :: TVar (IO ())
       }
 
 --------------------------------------------------------------------------------
@@ -67,23 +66,26 @@ heartbeatTimeout env = _heartbeatTimeout $ _settings env
 --------------------------------------------------------------------------------
 newEnv :: Settings -> TChan Msg -> HostName -> Int -> IO Env
 newEnv settings chan host port = do
-    ref <- newIORef (return ())
+    ref <- newTVarIO (return ())
 
     return $ Env host port settings chan ref
 
 --------------------------------------------------------------------------------
 registerFinalizer :: Env -> IO () -> IO ()
-registerFinalizer env action = writeIORef ref action
+registerFinalizer env action = atomically $ writeTVar var action
   where
-    ref = _finalizer env
+    var = _finalizer env
 
 --------------------------------------------------------------------------------
 runFinalizer :: Env -> IO ()
 runFinalizer env = do
-    action <- readIORef ref
+    action <- atomically $ do
+        act <- readTVar var
+        writeTVar var (return ())
+        return act
     action
   where
-    ref = _finalizer env
+    var = _finalizer env
 
 --------------------------------------------------------------------------------
 -- Connection
