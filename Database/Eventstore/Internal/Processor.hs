@@ -20,13 +20,18 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import qualified Data.ByteString as B
 import           Data.Foldable (for_)
+import qualified Data.Map.Strict as M
+import           Data.Maybe
 import           Data.Monoid
+import           Data.Serialize.Get
 import           Data.Serialize.Put
+import           Data.Traversable (for)
 import           Data.Word
 import           System.IO
 import           Text.Printf
 
 --------------------------------------------------------------------------------
+import Data.ProtocolBuffers
 import Data.Serialize.Put
 import Data.Time
 import Data.UUID
@@ -43,11 +48,11 @@ import Database.Eventstore.Internal.Types
 --------------------------------------------------------------------------------
 data Env
     = Env
-      { _hostname  :: HostName
-      , _port      :: Int
-      , _settings  :: Settings
-      , _chan      :: TChan Msg
-      , _finalizer :: TVar (IO ())
+      { _hostname   :: HostName
+      , _port       :: Int
+      , _settings   :: Settings
+      , _chan       :: TChan Msg
+      , _finalizer  :: TVar (IO ())
       }
 
 --------------------------------------------------------------------------------
@@ -145,7 +150,8 @@ data State
     = State
       { _lastTime      :: !UTCTime
       , _heartbeatInfo :: !HeartbeatInfo
-      , _packageNumber :: !Int           -- ^ Number of received packages
+      , _packageNumber :: !Int  -- ^ Number of received packages
+      , _operations    :: !(M.Map UUID Operation)
       }
 
 --------------------------------------------------------------------------------
@@ -184,6 +190,7 @@ newState = do
                       { _lastTime      = cur_time
                       , _heartbeatInfo = info
                       , _packageNumber = package_num
+                      , _operations    = M.empty
                       }
 
     return state
@@ -242,46 +249,53 @@ connecting env state = do
 
 --------------------------------------------------------------------------------
 connected :: Connection -> Processor
-connected conn env state =
-    getMsg env >>= \msg ->
-        case msg of
-            Reconnect
-                -> do runFinalizer env
-                      putStrLn "Reconnecting..."
-                      connecting env state
-            RecvPackage pack
-                -> do new_state <- handlePackage conn env state pack
-                      connected conn env new_state
-            SendPackage pack
-                -> do sendPackage conn pack
-                      connected conn env state
-            Notice msg
-                -> do print msg
-                      connected conn env state
-            Tick
-                -> connected conn env state
+connected conn env state = getMsg env >>= go
+  where
+    go Reconnect = do
+        runFinalizer env
+        putStrLn "Reconnecting..."
+        connecting env state
+    go (RecvPackage pack) = do
+        new_state <- handlePackage conn env state pack
+        connected conn env new_state
+    go (SendPackage op_maybe pack) =
+        sendPackage conn op_maybe pack env state
+    go (Notice msg) = do
+        print msg
+        connected conn env state
+    go Tick =
+        connected conn env state
 
 --------------------------------------------------------------------------------
-sendPackage :: Connection -> Package -> IO ()
-sendPackage conn pack = do
+sendPackage :: Connection -> Maybe Operation -> Package -> Processor
+sendPackage conn op_maybe pack env state = do
     connectionSend conn (putPackage pack)
-    printf "Send command %s %s\n" cmd_str cor_id_str
+    connected conn env new_state
   where
     cmd_str    = show $ packageCmd pack
     cor_id_str = toString $ packageCorrelation pack
+    key        = packageCorrelation pack
+    op_map     = _operations state
+    new_state  = maybe state upd_op_map op_maybe
+
+    upd_op_map op =
+        let new_op_map = M.insert key op op_map
+            state'     = state { _operations = new_op_map } in
+        state'
 
 --------------------------------------------------------------------------------
 handlePackage :: Connection -> Env -> State -> Package -> IO State
 handlePackage conn env state pack = do
     case packageCmd pack of
         HeartbeatRequest
-            -> handleHeartbeatRequest conn pack
+            -> do handleHeartbeatRequest conn pack
+                  return new_state
         HeartbeatResponse
-            -> return ()
+            -> return new_state
         WriteEventsCompletedCmd
-            -> handleWriteEventsCompleted pack
+            -> handleWriteEventsCompleted new_state pack
         -- BadRequest        -> handleBadRequest pack
-        _   -> unhandledPackage pack
+        _   -> fmap (const new_state) $ unhandledPackage pack
 
     return new_state
 
@@ -291,7 +305,7 @@ handlePackage conn env state pack = do
 --------------------------------------------------------------------------------
 handleHeartbeatRequest :: Connection -> Package -> IO ()
 handleHeartbeatRequest conn pack =
-    sendPackage conn pack_resp
+    connectionSend conn (putPackage pack_resp)
   where
     corr_id     = packageCorrelation pack
     pack_resp   = heartbeatResponsePackage corr_id
@@ -304,10 +318,31 @@ handleBadRequest pack = printf "BadRequest on %s\n" cor_id
     cor_id = toString $ packageCorrelation pack
 
 --------------------------------------------------------------------------------
-handleWriteEventsCompleted :: Package -> IO ()
-handleWriteEventsCompleted pack = printf "WriteEventsCompleted on %s\n" cor_id
+handleWriteEventsCompleted :: State -> Package -> IO State
+handleWriteEventsCompleted state pack =
+    case runGet getWriteEventsCompleted bs of
+        Left e    -> do
+            printf "Parsing error on WriteEventsCompleted %s\n" e
+            return state
+        Right wec -> do
+            new_state_maybe <- for (M.lookup corr_id op_map) $ \op ->
+                let last_evt_num = getField $ writeCompletedLastNumber wec
+                    com_pos      = getField $ writeCompletedCommitPosition wec
+                    pre_pos      = getField $ writeCompletedPreparePosition wec
+                    com_pos_int  = fromMaybe (-1) com_pos
+                    pre_pos_int  = fromMaybe (-1) pre_pos
+                    pos          = Position com_pos_int pre_pos_int
+                    wr           = WriteResult last_evt_num pos
+                    new_op_map   = M.delete corr_id op_map
+                    new_state    = state { _operations = new_op_map } in
+                fmap (const new_state) $ op (WriteResultR wr)
+
+            return $ fromMaybe state new_state_maybe
+
   where
-    cor_id = toString $ packageCorrelation pack
+    corr_id = packageCorrelation pack
+    op_map  = _operations state
+    bs      = packageData pack
 
 --------------------------------------------------------------------------------
 unhandledPackage :: Package -> IO ()

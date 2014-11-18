@@ -16,6 +16,8 @@ module Database.Eventstore.Internal.Packages
     , writeEventsPackage
       -- * Cereal Put
     , putPackage
+      -- * Decode
+    , getWriteEventsCompleted
     ) where
 
 --------------------------------------------------------------------------------
@@ -23,6 +25,7 @@ import qualified Data.ByteString as B
 
 --------------------------------------------------------------------------------
 import Data.ProtocolBuffers
+import Data.Serialize.Get
 import Data.Serialize.Put
 import Data.UUID
 import System.Random
@@ -80,6 +83,12 @@ putPackage pack =
     cmd_word8     = cmdWord8 $ packageCmd pack
     flag_word8    = flagWord8 $ packageFlag pack
     corr_bytes    = toByteString $ packageCorrelation pack
+
+--------------------------------------------------------------------------------
+-- Decode
+--------------------------------------------------------------------------------
+getWriteEventsCompleted :: Get WriteEventsCompleted
+getWriteEventsCompleted = decodeMessage
 
 --------------------------------------------------------------------------------
 mandatorySize :: Int

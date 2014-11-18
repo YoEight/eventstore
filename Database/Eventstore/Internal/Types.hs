@@ -49,6 +49,9 @@ data Request
     = WriteEventRequest WriteEvents
 
 --------------------------------------------------------------------------------
+type Operation = Result -> IO ()
+
+--------------------------------------------------------------------------------
 data OpResult
     = OP_SUCCESS
     | OP_PREPARE_TIMEOUT
@@ -139,6 +142,29 @@ data WriteEventsCompleted
 instance Decode WriteEventsCompleted
 
 --------------------------------------------------------------------------------
+-- Result
+--------------------------------------------------------------------------------
+data Position
+    = Position
+      { positionCommit  :: !Int64
+      , positionPrepare :: !Int64
+      }
+    deriving Show
+
+--------------------------------------------------------------------------------
+data WriteResult
+    = WriteResult
+      { writeNextExpectedVersion :: !Int32
+      , writePosition            :: !Position
+      }
+    deriving Show
+
+--------------------------------------------------------------------------------
+data Result
+    = WriteResultR !WriteResult
+    deriving Show
+
+--------------------------------------------------------------------------------
 -- Flag
 --------------------------------------------------------------------------------
 data Flag
@@ -177,7 +203,7 @@ data Package
 data Msg
     = Reconnect
     | RecvPackage Package
-    | SendPackage Package
+    | SendPackage (Maybe Operation) Package
     | Notice String
     | Tick
 

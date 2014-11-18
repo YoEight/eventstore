@@ -36,6 +36,7 @@ import Data.Traversable (traverse)
 import System.IO
 
 --------------------------------------------------------------------------------
+import Control.Concurrent.Async
 import Data.Aeson
 import Data.Text
 
@@ -139,7 +140,7 @@ eventStoreSendEvent :: ConnectionManager
                     -> Text             -- ^ Stream
                     -> ExpectedVersion
                     -> Event
-                    -> IO ()
+                    -> IO (Async WriteResult)
 eventStoreSendEvent mgr evt_stream exp_ver evt =
     eventStoreSendEvents mgr evt_stream exp_ver [evt]
 
@@ -148,7 +149,7 @@ eventStoreSendEvents :: ConnectionManager
                      -> Text             -- ^ Stream
                      -> ExpectedVersion
                      -> [Event]
-                     -> IO ()
+                     -> IO (Async WriteResult)
 eventStoreSendEvents mgr evt_stream exp_ver evts = do
     new_evts <- traverse eventToNewEvent evts
     let write_evt = newWriteEvents evt_stream
@@ -157,7 +158,11 @@ eventStoreSendEvents mgr evt_stream exp_ver evts = do
                                    require_master
 
     pack <- writeEventsPackage None write_evt
-    msgQueue mgr (SendPackage pack)
+    mvar <- atomically newEmptyTMVar
+    as   <- async $ atomically $ readTMVar mvar
+    msgQueue mgr (SendPackage (Just $ sendEventsOperation mvar) pack)
+
+    return as
   where
     require_master = _requireMaster $ mgrSettings mgr
     exp_ver_int32  = expVersionInt32 exp_ver
@@ -176,3 +181,10 @@ eventToNewEvent evt =
     evt_data_type      = eventDataType $ eventData evt
     evt_metadata_bytes = eventMetadataBytes $ eventData evt
     evt_metadata_type  = eventMetadataType $ eventData evt
+
+--------------------------------------------------------------------------------
+sendEventsOperation :: TMVar WriteResult -> Operation
+sendEventsOperation mvar res =
+    case res of
+        WriteResultR we -> atomically $ putTMVar mvar we
+        _               -> return ()
