@@ -14,16 +14,13 @@ module Database.Eventstore.Internal.Reader (readerThread) where
 --------------------------------------------------------------------------------
 import           Prelude hiding (take)
 import           Control.Concurrent.STM
-import qualified Data.ByteString      as B
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString as B
 import           Data.Word
 import           System.IO
 import           Text.Printf
 
 --------------------------------------------------------------------------------
-import Data.Attoparsec.ByteString hiding (word8)
-import Data.Attoparsec.ByteString.Char8 (decimal)
-import Data.Binary.Get
+import Data.Serialize.Get
 import Data.UUID
 
 --------------------------------------------------------------------------------
@@ -37,16 +34,18 @@ readerThread chan h = loop
     carbage "\n" = True
     carbage _    = False
 
-    loop = do
-        header <- BL.hGet h 4
-        let length_prefix = fromIntegral $ runGet getWord32le header
+    parsePackage bs =
+        case runGet getPackage bs of
+            Left e     -> send chan (Notice $ printf "Parsing error [%s]\n" e)
+            Right pack -> send chan (RecvPackage pack)
 
-        msg <- B.hGet h length_prefix
-        case parseOnly parsePackage msg of
-            Right pack ->
-                send chan (RecvPackage pack)
-            Left e ->
-                send chan (Notice $ printf "Parsing error [%s]\n" e)
+    loop = do
+        header_bs <- B.hGet h 4
+        case runGet getLengthPrefix header_bs of
+            Left e
+                -> send chan (Notice "Wrong package framing\n")
+            Right length_prefix
+                -> B.hGet h length_prefix >>= parsePackage
         loop
 
 --------------------------------------------------------------------------------
@@ -56,45 +55,48 @@ send chan msg = atomically $ writeTChan chan msg
 --------------------------------------------------------------------------------
 -- Parsers
 --------------------------------------------------------------------------------
-parsePackage :: Parser Package
-parsePackage = do
-    cmd <- parseCmd
-    flg <- parseFlag
-    col <- parseUUID
+getLengthPrefix :: Get Int
+getLengthPrefix = fmap fromIntegral getWord32le
+
+--------------------------------------------------------------------------------
+getPackage :: Get Package
+getPackage = do
+    cmd  <- getCmd
+    flg  <- getFlag
+    col  <- getUUID
+    rest <- remaining
+    dta  <- getBytes rest
 
     let pack = Package
                { packageCmd         = cmd
                , packageFlag        = flg
                , packageCorrelation = col
+               , packageData        = dta
                }
 
     return pack
 
 --------------------------------------------------------------------------------
-parseCmd :: Parser Command
-parseCmd = do
-    wd <- anyWord8
+getCmd :: Get Command
+getCmd = do
+    wd <- getWord8
     case word8Cmd wd of
         Just cmd -> return cmd
         _        -> fail $ printf "TCP: Unhandled command value 0x%x" wd
 
 --------------------------------------------------------------------------------
-parseLength :: Parser Int
-parseLength = decimal
-
---------------------------------------------------------------------------------
-parseFlag :: Parser Flag
-parseFlag = do
-    wd <- anyWord8
+getFlag :: Get Flag
+getFlag = do
+    wd <- getWord8
     case wd of
         0x00 -> return None
         0x01 -> return Authenticated
         _    -> fail $ printf "TCP: Unhandled flag value 0x%x" wd
 
 --------------------------------------------------------------------------------
-parseUUID :: Parser UUID
-parseUUID = do
-    bs <- take 16
-    case fromByteString $ BL.fromStrict bs of
+getUUID :: Get UUID
+getUUID = do
+    bs <- getLazyByteString 16
+    case fromByteString bs of
         Just uuid -> return uuid
         _         -> fail "TCP: Wrong UUID format"

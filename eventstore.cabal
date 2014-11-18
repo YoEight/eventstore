@@ -52,6 +52,7 @@ library
 
   -- Modules included in this library but not exported.
   other-modules:   Database.Eventstore.ConnectionManager
+                   Database.Eventstore.Internal.Packages
                    Database.Eventstore.Internal.Processor
                    Database.Eventstore.Internal.Reader
                    Database.Eventstore.Internal.Types
@@ -60,17 +61,20 @@ library
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:       base       >= 4.7     && <4.8
+  build-depends:       base       >=4.7      && <4.8
                      , attoparsec >=0.12     && <0.13
                      , aeson      >=0.8      && <0.9
                      , async      >=2.0      && <2.1
                      , binary     ==0.7.*
                      , bytestring >=0.10.4   && <0.10.5
+                     , cereal     >=0.4      && <0.5
                      , containers >=0.5      && <0.6
                      , network    ==2.6.*
+                     , protobuf   >=0.2      && <0.3
                      , random     ==1.*
                      , stm        >=2.2      && <2.5
                      , suspend    ==0.2.*
+                     , text       >=1.1.1    && <1.2
                      , time       >=1.4      && <1.6
                      , timers     ==0.2.*
                      , uuid       ==1.3.*

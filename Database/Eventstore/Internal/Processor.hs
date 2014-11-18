@@ -15,23 +15,26 @@ module Database.Eventstore.Internal.Processor
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Exception
-import Data.ByteString.Builder
-import Data.Foldable (for_)
-import Data.Monoid
-import Data.Word
-import System.IO
-import Text.Printf
+import           Control.Concurrent
+import           Control.Concurrent.STM
+import           Control.Exception
+import qualified Data.ByteString as B
+import           Data.Foldable (for_)
+import           Data.Monoid
+import           Data.Serialize.Put
+import           Data.Word
+import           System.IO
+import           Text.Printf
 
 --------------------------------------------------------------------------------
+import Data.Serialize.Put
 import Data.Time
 import Data.UUID
 import Network
 import System.Random
 
 --------------------------------------------------------------------------------
+import Database.Eventstore.Internal.Packages
 import Database.Eventstore.Internal.Reader
 import Database.Eventstore.Internal.Types
 
@@ -98,8 +101,8 @@ data Connection
       }
 
 --------------------------------------------------------------------------------
-connectionSend :: Connection -> Builder -> IO ()
-connectionSend conn builder = hPutBuilder handle builder >> hFlush handle
+connectionSend :: Connection -> Put -> IO ()
+connectionSend conn put = B.hPut handle (runPut put) >> hFlush handle
   where
     handle = _connHandle conn
 
@@ -261,21 +264,24 @@ connected conn env state =
 --------------------------------------------------------------------------------
 sendPackage :: Connection -> Package -> IO ()
 sendPackage conn pack = do
-    connectionSend conn builder
+    connectionSend conn (putPackage pack)
     printf "Send command %s %s\n" cmd_str cor_id_str
   where
     cmd_str    = show $ packageCmd pack
     cor_id_str = toString $ packageCorrelation pack
-    builder    = packageBuilder pack
 
 --------------------------------------------------------------------------------
 handlePackage :: Connection -> Env -> State -> Package -> IO State
 handlePackage conn env state pack = do
     case packageCmd pack of
-        HeartbeatRequest  -> handleHeartbeatRequest conn pack
-        HeartbeatResponse -> return ()
-        BadRequest        -> handleBadRequest pack
-        _                 -> unhandledPackage pack
+        HeartbeatRequest
+            -> handleHeartbeatRequest conn pack
+        HeartbeatResponse
+            -> return ()
+        WriteEventsCompletedCmd
+            -> handleWriteEventsCompleted pack
+        -- BadRequest        -> handleBadRequest pack
+        _   -> unhandledPackage pack
 
     return new_state
 
@@ -284,8 +290,7 @@ handlePackage conn env state pack = do
 
 --------------------------------------------------------------------------------
 handleHeartbeatRequest :: Connection -> Package -> IO ()
-handleHeartbeatRequest conn pack = do
-    printf "HeartbeatRequest %s\n" corr_id_str
+handleHeartbeatRequest conn pack =
     sendPackage conn pack_resp
   where
     corr_id     = packageCorrelation pack
@@ -299,52 +304,16 @@ handleBadRequest pack = printf "BadRequest on %s\n" cor_id
     cor_id = toString $ packageCorrelation pack
 
 --------------------------------------------------------------------------------
+handleWriteEventsCompleted :: Package -> IO ()
+handleWriteEventsCompleted pack = printf "WriteEventsCompleted on %s\n" cor_id
+  where
+    cor_id = toString $ packageCorrelation pack
+
+--------------------------------------------------------------------------------
 unhandledPackage :: Package -> IO ()
 unhandledPackage pack = printf "Unhandled command: %s\n" cmd_str
   where
     cmd_str = show $ packageCmd pack
-
---------------------------------------------------------------------------------
--- Package smart constructors
---------------------------------------------------------------------------------
-heartbeatPackage :: IO Package
-heartbeatPackage = do
-    uuid <- randomIO
-    let pack = Package
-               { packageCmd         = HeartbeatRequest
-               , packageFlag        = None
-               , packageCorrelation = uuid
-               }
-
-    return pack
-
---------------------------------------------------------------------------------
-heartbeatResponsePackage :: UUID -> Package
-heartbeatResponsePackage uuid =
-    Package
-    { packageCmd         = HeartbeatResponse
-    , packageFlag        = None
-    , packageCorrelation = uuid
-    }
-
---------------------------------------------------------------------------------
--- Package utils
---------------------------------------------------------------------------------
-flagWord8 :: Flag -> Word8
-flagWord8 None          = 0x00
-flagWord8 Authenticated = 0x01
-
---------------------------------------------------------------------------------
-packageBuilder :: Package -> Builder
-packageBuilder pack =
-    word32LE 18      <>
-    word8 cmd_word8  <>
-    word8 flag_word8 <>
-    lazyByteString corr_bytes
-  where
-    cmd_word8  = cmdWord8 $ packageCmd pack
-    flag_word8 = flagWord8 $ packageFlag pack
-    corr_bytes = toByteString $ packageCorrelation pack
 
 -- --------------------------------------------------------------------------------
 -- manageHeartbeats :: ConnectionManager -> IO ()
