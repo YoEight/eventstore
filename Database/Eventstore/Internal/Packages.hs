@@ -36,15 +36,14 @@ import Database.Eventstore.Internal.Types
 --------------------------------------------------------------------------------
 -- Encode
 --------------------------------------------------------------------------------
-writeEventsPackage :: Flag -> WriteEvents -> IO Package
-writeEventsPackage flag msg = fmap go randomIO
-  where
-    go uuid = Package
-              { packageCmd         = WriteEventsCmd
-              , packageFlag        = flag
-              , packageCorrelation = uuid
-              , packageData        = runPut $ encodeMessage msg
-              }
+writeEventsPackage :: UUID -> Flag -> WriteEvents -> Package
+writeEventsPackage uuid flag msg =
+  Package
+  { packageCmd         = WriteEventsCmd
+  , packageFlag        = flag
+  , packageCorrelation = uuid
+  , packageData        = runPut $ encodeMessage msg
+  }
 
 --------------------------------------------------------------------------------
 heartbeatPackage :: IO Package

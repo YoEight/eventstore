@@ -255,51 +255,53 @@ connected conn env state = getMsg env >>= go
         runFinalizer env
         putStrLn "Reconnecting..."
         connecting env state
+
     go (RecvPackage pack) = do
         new_state <- handlePackage conn env state pack
         connected conn env new_state
-    go (SendPackage op_maybe pack) =
-        sendPackage conn op_maybe pack env state
+
+    go (RegisterOperation op) =
+        registerOperation conn op env state
+
     go (Notice msg) = do
         print msg
         connected conn env state
+
     go Tick =
         connected conn env state
 
 --------------------------------------------------------------------------------
-sendPackage :: Connection -> Maybe Operation -> Package -> Processor
-sendPackage conn op_maybe pack env state = do
+registerOperation :: Connection -> Operation -> Processor
+registerOperation conn op env state = do
+    uuid <- randomIO
+    pack <- operationCreatePackage op uuid
+
+    let new_op_map = M.insert uuid op op_map
+        new_state  = state { _operations = new_op_map }
+
     connectionSend conn (putPackage pack)
     connected conn env new_state
   where
-    cmd_str    = show $ packageCmd pack
-    cor_id_str = toString $ packageCorrelation pack
-    key        = packageCorrelation pack
-    op_map     = _operations state
-    new_state  = maybe state upd_op_map op_maybe
-
-    upd_op_map op =
-        let new_op_map = M.insert key op op_map
-            state'     = state { _operations = new_op_map } in
-        state'
+    op_map = _operations state
 
 --------------------------------------------------------------------------------
 handlePackage :: Connection -> Env -> State -> Package -> IO State
-handlePackage conn env state pack = do
-    case packageCmd pack of
-        HeartbeatRequest
-            -> do handleHeartbeatRequest conn pack
-                  return new_state
-        HeartbeatResponse
-            -> return new_state
-        WriteEventsCompletedCmd
-            -> handleWriteEventsCompleted new_state pack
-        -- BadRequest        -> handleBadRequest pack
-        _   -> fmap (const new_state) $ unhandledPackage pack
-
-    return new_state
-
+handlePackage conn env state pack = go (packageCmd pack)
   where
+    go HeartbeatRequest = do
+        handleHeartbeatRequest conn pack
+        return new_state
+
+    go HeartbeatResponse =
+        return new_state
+
+    go _ =
+        case M.lookup corr_id op_map of
+            Just op -> handleOperation env new_state pack op
+            _       -> fmap (const new_state) $ unhandledPackage pack
+
+    corr_id   = packageCorrelation pack
+    op_map    = _operations state
     new_state = incrPackageNumber state
 
 --------------------------------------------------------------------------------
@@ -318,37 +320,33 @@ handleBadRequest pack = printf "BadRequest on %s\n" cor_id
     cor_id = toString $ packageCorrelation pack
 
 --------------------------------------------------------------------------------
-handleWriteEventsCompleted :: State -> Package -> IO State
-handleWriteEventsCompleted state pack =
-    case runGet getWriteEventsCompleted bs of
-        Left e    -> do
-            printf "Parsing error on WriteEventsCompleted %s\n" e
-            return state
-        Right wec -> do
-            new_state_maybe <- for (M.lookup corr_id op_map) $ \op ->
-                let last_evt_num = getField $ writeCompletedLastNumber wec
-                    com_pos      = getField $ writeCompletedCommitPosition wec
-                    pre_pos      = getField $ writeCompletedPreparePosition wec
-                    com_pos_int  = fromMaybe (-1) com_pos
-                    pre_pos_int  = fromMaybe (-1) pre_pos
-                    pos          = Position com_pos_int pre_pos_int
-                    wr           = WriteResult last_evt_num pos
-                    new_op_map   = M.delete corr_id op_map
-                    new_state    = state { _operations = new_op_map } in
-                fmap (const new_state) $ op (WriteResultR wr)
-
-            return $ fromMaybe state new_state_maybe
-
-  where
-    corr_id = packageCorrelation pack
-    op_map  = _operations state
-    bs      = packageData pack
-
---------------------------------------------------------------------------------
 unhandledPackage :: Package -> IO ()
 unhandledPackage pack = printf "Unhandled command: %s\n" cmd_str
   where
     cmd_str = show $ packageCmd pack
+
+--------------------------------------------------------------------------------
+handleOperation :: Env -> State -> Package -> Operation -> IO State
+handleOperation env state pack op = do
+    decision <- operationInspect op pack
+    case decision of
+        DoNothing ->
+            return state
+        EndOperation ->
+            return new_state
+        Retry
+            -> do sendMsg env (RegisterOperation op)
+                  return new_state
+        Reconnection
+            -> do sendMsg env Reconnect
+                  sendMsg env (RegisterOperation op)
+                  return new_state
+        _ -> fail "Unexpected decision Processor.hs"
+  where
+    corr_id    = packageCorrelation pack
+    op_map     = _operations state
+    new_op_map = M.delete corr_id op_map
+    new_state  = state { _operations = new_op_map }
 
 -- --------------------------------------------------------------------------------
 -- manageHeartbeats :: ConnectionManager -> IO ()

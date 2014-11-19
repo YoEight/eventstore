@@ -25,11 +25,12 @@ import GHC.Generics (Generic)
 import GHC.TypeLits
 
 --------------------------------------------------------------------------------
-import Data.ProtocolBuffers
-import Data.Text
-import Data.Time
-import Data.UUID
-import System.Random
+import qualified Data.Aeson as A
+import           Data.ProtocolBuffers
+import           Data.Text
+import           Data.Time
+import           Data.UUID
+import           System.Random
 
 --------------------------------------------------------------------------------
 -- Exceptions
@@ -43,13 +44,83 @@ data InternalException
 instance Exception InternalException
 
 --------------------------------------------------------------------------------
--- EventStore Messages
---------------------------------------------------------------------------------
-data Request
-    = WriteEventRequest WriteEvents
+data OperationException
+    = WrongExpectedVersion Text ExpectedVersion -- ^ Stream and Expected Version
+    | StreamDeleted Text                        -- ^ Stream
+    | InvalidTransaction
+    | AccessDenied Text                         -- ^ Stream
+    deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
-type Operation = Result -> IO ()
+instance Exception OperationException
+
+--------------------------------------------------------------------------------
+type OperationExceptional a = Either OperationException a
+
+--------------------------------------------------------------------------------
+-- Event
+--------------------------------------------------------------------------------
+data Event
+    = Event
+      { eventType :: !Text
+      , eventData :: !EventData
+      }
+
+--------------------------------------------------------------------------------
+createEvent :: Text -> EventData -> Event
+createEvent = Event
+
+--------------------------------------------------------------------------------
+data EventData
+    = Json A.Value (Maybe A.Value)
+
+--------------------------------------------------------------------------------
+eventDataType :: EventData -> Int32
+eventDataType (Json _ _) = 1
+
+--------------------------------------------------------------------------------
+eventMetadataType :: EventData -> Int32
+eventMetadataType _ = 0
+
+--------------------------------------------------------------------------------
+withJson :: A.Value -> EventData
+withJson value = Json value Nothing
+
+--------------------------------------------------------------------------------
+withJsonAndMetadata :: A.Value -> A.Value -> EventData
+withJsonAndMetadata value metadata = Json value (Just metadata)
+
+--------------------------------------------------------------------------------
+eventDataBytes :: EventData -> ByteString
+eventDataBytes (Json value _) = toStrict $ A.encode value
+
+--------------------------------------------------------------------------------
+eventMetadataBytes :: EventData -> Maybe ByteString
+eventMetadataBytes (Json _ meta_m) = fmap (toStrict . A.encode) meta_m
+
+--------------------------------------------------------------------------------
+-- Expected Version
+--------------------------------------------------------------------------------
+data ExpectedVersion
+    = Any         -- ^ Says that you should not conflict with anything
+    | NoStream    -- ^ Stream should not exist when doing your write
+    | EmptyStream -- ^ Stream should exist but be empty when doing the write
+    deriving Show
+
+--------------------------------------------------------------------------------
+expVersionInt32 :: ExpectedVersion -> Int32
+expVersionInt32 Any         = -2
+expVersionInt32 NoStream    = -1
+expVersionInt32 EmptyStream = 0
+
+--------------------------------------------------------------------------------
+-- EventStore Messages
+--------------------------------------------------------------------------------
+data Operation
+    = Operation
+      { operationCreatePackage :: UUID    -> IO Package
+      , operationInspect       :: Package -> IO Decision
+      }
 
 --------------------------------------------------------------------------------
 data OpResult
@@ -144,6 +215,14 @@ instance Decode WriteEventsCompleted
 --------------------------------------------------------------------------------
 -- Result
 --------------------------------------------------------------------------------
+data Decision
+    = DoNothing
+    | EndOperation
+    | Retry
+    | Reconnection
+    | Subscribed
+
+--------------------------------------------------------------------------------
 data Position
     = Position
       { positionCommit  :: !Int64
@@ -203,7 +282,7 @@ data Package
 data Msg
     = Reconnect
     | RecvPackage Package
-    | SendPackage (Maybe Operation) Package
+    | RegisterOperation Operation
     | Notice String
     | Tick
 
