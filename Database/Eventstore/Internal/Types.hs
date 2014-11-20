@@ -49,6 +49,8 @@ data OperationException
     | StreamDeleted Text                        -- ^ Stream
     | InvalidTransaction
     | AccessDenied Text                         -- ^ Stream
+    | InvalidServerResponse Command Command     -- ^ Expected, Found
+    | ProtobufDecodingError String
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
@@ -213,6 +215,46 @@ data WriteEventsCompleted
 instance Decode WriteEventsCompleted
 
 --------------------------------------------------------------------------------
+data DeleteStream
+    = DeleteStream
+      { deleteStreamId              :: Required 1 (Value Text)
+      , deleteStreamExpectedVersion :: Required 2 (Value Int32)
+      , deleteStreamRequireMaster   :: Required 3 (Value Bool)
+      , deleteStreamHardDelete      :: Optional 4 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Encode DeleteStream
+
+--------------------------------------------------------------------------------
+newDeleteStream :: Text
+                -> Int32
+                -> Bool
+                -> Maybe Bool
+                -> DeleteStream
+newDeleteStream stream_id exp_ver req_master hard_delete =
+    DeleteStream
+    { deleteStreamId              = putField stream_id
+    , deleteStreamExpectedVersion = putField exp_ver
+    , deleteStreamRequireMaster   = putField req_master
+    , deleteStreamHardDelete      = putField hard_delete
+    }
+
+--------------------------------------------------------------------------------
+data DeleteStreamCompleted
+    = DeleteStreamCompleted
+      { deleteCompletedResult          :: Required 1 (Enumeration OpResult)
+      , deleteCompletedMessage         :: Optional 2 (Value Text)
+      , deleteCompletedPreparePosition :: Optional 3 (Value Int64)
+      , deleteCompletedCommitPosition  :: Optional 4 (Value Int64)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode DeleteStreamCompleted
+
+--------------------------------------------------------------------------------
 -- Result
 --------------------------------------------------------------------------------
 data Decision
@@ -239,8 +281,8 @@ data WriteResult
     deriving Show
 
 --------------------------------------------------------------------------------
-data Result
-    = WriteResultR !WriteResult
+newtype DeleteResult
+    = DeleteResult { deleteStreamPosition :: Position }
     deriving Show
 
 --------------------------------------------------------------------------------
@@ -257,17 +299,49 @@ flagWord8 None          = 0x00
 flagWord8 Authenticated = 0x01
 
 --------------------------------------------------------------------------------
+-- Command
 --------------------------------------------------------------------------------
 data Command
     = HeartbeatRequest
     | HeartbeatResponse
     | WriteEventsCmd
     | WriteEventsCompletedCmd
+    | DeleteStreamCmd
+    | DeleteStreamCompletedCmd
     -- | CreateChunk
     -- | BadRequest
     -- | NotHandled
-    deriving Show
+    deriving (Eq, Show)
 
+cmdWord8 :: Command -> Word8
+cmdWord8 cmd =
+    case cmd of
+        HeartbeatRequest         -> 0x01
+        HeartbeatResponse        -> 0x02
+        WriteEventsCmd           -> 0x82
+        WriteEventsCompletedCmd  -> 0x83
+        DeleteStreamCmd          -> 0x8A
+        DeleteStreamCompletedCmd -> 0x8B
+        -- CreateChunk       -> 0x12
+        -- BadRequest        -> 0xF0
+        -- NotHandled        -> 0xF1
+
+--------------------------------------------------------------------------------
+word8Cmd :: Word8 -> Maybe Command
+word8Cmd wd =
+    case wd of
+        0x01 -> Just HeartbeatRequest
+        0x02 -> Just HeartbeatResponse
+        0x82 -> Just WriteEventsCmd
+        0x83 -> Just WriteEventsCompletedCmd
+        0x8A -> Just DeleteStreamCmd
+        0x8B -> Just DeleteStreamCompletedCmd
+        -- 0x12 -> Just CreateChunk
+        -- 0xF0 -> Just BadRequest
+        -- 0xF1 -> Just NotHandled
+        _    -> Nothing
+
+--------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 data Package
     = Package
@@ -309,30 +383,3 @@ defaultSettings = Settings
 -- | Millisecond timespan
 msDiffTime :: Float -> NominalDiffTime
 msDiffTime i = fromRational $ toRational (i / 1000)
-
---------------------------------------------------------------------------------
--- Binary utils
---------------------------------------------------------------------------------
-cmdWord8 :: Command -> Word8
-cmdWord8 cmd =
-    case cmd of
-        HeartbeatRequest        -> 0x01
-        HeartbeatResponse       -> 0x02
-        WriteEventsCmd          -> 0x82
-        WriteEventsCompletedCmd -> 0x83
-        -- CreateChunk       -> 0x12
-        -- BadRequest        -> 0xF0
-        -- NotHandled        -> 0xF1
-
---------------------------------------------------------------------------------
-word8Cmd :: Word8 -> Maybe Command
-word8Cmd wd =
-    case wd of
-        0x01 -> Just HeartbeatRequest
-        0x02 -> Just HeartbeatResponse
-        0x82 -> Just WriteEventsCmd
-        0x83 -> Just WriteEventsCompletedCmd
-        -- 0x12 -> Just CreateChunk
-        -- 0xF0 -> Just BadRequest
-        -- 0xF1 -> Just NotHandled
-        _    -> Nothing

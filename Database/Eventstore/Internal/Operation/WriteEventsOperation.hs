@@ -9,7 +9,8 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Operation.WriteEventsOperation where
+module Database.Eventstore.Internal.Operation.WriteEventsOperation
+    ( writeEventsOperation ) where
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.STM
@@ -17,13 +18,10 @@ import Data.Maybe
 import Data.Traversable
 
 --------------------------------------------------------------------------------
-import Data.ProtocolBuffers
-import Data.Serialize.Get
 import Data.Text
-import Data.UUID
 
 --------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Packages
+import Database.Eventstore.Internal.Operation.Common
 import Database.Eventstore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -34,64 +32,47 @@ writeEventsOperation :: Settings
                      -> [Event]
                      -> Operation
 writeEventsOperation settings mvar evt_stream exp_ver evts =
-    Operation
-    { operationCreatePackage = createPackage
-    , operationInspect       = inspect mvar evt_stream exp_ver
-    }
+    createOperation params
   where
-    createPackage uuid = do
-        new_evts <- traverse eventToNewEvent evts
+    params =
+        OperationParams
+        { opSettings    = settings
+        , opRequestCmd  = WriteEventsCmd
+        , opResponseCmd = WriteEventsCompletedCmd
 
-        let require_master = _requireMaster settings
-            exp_ver_int32  = expVersionInt32 exp_ver
-            write_evt      = newWriteEvents evt_stream
-                                            exp_ver_int32
-                                            new_evts
-                                            require_master
+        , opRequest = do
+              new_evts <- traverse eventToNewEvent evts
 
-        return $ writeEventsPackage uuid None write_evt
+              let require_master = _requireMaster settings
+                  exp_ver_int32  = expVersionInt32 exp_ver
+                  request        = newWriteEvents evt_stream
+                                                  exp_ver_int32
+                                                  new_evts
+                                                  require_master
+              return request
+
+        , opSuccess = inspect mvar evt_stream exp_ver
+        , opFailure = failed mvar
+        }
 
 --------------------------------------------------------------------------------
 inspect :: TMVar (OperationExceptional WriteResult)
         -> Text
         -> ExpectedVersion
-        -> Package
+        -> WriteEventsCompleted
         -> IO Decision
-inspect mvar stream exp_ver pack =
-    case packageCmd pack of
-        WriteEventsCompletedCmd -> writeEventsCompleted mvar stream exp_ver pack
-        _                       -> undefined --unhandled
-
---------------------------------------------------------------------------------
-writeEventsCompleted :: TMVar (OperationExceptional WriteResult)
-                     -> Text
-                     -> ExpectedVersion
-                     -> Package
-                     -> IO Decision
-writeEventsCompleted mvar stream exp_ver pack =
-    case runGet getWriteEventsCompleted bs of
-        Left e    -> return EndOperation
-        Right wec -> do
-            case getField $ writeCompletedResult wec of
-                OP_SUCCESS
-                    -> succeed mvar wec
-                OP_PREPARE_TIMEOUT
-                    -> return Retry
-                OP_FORWARD_TIMEOUT
-                    -> return Retry
-                OP_COMMIT_TIMEOUT
-                    -> return Retry
-                OP_WRONG_EXPECTED_VERSION
-                    -> failed mvar (WrongExpectedVersion stream exp_ver)
-                OP_STREAM_DELETED
-                    -> failed mvar (StreamDeleted stream)
-                OP_INVALID_TRANSACTION
-                    -> failed mvar InvalidTransaction
-                OP_ACCESS_DENIED
-                    -> failed mvar (AccessDenied stream)
+inspect mvar stream exp_ver wec = go (getField $ writeCompletedResult wec)
   where
-    corr_id = packageCorrelation pack
-    bs      = packageData pack
+    go OP_SUCCESS                = succeed mvar wec
+    go OP_PREPARE_TIMEOUT        = return Retry
+    go OP_FORWARD_TIMEOUT        = return Retry
+    go OP_COMMIT_TIMEOUT         = return Retry
+    go OP_WRONG_EXPECTED_VERSION = failed mvar wrong_version
+    go OP_STREAM_DELETED         = failed mvar (StreamDeleted stream)
+    go OP_INVALID_TRANSACTION    = failed mvar InvalidTransaction
+    go OP_ACCESS_DENIED          = failed mvar (AccessDenied stream)
+
+    wrong_version = WrongExpectedVersion stream exp_ver
 
 --------------------------------------------------------------------------------
 succeed :: TMVar (OperationExceptional WriteResult)

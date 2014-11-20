@@ -7,6 +7,7 @@ Basically, all we have for now are:
 
   1. Heartbeats (W00t :-))
   2. NewEvent
+  3. DeleteStream
 
 Requirements
 ============

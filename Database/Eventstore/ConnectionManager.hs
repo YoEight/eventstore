@@ -14,6 +14,9 @@ module Database.Eventstore.ConnectionManager
     , Event
     , EventData
     , ExpectedVersion(..)
+      -- * Result
+    , DeleteResult(..)
+    , WriteResult(..)
       -- * Event
     , createEvent
     , withJson
@@ -21,6 +24,7 @@ module Database.Eventstore.ConnectionManager
       -- * Connection manager
     , defaultSettings
     , eventStoreConnect
+    , eventStoreDeleteStream
     , eventStoreSendEvent
     , eventStoreSendEvents
     , eventStoreShutdown
@@ -38,6 +42,7 @@ import Data.Text
 --------------------------------------------------------------------------------
 import Database.Eventstore.Internal.Processor
 import Database.Eventstore.Internal.Types
+import Database.Eventstore.Internal.Operation.DeleteStreamOperation
 import Database.Eventstore.Internal.Operation.WriteEventsOperation
 
 --------------------------------------------------------------------------------
@@ -91,17 +96,41 @@ eventStoreSendEvents :: ConnectionManager
                      -> [Event]
                      -> IO (Async WriteResult)
 eventStoreSendEvents mgr evt_stream exp_ver evts = do
+    (as, mvar) <- createAsync
 
+    let op = writeEventsOperation settings mvar evt_stream exp_ver evts
+
+    msgQueue mgr (RegisterOperation op)
+    return as
+  where
+    settings       = mgrSettings mgr
+    require_master = _requireMaster $ mgrSettings mgr
+    exp_ver_int32  = expVersionInt32 exp_ver
+
+--------------------------------------------------------------------------------
+eventStoreDeleteStream :: ConnectionManager
+                       -> Text
+                       -> ExpectedVersion
+                       -> Maybe Bool       -- ^ Hard delete
+                       -> IO (Async DeleteResult)
+eventStoreDeleteStream mgr evt_stream exp_ver hard_del = do
+    (as, mvar) <- createAsync
+
+    let op = deleteStreamOperation settings mvar evt_stream exp_ver hard_del
+
+    msgQueue mgr (RegisterOperation op)
+    return as
+  where
+    settings       = mgrSettings mgr
+    require_master = _requireMaster $ mgrSettings mgr
+    exp_ver_int32  = expVersionInt32 exp_ver
+
+--------------------------------------------------------------------------------
+createAsync :: IO (Async a, TMVar (OperationExceptional a))
+createAsync = do
     mvar <- atomically newEmptyTMVar
     as   <- async $ atomically $ do
         res <- readTMVar mvar
         either throwSTM return res
 
-    let op = writeEventsOperation settings mvar evt_stream exp_ver evts
-    msgQueue mgr (RegisterOperation op)
-
-    return as
-  where
-    settings = mgrSettings mgr
-    require_master = _requireMaster $ mgrSettings mgr
-    exp_ver_int32  = expVersionInt32 exp_ver
+    return (as, mvar)

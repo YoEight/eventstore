@@ -11,7 +11,8 @@
 --------------------------------------------------------------------------------
 module Database.Eventstore.Internal.Packages
     ( -- * Package Smart Contructors
-      heartbeatPackage
+      deleteStreamPackage
+    , heartbeatPackage
     , heartbeatResponsePackage
     , writeEventsPackage
       -- * Cereal Put
@@ -38,12 +39,22 @@ import Database.Eventstore.Internal.Types
 --------------------------------------------------------------------------------
 writeEventsPackage :: UUID -> Flag -> WriteEvents -> Package
 writeEventsPackage uuid flag msg =
-  Package
-  { packageCmd         = WriteEventsCmd
-  , packageFlag        = flag
-  , packageCorrelation = uuid
-  , packageData        = runPut $ encodeMessage msg
-  }
+    Package
+    { packageCmd         = WriteEventsCmd
+    , packageFlag        = flag
+    , packageCorrelation = uuid
+    , packageData        = runPut $ encodeMessage msg
+    }
+
+--------------------------------------------------------------------------------
+deleteStreamPackage :: UUID -> Flag -> DeleteStream -> Package
+deleteStreamPackage uuid flag msg =
+    Package
+    { packageCmd         = DeleteStreamCmd
+    , packageFlag        = flag
+    , packageCorrelation = uuid
+    , packageData        = runPut $ encodeMessage msg
+    }
 
 --------------------------------------------------------------------------------
 heartbeatPackage :: IO Package

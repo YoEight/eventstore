@@ -1,0 +1,81 @@
+--------------------------------------------------------------------------------
+-- |
+-- Module : Database.Eventstore.Internal.Operation.Common
+-- Copyright : (C) 2014 Yorick Laupa
+-- License : (see the file LICENSE)
+--
+-- Maintainer : Yorick Laupa <yo.eight@gmail.com>
+-- Stability : provisional
+-- Portability : non-portable
+--
+--------------------------------------------------------------------------------
+module Database.Eventstore.Internal.Operation.Common
+    ( OperationParams(..)
+    , createOperation
+    -- * Re-exports
+    , module Data.ProtocolBuffers
+    ) where
+
+--------------------------------------------------------------------------------
+import Data.ProtocolBuffers
+import Data.Serialize
+import Data.Text
+import Data.UUID
+
+--------------------------------------------------------------------------------
+import Database.Eventstore.Internal.Types
+
+--------------------------------------------------------------------------------
+data OperationParams request response
+    = OperationParams
+      { opSettings    :: !Settings
+      , opRequestCmd  :: !Command
+      , opResponseCmd :: !Command
+
+      , opRequest     :: IO request
+      , opSuccess     :: response -> IO Decision
+      , opFailure     :: OperationException -> IO Decision
+      }
+
+--------------------------------------------------------------------------------
+createOperation :: (Encode a, Decode b) => OperationParams a b -> Operation
+createOperation params =
+    Operation
+    { operationCreatePackage = createPackage params
+    , operationInspect       = inspection params
+    }
+
+--------------------------------------------------------------------------------
+createPackage :: Encode a => OperationParams a b -> UUID -> IO Package
+createPackage params uuid = do
+    req <- opRequest params
+
+    let pack = Package
+               { packageCmd         = opRequestCmd params
+               , packageCorrelation = uuid
+               , packageFlag        = None
+               , packageData        = runPut $ encodeMessage req
+               }
+
+    return pack
+
+--------------------------------------------------------------------------------
+inspection :: Decode b => OperationParams a b -> Package -> IO Decision
+inspection params pack
+    | found == exp = deeperInspection params pack
+    | otherwise    = failed (InvalidServerResponse exp found)
+  where
+    exp    = opResponseCmd params
+    failed = opFailure params
+    found  = packageCmd pack
+
+--------------------------------------------------------------------------------
+deeperInspection :: Decode b => OperationParams a b -> Package -> IO Decision
+deeperInspection params pack =
+    case runGet decodeMessage bytes of
+        Left e    -> failed (ProtobufDecodingError e)
+        Right msg -> succeed msg
+  where
+    failed  = opFailure params
+    succeed = opSuccess params
+    bytes   = packageData pack
