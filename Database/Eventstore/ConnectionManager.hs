@@ -28,6 +28,12 @@ module Database.Eventstore.ConnectionManager
     , eventStoreSendEvent
     , eventStoreSendEvents
     , eventStoreShutdown
+    , eventStoreTransactionStart
+      -- * Transaction
+    , Transaction
+    , transactionCommit
+    , transactionRollback
+    , transactionSendEvents
     ) where
 
 --------------------------------------------------------------------------------
@@ -43,6 +49,7 @@ import Data.Text
 import Database.Eventstore.Internal.Processor
 import Database.Eventstore.Internal.Types
 import Database.Eventstore.Internal.Operation.DeleteStreamOperation
+import Database.Eventstore.Internal.Operation.TransactionStartOperation
 import Database.Eventstore.Internal.Operation.WriteEventsOperation
 
 --------------------------------------------------------------------------------
@@ -105,7 +112,6 @@ eventStoreSendEvents mgr evt_stream exp_ver evts = do
   where
     settings       = mgrSettings mgr
     require_master = _requireMaster $ mgrSettings mgr
-    exp_ver_int32  = expVersionInt32 exp_ver
 
 --------------------------------------------------------------------------------
 eventStoreDeleteStream :: ConnectionManager
@@ -123,7 +129,23 @@ eventStoreDeleteStream mgr evt_stream exp_ver hard_del = do
   where
     settings       = mgrSettings mgr
     require_master = _requireMaster $ mgrSettings mgr
-    exp_ver_int32  = expVersionInt32 exp_ver
+
+--------------------------------------------------------------------------------
+eventStoreTransactionStart :: ConnectionManager
+                           -> Text
+                           -> ExpectedVersion
+                           -> IO (Async Transaction)
+eventStoreTransactionStart mgr evt_stream exp_ver = do
+    (as, mvar) <- createAsync
+
+    let op = transactionStartOperation settings chan mvar evt_stream exp_ver
+
+    msgQueue mgr (RegisterOperation op)
+    return as
+  where
+    chan           = mgrChan mgr
+    settings       = mgrSettings mgr
+    require_master = _requireMaster $ mgrSettings mgr
 
 --------------------------------------------------------------------------------
 createAsync :: IO (Async a, TMVar (OperationExceptional a))

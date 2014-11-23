@@ -25,6 +25,7 @@ import GHC.Generics (Generic)
 import GHC.TypeLits
 
 --------------------------------------------------------------------------------
+import           Control.Concurrent.Async
 import qualified Data.Aeson as A
 import           Data.ProtocolBuffers
 import           Data.Text
@@ -255,6 +256,110 @@ data DeleteStreamCompleted
 instance Decode DeleteStreamCompleted
 
 --------------------------------------------------------------------------------
+data TransactionStart
+    = TransactionStart
+      { transactionStartStreamId        :: Required 1 (Value Text)
+      , transactionStartExpectedVersion :: Required 2 (Value Int32)
+      , transactionStartRequireMaster   :: Required 3 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+newTransactionStart :: Text
+                    -> Int32
+                    -> Bool
+                    -> TransactionStart
+newTransactionStart stream_id exp_ver req_master =
+    TransactionStart
+    { transactionStartStreamId        = putField stream_id
+    , transactionStartExpectedVersion = putField exp_ver
+    , transactionStartRequireMaster   = putField req_master
+    }
+
+--------------------------------------------------------------------------------
+instance Encode TransactionStart
+
+--------------------------------------------------------------------------------
+data TransactionStartCompleted
+    = TransactionStartCompleted
+      { transactionSCId      :: Required 1 (Value Int64)
+      , transactionSCResult  :: Required 2 (Enumeration OpResult)
+      , transactionSCMessage :: Optional 3 (Value Text)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode TransactionStartCompleted
+
+--------------------------------------------------------------------------------
+data TransactionWrite
+    = TransactionWrite
+      { transactionWriteId            :: Required 1 (Value Int64)
+      , transactionWriteEvents        :: Repeated 2 (Message NewEvent)
+      , transactionWriteRequireMaster :: Required 3 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Encode TransactionWrite
+
+--------------------------------------------------------------------------------
+newTransactionWrite :: Int64 -> [NewEvent] -> Bool -> TransactionWrite
+newTransactionWrite trans_id evts req_master =
+    TransactionWrite
+    { transactionWriteId            = putField trans_id
+    , transactionWriteEvents        = putField evts
+    , transactionWriteRequireMaster = putField req_master
+    }
+
+--------------------------------------------------------------------------------
+data TransactionWriteCompleted
+    = TransactionWriteCompleted
+      { transactionWCId      :: Required 1 (Value Int64)
+      , transactionWCResult  :: Required 2 (Enumeration OpResult)
+      , transactionWCMessage :: Optional 3 (Value Text)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode TransactionWriteCompleted
+
+--------------------------------------------------------------------------------
+data TransactionCommit
+    = TransactionCommit
+      { transactionCommitId            :: Required 1 (Value Int64)
+      , transactionCommitRequireMaster :: Required 2 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Encode TransactionCommit
+
+--------------------------------------------------------------------------------
+newTransactionCommit :: Int64 -> Bool -> TransactionCommit
+newTransactionCommit trans_id req_master =
+    TransactionCommit
+    { transactionCommitId = putField trans_id
+    , transactionCommitRequireMaster = putField req_master
+    }
+
+--------------------------------------------------------------------------------
+data TransactionCommitCompleted
+    = TransactionCommitCompleted
+      { transactionCCId              :: Required 1 (Value Int64)
+      , transactionCCResult          :: Required 2 (Enumeration OpResult)
+      , transactionCCMessage         :: Optional 3 (Value Text)
+      , transactionCCFirstNumber     :: Required 4 (Value Int32)
+      , transactionCCLastNumber      :: Required 5 (Value Int32)
+      , transactionCCPreparePosition :: Optional 6 (Value Int64)
+      , transactionCCCommitPosition  :: Optional 7 (Value Int64)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode TransactionCommitCompleted
+
+--------------------------------------------------------------------------------
 -- Result
 --------------------------------------------------------------------------------
 data Decision
@@ -286,6 +391,19 @@ newtype DeleteResult
     deriving Show
 
 --------------------------------------------------------------------------------
+-- Transaction
+--------------------------------------------------------------------------------
+data Transaction
+    = Transaction
+      { transactionId              :: Int64
+      , transactionStreamId        :: Text
+      , transactionExpectedVersion :: ExpectedVersion
+      , transactionCommit          :: IO (Async WriteResult)
+      , transactionSendEvents      :: [Event] -> IO (Async ())
+      , transactionRollback        :: IO ()
+      }
+
+--------------------------------------------------------------------------------
 -- Flag
 --------------------------------------------------------------------------------
 data Flag
@@ -308,6 +426,12 @@ data Command
     | WriteEventsCompletedCmd
     | DeleteStreamCmd
     | DeleteStreamCompletedCmd
+    | TransactionStartCmd
+    | TransactionStartCompletedCmd
+    | TransactionWriteCmd
+    | TransactionWriteCompletedCmd
+    | TransactionCommitCmd
+    | TransactionCommitCompletedCmd
     -- | CreateChunk
     -- | BadRequest
     -- | NotHandled
@@ -316,12 +440,18 @@ data Command
 cmdWord8 :: Command -> Word8
 cmdWord8 cmd =
     case cmd of
-        HeartbeatRequest         -> 0x01
-        HeartbeatResponse        -> 0x02
-        WriteEventsCmd           -> 0x82
-        WriteEventsCompletedCmd  -> 0x83
-        DeleteStreamCmd          -> 0x8A
-        DeleteStreamCompletedCmd -> 0x8B
+        HeartbeatRequest              -> 0x01
+        HeartbeatResponse             -> 0x02
+        WriteEventsCmd                -> 0x82
+        WriteEventsCompletedCmd       -> 0x83
+        DeleteStreamCmd               -> 0x8A
+        DeleteStreamCompletedCmd      -> 0x8B
+        TransactionStartCmd           -> 0x84
+        TransactionStartCompletedCmd  -> 0x85
+        TransactionWriteCmd           -> 0x86
+        TransactionWriteCompletedCmd  -> 0x87
+        TransactionCommitCmd          -> 0x88
+        TransactionCommitCompletedCmd -> 0x89
         -- CreateChunk       -> 0x12
         -- BadRequest        -> 0xF0
         -- NotHandled        -> 0xF1
@@ -336,6 +466,12 @@ word8Cmd wd =
         0x83 -> Just WriteEventsCompletedCmd
         0x8A -> Just DeleteStreamCmd
         0x8B -> Just DeleteStreamCompletedCmd
+        0x84 -> Just TransactionStartCmd
+        0x85 -> Just TransactionStartCompletedCmd
+        0x86 -> Just TransactionWriteCmd
+        0x87 -> Just TransactionWriteCompletedCmd
+        0x88 -> Just TransactionCommitCmd
+        0x89 -> Just TransactionCommitCompletedCmd
         -- 0x12 -> Just CreateChunk
         -- 0xF0 -> Just BadRequest
         -- 0xF1 -> Just NotHandled

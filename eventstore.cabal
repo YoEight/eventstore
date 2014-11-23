@@ -58,6 +58,7 @@ library
                    Database.Eventstore.Internal.Types
                    Database.Eventstore.Internal.Operation.Common
                    Database.Eventstore.Internal.Operation.DeleteStreamOperation
+                   Database.Eventstore.Internal.Operation.TransactionStartOperation
                    Database.Eventstore.Internal.Operation.WriteEventsOperation
 
   -- LANGUAGE extensions used by modules in this package.
