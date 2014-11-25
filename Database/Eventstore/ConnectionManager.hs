@@ -17,6 +17,11 @@ module Database.Eventstore.ConnectionManager
       -- * Result
     , DeleteResult(..)
     , WriteResult(..)
+    , ReadResult(..)
+    , RecordedEvent(..)
+    , eventResolved
+    , resolvedEventOriginal
+    , resolvedEventOriginalStreamId
       -- * Event
     , createEvent
     , withJson
@@ -25,6 +30,7 @@ module Database.Eventstore.ConnectionManager
     , defaultSettings
     , eventStoreConnect
     , eventStoreDeleteStream
+    , eventStoreReadEvent
     , eventStoreSendEvent
     , eventStoreSendEvents
     , eventStoreShutdown
@@ -49,6 +55,7 @@ import Data.Text
 import Database.Eventstore.Internal.Processor
 import Database.Eventstore.Internal.Types
 import Database.Eventstore.Internal.Operation.DeleteStreamOperation
+import Database.Eventstore.Internal.Operation.ReadEventOperation
 import Database.Eventstore.Internal.Operation.TransactionStartOperation
 import Database.Eventstore.Internal.Operation.WriteEventsOperation
 
@@ -110,8 +117,7 @@ eventStoreSendEvents mgr evt_stream exp_ver evts = do
     msgQueue mgr (RegisterOperation op)
     return as
   where
-    settings       = mgrSettings mgr
-    require_master = _requireMaster $ mgrSettings mgr
+    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
 eventStoreDeleteStream :: ConnectionManager
@@ -127,8 +133,7 @@ eventStoreDeleteStream mgr evt_stream exp_ver hard_del = do
     msgQueue mgr (RegisterOperation op)
     return as
   where
-    settings       = mgrSettings mgr
-    require_master = _requireMaster $ mgrSettings mgr
+    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
 eventStoreTransactionStart :: ConnectionManager
@@ -143,9 +148,24 @@ eventStoreTransactionStart mgr evt_stream exp_ver = do
     msgQueue mgr (RegisterOperation op)
     return as
   where
-    chan           = mgrChan mgr
-    settings       = mgrSettings mgr
-    require_master = _requireMaster $ mgrSettings mgr
+    chan     = mgrChan mgr
+    settings = mgrSettings mgr
+
+--------------------------------------------------------------------------------
+eventStoreReadEvent :: ConnectionManager
+                    -> Text
+                    -> Int32
+                    -> Bool
+                    -> IO (Async ReadResult)
+eventStoreReadEvent mgr stream_id evt_num res_link_tos = do
+    (as, mvar) <- createAsync
+
+    let op = readEventOperation settings mvar stream_id evt_num res_link_tos
+
+    msgQueue mgr (RegisterOperation op)
+    return as
+  where
+    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
 createAsync :: IO (Async a, TMVar (OperationExceptional a))

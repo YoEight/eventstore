@@ -1,6 +1,7 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE    DeriveDataTypeable #-}
+{-# LANGUAGE    DeriveGeneric      #-}
+{-# LANGUAGE    DataKinds          #-}
+{-# OPTIONS_GHC -fcontext-stack=26 #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.Eventstore.Internal.Types
@@ -15,10 +16,12 @@
 module Database.Eventstore.Internal.Types where
 
 --------------------------------------------------------------------------------
+import Control.Applicative ((<|>))
 import Control.Exception
 import Data.ByteString
-import Data.ByteString.Lazy (toStrict)
+import Data.ByteString.Lazy (fromStrict, toStrict)
 import Data.Int
+import Data.Maybe
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
@@ -30,6 +33,7 @@ import qualified Data.Aeson as A
 import           Data.ProtocolBuffers
 import           Data.Text
 import           Data.Time
+import           Data.Time.Clock.POSIX
 import           Data.UUID
 import           System.Random
 
@@ -52,6 +56,7 @@ data OperationException
     | AccessDenied Text                         -- ^ Stream
     | InvalidServerResponse Command Command     -- ^ Expected, Found
     | ProtobufDecodingError String
+    | ServerError (Maybe Text)
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
@@ -360,6 +365,81 @@ data TransactionCommitCompleted
 instance Decode TransactionCommitCompleted
 
 --------------------------------------------------------------------------------
+data ReadEvent
+    = ReadEvent
+      { readEventStreamId       :: Required 1 (Value Text)
+      , readEventNumber         :: Required 2 (Value Int32)
+      , readEventResolveLinkTos :: Required 3 (Value Bool)
+      , readEventRequireMaster  :: Required 4 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Encode ReadEvent
+
+--------------------------------------------------------------------------------
+newReadEvent :: Text -> Int32 -> Bool -> Bool -> ReadEvent
+newReadEvent stream_id evt_num res_link_tos req_master =
+    ReadEvent
+    { readEventStreamId       = putField stream_id
+    , readEventNumber         = putField evt_num
+    , readEventResolveLinkTos = putField res_link_tos
+    , readEventRequireMaster  = putField req_master
+    }
+
+--------------------------------------------------------------------------------
+data ReadEventResult
+    = RE_SUCCESS
+    | RE_NOT_FOUND
+    | RE_NO_STREAM
+    | RE_STREAM_DELETED
+    | RE_ERROR
+    | RE_ACCESS_DENIED
+    deriving (Eq, Enum, Show)
+
+--------------------------------------------------------------------------------
+data EventRecord
+    = EventRecord
+      { eventRecordStreamId     :: Required 1  (Value Text)
+      , eventRecordNumber       :: Required 2  (Value Int32)
+      , eventRecordId           :: Required 3  (Value ByteString)
+      , eventRecordType         :: Required 4  (Value Text)
+      , eventRecordDataType     :: Required 5  (Value Int32)
+      , eventRecordMetadataType :: Required 6  (Value Int32)
+      , eventRecordData         :: Required 7  (Value ByteString)
+      , eventRecordMetadata     :: Optional 8  (Value ByteString)
+      , eventRecordCreated      :: Optional 9  (Value Int64)
+      , eventRecordCreatedEpoch :: Optional 10 (Value Int64)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode EventRecord
+
+--------------------------------------------------------------------------------
+data ResolvedIndexedEvent
+    = ResolvedIndexedEvent
+      { resolvedIndexedRecord :: Optional 1 (Message EventRecord)
+      , resolvedIndexedLink   :: Optional 2 (Message EventRecord)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode ResolvedIndexedEvent
+
+--------------------------------------------------------------------------------
+data ReadEventCompleted
+    = ReadEventCompleted
+      { readCompletedResult       :: Required 1 (Enumeration ReadEventResult)
+      , readCompletedIndexedEvent :: Required 2 (Message ResolvedIndexedEvent)
+      , readCompletedError        :: Optional 3 (Value Text)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode ReadEventCompleted
+
+--------------------------------------------------------------------------------
 -- Result
 --------------------------------------------------------------------------------
 data Decision
@@ -389,6 +469,107 @@ data WriteResult
 newtype DeleteResult
     = DeleteResult { deleteStreamPosition :: Position }
     deriving Show
+
+--------------------------------------------------------------------------------
+data RecordedEvent
+    = RecordedEvent
+      { recordedEventStreamId     :: !Text
+      , recordedEventId           :: !UUID
+      , recordedEventNumber       :: !Int32
+      , recordedEventType         :: !Text
+      , recordedEventData         :: !ByteString
+      , recordedEventMetadata     :: !(Maybe ByteString)
+      , recordedEventIsJson       :: !Bool
+      , recordedEventCreated      :: !(Maybe UTCTime)
+      , recordedEventCreatedEpoch :: !(Maybe Integer)
+      }
+    deriving Show
+
+--------------------------------------------------------------------------------
+newRecordedEvent :: EventRecord -> RecordedEvent
+newRecordedEvent er = re
+  where
+    evt_id      = getField $ eventRecordId er
+    evt_uuid    = fromJust $ fromByteString $ fromStrict evt_id
+    data_type   = getField $ eventRecordDataType er
+    created     = getField $ eventRecordCreated er
+    epoch       = getField $ eventRecordCreatedEpoch er
+    utc_created = fmap (posixSecondsToUTCTime . fromInteger . toInteger) created
+
+    re = RecordedEvent
+         { recordedEventStreamId     = getField $ eventRecordStreamId er
+         , recordedEventNumber       = getField $ eventRecordNumber er
+         , recordedEventId           = evt_uuid
+         , recordedEventType         = getField $ eventRecordType er
+         , recordedEventData         = getField $ eventRecordData er
+         , recordedEventMetadata     = getField $ eventRecordMetadata er
+         , recordedEventIsJson       = data_type == 1
+         , recordedEventCreated      = utc_created
+         , recordedEventCreatedEpoch = fmap toInteger epoch
+         }
+
+--------------------------------------------------------------------------------
+data ResolvedEvent
+    = ResolvedEvent
+      { resolvedEventRecord :: !(Maybe RecordedEvent)
+      , resolvedEventLink   :: !(Maybe RecordedEvent)
+      }
+    deriving Show
+
+--------------------------------------------------------------------------------
+newResolvedEvent :: ResolvedIndexedEvent -> ResolvedEvent
+newResolvedEvent rie = re
+  where
+    record = getField $ resolvedIndexedRecord rie
+    link   = getField $ resolvedIndexedLink rie
+    re     = ResolvedEvent
+             { resolvedEventRecord = fmap newRecordedEvent record
+             , resolvedEventLink   = fmap newRecordedEvent link
+             }
+
+--------------------------------------------------------------------------------
+resolvedEventOriginal :: ResolvedEvent -> Maybe RecordedEvent
+resolvedEventOriginal (ResolvedEvent record link) =
+    link <|> record
+
+--------------------------------------------------------------------------------
+eventResolved :: ResolvedEvent -> Bool
+eventResolved = isJust . resolvedEventOriginal
+
+--------------------------------------------------------------------------------
+resolvedEventOriginalStreamId :: ResolvedEvent -> Maybe Text
+resolvedEventOriginalStreamId =
+    fmap recordedEventStreamId . resolvedEventOriginal
+
+--------------------------------------------------------------------------------
+data ReadResult
+    = ReadResult
+      { readResultStatus        :: !ReadEventResult
+      , readResultStreamId      :: !Text
+      , readResultEventNumber   :: !Int32
+      , readResultResolvedEvent :: !(Maybe ResolvedEvent)
+      }
+    deriving Show
+
+--------------------------------------------------------------------------------
+newReadResult :: ReadEventResult
+              -> Text
+              -> Int32
+              -> ResolvedIndexedEvent
+              -> ReadResult
+newReadResult status stream_id evt_num rie = rr
+  where
+    may_re =
+        case status of
+            RE_SUCCESS -> Just $ newResolvedEvent rie
+            _          -> Nothing
+
+    rr = ReadResult
+         { readResultStatus        = status
+         , readResultStreamId      = stream_id
+         , readResultEventNumber   = evt_num
+         , readResultResolvedEvent = may_re
+         }
 
 --------------------------------------------------------------------------------
 -- Transaction
@@ -432,11 +613,14 @@ data Command
     | TransactionWriteCompletedCmd
     | TransactionCommitCmd
     | TransactionCommitCompletedCmd
+    | ReadEventCmd
+    | ReadEventCompletedCmd
     -- | CreateChunk
     -- | BadRequest
     -- | NotHandled
     deriving (Eq, Show)
 
+--------------------------------------------------------------------------------
 cmdWord8 :: Command -> Word8
 cmdWord8 cmd =
     case cmd of
@@ -452,6 +636,8 @@ cmdWord8 cmd =
         TransactionWriteCompletedCmd  -> 0x87
         TransactionCommitCmd          -> 0x88
         TransactionCommitCompletedCmd -> 0x89
+        ReadEventCmd                  -> 0xB0
+        ReadEventCompletedCmd         -> 0xB1
         -- CreateChunk       -> 0x12
         -- BadRequest        -> 0xF0
         -- NotHandled        -> 0xF1
@@ -472,6 +658,8 @@ word8Cmd wd =
         0x87 -> Just TransactionWriteCompletedCmd
         0x88 -> Just TransactionCommitCmd
         0x89 -> Just TransactionCommitCompletedCmd
+        0xB0 -> Just ReadEventCmd
+        0xB1 -> Just ReadEventCompletedCmd
         -- 0x12 -> Just CreateChunk
         -- 0xF0 -> Just BadRequest
         -- 0xF1 -> Just NotHandled

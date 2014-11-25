@@ -9,6 +9,7 @@ Basically, all we have for now are:
   2. NewEvent
   3. DeleteStream
   4. Transaction
+  5. ReadEvent
 
 Requirements
 ============

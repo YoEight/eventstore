@@ -137,7 +137,7 @@ createTransaction env trans_id = trans
                       sendMsg chan (RegisterOperation op)
                       return as
 
-                , transactionRollback   = undefined
+                , transactionRollback = return ()
                 }
 
 --------------------------------------------------------------------------------
