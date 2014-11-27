@@ -440,6 +440,62 @@ data ReadEventCompleted
 instance Decode ReadEventCompleted
 
 --------------------------------------------------------------------------------
+data ReadStreamEvents
+    = ReadStreamEvents
+      { readStreamId             :: Required 1 (Value Text)
+      , readStreamEventNumber    :: Required 2 (Value Int32)
+      , readStreamMaxCount       :: Required 3 (Value Int32)
+      , readStreamResolveLinkTos :: Required 4 (Value Bool)
+      , readStreamRequireMaster  :: Required 5 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+newReadStreamEvents :: Text
+                    -> Int32
+                    -> Int32
+                    -> Bool
+                    -> Bool
+                    -> ReadStreamEvents
+newReadStreamEvents stream_id evt_num max_c res_link_tos req_master =
+    ReadStreamEvents
+    { readStreamId             = putField stream_id
+    , readStreamEventNumber    = putField evt_num
+    , readStreamMaxCount       = putField max_c
+    , readStreamResolveLinkTos = putField res_link_tos
+    , readStreamRequireMaster  = putField req_master
+    }
+
+--------------------------------------------------------------------------------
+instance Encode ReadStreamEvents
+
+--------------------------------------------------------------------------------
+data ReadStreamResult
+    = RS_SUCCESS
+    | RS_NO_STREAM
+    | RS_STREAM_DELETED
+    | RS_NOT_MODIFIED
+    | RS_ERROR
+    | RS_ACCESS_DENIED
+    deriving (Eq, Enum, Show)
+
+--------------------------------------------------------------------------------
+data ReadStreamEventsCompleted
+    = ReadStreamEventsCompleted
+      { readSECEvents             :: Repeated 1 (Message ResolvedIndexedEvent)
+      , readSECResult             :: Required 2 (Enumeration ReadStreamResult)
+      , readSECNextNumber         :: Required 3 (Value Int32)
+      , readSECLastNumber         :: Required 4 (Value Int32)
+      , readSECEndOfStream        :: Required 5 (Value Bool)
+      , readSECLastCommitPosition :: Required 6 (Value Int64)
+      , readSECError              :: Optional 7 (Value Text)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode ReadStreamEventsCompleted
+
+--------------------------------------------------------------------------------
 -- Result
 --------------------------------------------------------------------------------
 data Decision
@@ -572,6 +628,47 @@ newReadResult status stream_id evt_num rie = rr
          }
 
 --------------------------------------------------------------------------------
+data ReadDirection
+    = Forward
+    | Backward
+    deriving Show
+
+--------------------------------------------------------------------------------
+data StreamEventsSlice
+    = StreamEventsSlice
+      { streamEventsSliceResult    :: !ReadStreamResult
+      , streamEventsSliceStreamId  :: !Text
+      , streamEventsSliceStart     :: !Int32
+      , streamEventsSliceNext      :: !Int32
+      , streamEventsSliceLast      :: !Int32
+      , streamEventsSliceIsEOS     :: !Bool
+      , streamEventsSliceEvents    :: ![ResolvedEvent]
+      , streamEventsSliceDirection :: !ReadDirection
+      }
+    deriving Show
+
+--------------------------------------------------------------------------------
+newStreamEventsSlice :: Text
+                     -> Int32
+                     -> ReadDirection
+                     -> ReadStreamEventsCompleted
+                     -> StreamEventsSlice
+newStreamEventsSlice stream_id start dir reco = ses
+  where
+    evts = getField $ readSECEvents reco
+
+    ses = StreamEventsSlice
+          { streamEventsSliceResult    = getField $ readSECResult reco
+          , streamEventsSliceStreamId  = stream_id
+          , streamEventsSliceStart     = start
+          , streamEventsSliceNext      = getField $ readSECNextNumber reco
+          , streamEventsSliceLast      = getField $ readSECLastNumber reco
+          , streamEventsSliceIsEOS     = getField $ readSECEndOfStream reco
+          , streamEventsSliceEvents    = fmap newResolvedEvent evts
+          , streamEventsSliceDirection = dir
+          }
+
+--------------------------------------------------------------------------------
 -- Transaction
 --------------------------------------------------------------------------------
 data Transaction
@@ -615,6 +712,10 @@ data Command
     | TransactionCommitCompletedCmd
     | ReadEventCmd
     | ReadEventCompletedCmd
+    | ReadStreamEventsForwardCmd
+    | ReadStreamEventsForwardCompletedCmd
+    | ReadStreamEventsBackwardCmd
+    | ReadStreamEventsBackwardCompletedCmd
     -- | CreateChunk
     -- | BadRequest
     -- | NotHandled
@@ -624,20 +725,24 @@ data Command
 cmdWord8 :: Command -> Word8
 cmdWord8 cmd =
     case cmd of
-        HeartbeatRequest              -> 0x01
-        HeartbeatResponse             -> 0x02
-        WriteEventsCmd                -> 0x82
-        WriteEventsCompletedCmd       -> 0x83
-        DeleteStreamCmd               -> 0x8A
-        DeleteStreamCompletedCmd      -> 0x8B
-        TransactionStartCmd           -> 0x84
-        TransactionStartCompletedCmd  -> 0x85
-        TransactionWriteCmd           -> 0x86
-        TransactionWriteCompletedCmd  -> 0x87
-        TransactionCommitCmd          -> 0x88
-        TransactionCommitCompletedCmd -> 0x89
-        ReadEventCmd                  -> 0xB0
-        ReadEventCompletedCmd         -> 0xB1
+        HeartbeatRequest                     -> 0x01
+        HeartbeatResponse                    -> 0x02
+        WriteEventsCmd                       -> 0x82
+        WriteEventsCompletedCmd              -> 0x83
+        DeleteStreamCmd                      -> 0x8A
+        DeleteStreamCompletedCmd             -> 0x8B
+        TransactionStartCmd                  -> 0x84
+        TransactionStartCompletedCmd         -> 0x85
+        TransactionWriteCmd                  -> 0x86
+        TransactionWriteCompletedCmd         -> 0x87
+        TransactionCommitCmd                 -> 0x88
+        TransactionCommitCompletedCmd        -> 0x89
+        ReadEventCmd                         -> 0xB0
+        ReadEventCompletedCmd                -> 0xB1
+        ReadStreamEventsForwardCmd           -> 0xB2
+        ReadStreamEventsForwardCompletedCmd  -> 0xB3
+        ReadStreamEventsBackwardCmd          -> 0xB4
+        ReadStreamEventsBackwardCompletedCmd -> 0xB5
         -- CreateChunk       -> 0x12
         -- BadRequest        -> 0xF0
         -- NotHandled        -> 0xF1
@@ -660,6 +765,10 @@ word8Cmd wd =
         0x89 -> Just TransactionCommitCompletedCmd
         0xB0 -> Just ReadEventCmd
         0xB1 -> Just ReadEventCompletedCmd
+        0xB2 -> Just ReadStreamEventsForwardCmd
+        0xB3 -> Just ReadStreamEventsForwardCompletedCmd
+        0xB4 -> Just ReadStreamEventsBackwardCmd
+        0xB5 -> Just ReadStreamEventsBackwardCompletedCmd
         -- 0x12 -> Just CreateChunk
         -- 0xF0 -> Just BadRequest
         -- 0xF1 -> Just NotHandled

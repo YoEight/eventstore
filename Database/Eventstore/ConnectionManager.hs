@@ -31,6 +31,8 @@ module Database.Eventstore.ConnectionManager
     , eventStoreConnect
     , eventStoreDeleteStream
     , eventStoreReadEvent
+    , eventStoreReadStreamEventsBackward
+    , eventStoreReadStreamEventsForward
     , eventStoreSendEvent
     , eventStoreSendEvents
     , eventStoreShutdown
@@ -56,6 +58,7 @@ import Database.Eventstore.Internal.Processor
 import Database.Eventstore.Internal.Types
 import Database.Eventstore.Internal.Operation.DeleteStreamOperation
 import Database.Eventstore.Internal.Operation.ReadEventOperation
+import Database.Eventstore.Internal.Operation.ReadStreamEventsOperation
 import Database.Eventstore.Internal.Operation.TransactionStartOperation
 import Database.Eventstore.Internal.Operation.WriteEventsOperation
 
@@ -161,6 +164,50 @@ eventStoreReadEvent mgr stream_id evt_num res_link_tos = do
     (as, mvar) <- createAsync
 
     let op = readEventOperation settings mvar stream_id evt_num res_link_tos
+
+    msgQueue mgr (RegisterOperation op)
+    return as
+  where
+    settings = mgrSettings mgr
+
+--------------------------------------------------------------------------------
+eventStoreReadStreamEventsForward :: ConnectionManager
+                                  -> Text
+                                  -> Int32
+                                  -> Int32
+                                  -> Bool
+                                  -> IO (Async StreamEventsSlice)
+eventStoreReadStreamEventsForward mgr =
+    eventStoreReadStreamEventsCommon mgr Forward
+
+--------------------------------------------------------------------------------
+eventStoreReadStreamEventsBackward :: ConnectionManager
+                                   -> Text
+                                   -> Int32
+                                   -> Int32
+                                   -> Bool
+                                   -> IO (Async StreamEventsSlice)
+eventStoreReadStreamEventsBackward mgr =
+    eventStoreReadStreamEventsCommon mgr Backward
+
+--------------------------------------------------------------------------------
+eventStoreReadStreamEventsCommon :: ConnectionManager
+                                 -> ReadDirection
+                                 -> Text
+                                 -> Int32
+                                 -> Int32
+                                 -> Bool
+                                 -> IO (Async StreamEventsSlice)
+eventStoreReadStreamEventsCommon mgr dir stream_id start count res_link_tos = do
+    (as, mvar) <- createAsync
+
+    let op = readStreamEventsOperation settings
+                                       dir
+                                       mvar
+                                       stream_id
+                                       start
+                                       count
+                                       res_link_tos
 
     msgQueue mgr (RegisterOperation op)
     return as

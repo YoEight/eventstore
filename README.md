@@ -10,6 +10,7 @@ Basically, all we have for now are:
   3. DeleteStream
   4. Transaction
   5. ReadEvent
+  6. ReadStreamEvents (Forward and Backward)
 
 Requirements
 ============

@@ -59,6 +59,7 @@ library
                    Database.Eventstore.Internal.Operation.Common
                    Database.Eventstore.Internal.Operation.DeleteStreamOperation
                    Database.Eventstore.Internal.Operation.ReadEventOperation
+                   Database.Eventstore.Internal.Operation.ReadStreamEventsOperation
                    Database.Eventstore.Internal.Operation.TransactionStartOperation
                    Database.Eventstore.Internal.Operation.WriteEventsOperation
 
