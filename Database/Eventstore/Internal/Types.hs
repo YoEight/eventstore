@@ -18,7 +18,7 @@ module Database.Eventstore.Internal.Types where
 --------------------------------------------------------------------------------
 import Control.Applicative ((<|>))
 import Control.Exception
-import Data.ByteString
+import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (fromStrict, toStrict)
 import Data.Int
 import Data.Maybe
@@ -31,10 +31,10 @@ import GHC.TypeLits
 import           Control.Concurrent.Async
 import qualified Data.Aeson as A
 import           Data.ProtocolBuffers
-import           Data.Text
+import           Data.Text (Text)
 import           Data.Time
 import           Data.Time.Clock.POSIX
-import           Data.UUID
+import           Data.UUID (UUID, fromByteString, toByteString)
 import           System.Random
 
 --------------------------------------------------------------------------------
@@ -496,6 +496,73 @@ data ReadStreamEventsCompleted
 instance Decode ReadStreamEventsCompleted
 
 --------------------------------------------------------------------------------
+data ReadAllEvents
+    = ReadAllEvents
+      { readAllEventsCommitPosition  :: Required 1 (Value Int64)
+      , readAllEventsPreparePosition :: Required 2 (Value Int64)
+      , readAllEventsMaxCount        :: Required 3 (Value Int32)
+      , readAllEventsResolveLinkTos  :: Required 4 (Value Bool)
+      , readAllEventsRequireMaster   :: Required 5 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Encode ReadAllEvents
+
+--------------------------------------------------------------------------------
+newReadAllEvents :: Int64
+                 -> Int64
+                 -> Int32
+                 -> Bool
+                 -> Bool
+                 -> ReadAllEvents
+newReadAllEvents c_pos p_pos max_c res_link_tos req_master =
+    ReadAllEvents
+    { readAllEventsCommitPosition  = putField c_pos
+    , readAllEventsPreparePosition = putField p_pos
+    , readAllEventsMaxCount        = putField max_c
+    , readAllEventsResolveLinkTos  = putField res_link_tos
+    , readAllEventsRequireMaster   = putField req_master
+    }
+
+--------------------------------------------------------------------------------
+data ReadAllResult
+    = RA_SUCCESS
+    | RA_NOT_MODIFIED
+    | RA_ERROR
+    | RA_ACCESS_DENIED
+    deriving (Eq, Enum, Show)
+
+--------------------------------------------------------------------------------
+data ResolvedEventBuf
+    = ResolvedEventBuf
+      { resolvedEventBufEvent           :: Required 1 (Message EventRecord)
+      , resolvedEventBufLink            :: Optional 2 (Message EventRecord)
+      , resolvedEventBufCommitPosition  :: Required 3 (Value Int64)
+      , resolvedEventBufPreparePosition :: Required 4 (Value Int64)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode ResolvedEventBuf
+
+--------------------------------------------------------------------------------
+data ReadAllEventsCompleted
+    = ReadAllEventsCompleted
+      { readAECCommitPosition      :: Required 1 (Value Int64)
+      , readAECPreparePosition     :: Required 2 (Value Int64)
+      , readAECEvents              :: Repeated 3 (Message ResolvedEventBuf)
+      , readAECNextCommitPosition  :: Required 4 (Value Int64)
+      , readAECNextPreparePosition :: Required 5 (Value Int64)
+      , readAECResult              :: Optional 6 (Enumeration ReadAllResult)
+      , readAECError               :: Optional 7 (Value Text)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode ReadAllEventsCompleted
+
+--------------------------------------------------------------------------------
 -- Result
 --------------------------------------------------------------------------------
 data Decision
@@ -580,6 +647,17 @@ newResolvedEvent rie = re
     link   = getField $ resolvedIndexedLink rie
     re     = ResolvedEvent
              { resolvedEventRecord = fmap newRecordedEvent record
+             , resolvedEventLink   = fmap newRecordedEvent link
+             }
+
+--------------------------------------------------------------------------------
+newResolvedEventFromBuf :: ResolvedEventBuf -> ResolvedEvent
+newResolvedEventFromBuf reb = re
+  where
+    record = Just $ newRecordedEvent $ getField $ resolvedEventBufEvent reb
+    link   = getField $ resolvedEventBufLink reb
+    re     = ResolvedEvent
+             { resolvedEventRecord = record
              , resolvedEventLink   = fmap newRecordedEvent link
              }
 
@@ -669,6 +747,40 @@ newStreamEventsSlice stream_id start dir reco = ses
           }
 
 --------------------------------------------------------------------------------
+data AllEventsSlice
+    = AllEventsSlice
+      { allEventsSliceResult    :: !ReadAllResult
+      , allEventsSliceFrom      :: !Position
+      , allEventsSliceNext      :: !Position
+      , allEventsSliceIsEOS     :: !Bool
+      , allEventsSliceEvents    :: ![ResolvedEvent]
+      , allEventsSliceDirection :: !ReadDirection
+      }
+    deriving Show
+
+--------------------------------------------------------------------------------
+newAllEventsSlice :: ReadDirection -> ReadAllEventsCompleted -> AllEventsSlice
+newAllEventsSlice dir raec = aes
+  where
+    res      = fromMaybe RA_SUCCESS (getField $ readAECResult raec)
+    evts     = fmap newResolvedEventFromBuf (getField $ readAECEvents raec)
+    r_com    = getField $ readAECCommitPosition raec
+    r_pre    = getField $ readAECPreparePosition raec
+    r_n_com  = getField $ readAECNextCommitPosition raec
+    r_n_pre  = getField $ readAECNextPreparePosition raec
+    from_pos = Position r_com r_pre
+    next_pos = Position r_n_com r_n_pre
+
+    aes = AllEventsSlice
+          { allEventsSliceResult    = res
+          , allEventsSliceFrom      = from_pos
+          , allEventsSliceNext      = next_pos
+          , allEventsSliceIsEOS     = null evts
+          , allEventsSliceEvents    = evts
+          , allEventsSliceDirection = dir
+          }
+
+--------------------------------------------------------------------------------
 -- Transaction
 --------------------------------------------------------------------------------
 data Transaction
@@ -716,6 +828,10 @@ data Command
     | ReadStreamEventsForwardCompletedCmd
     | ReadStreamEventsBackwardCmd
     | ReadStreamEventsBackwardCompletedCmd
+    | ReadAllEventsForwardCmd
+    | ReadAllEventsForwardCompletedCmd
+    | ReadAllEventsBackwardCmd
+    | ReadAllEventsBackwardCompletedCmd
     -- | CreateChunk
     -- | BadRequest
     -- | NotHandled
@@ -743,6 +859,10 @@ cmdWord8 cmd =
         ReadStreamEventsForwardCompletedCmd  -> 0xB3
         ReadStreamEventsBackwardCmd          -> 0xB4
         ReadStreamEventsBackwardCompletedCmd -> 0xB5
+        ReadAllEventsForwardCmd              -> 0xB6
+        ReadAllEventsForwardCompletedCmd     -> 0xB7
+        ReadAllEventsBackwardCmd             -> 0xB8
+        ReadAllEventsBackwardCompletedCmd    -> 0xB9
         -- CreateChunk       -> 0x12
         -- BadRequest        -> 0xF0
         -- NotHandled        -> 0xF1
@@ -769,6 +889,10 @@ word8Cmd wd =
         0xB3 -> Just ReadStreamEventsForwardCompletedCmd
         0xB4 -> Just ReadStreamEventsBackwardCmd
         0xB5 -> Just ReadStreamEventsBackwardCompletedCmd
+        0xB6 -> Just ReadAllEventsForwardCmd
+        0xB7 -> Just ReadAllEventsForwardCompletedCmd
+        0xB8 -> Just ReadAllEventsBackwardCmd
+        0xB9 -> Just ReadAllEventsBackwardCompletedCmd
         -- 0x12 -> Just CreateChunk
         -- 0xF0 -> Just BadRequest
         -- 0xF1 -> Just NotHandled

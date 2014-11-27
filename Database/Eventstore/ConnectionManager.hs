@@ -15,10 +15,12 @@ module Database.Eventstore.ConnectionManager
     , EventData
     , ExpectedVersion(..)
       -- * Result
+    , AllEventsSlice(..)
     , DeleteResult(..)
     , WriteResult(..)
     , ReadResult(..)
     , RecordedEvent(..)
+    , StreamEventsSlice(..)
     , eventResolved
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
@@ -31,6 +33,8 @@ module Database.Eventstore.ConnectionManager
     , eventStoreConnect
     , eventStoreDeleteStream
     , eventStoreReadEvent
+    , eventStoreReadAllEventsBackward
+    , eventStoreReadAllEventsForward
     , eventStoreReadStreamEventsBackward
     , eventStoreReadStreamEventsForward
     , eventStoreSendEvent
@@ -57,6 +61,7 @@ import Data.Text
 import Database.Eventstore.Internal.Processor
 import Database.Eventstore.Internal.Types
 import Database.Eventstore.Internal.Operation.DeleteStreamOperation
+import Database.Eventstore.Internal.Operation.ReadAllEventsOperation
 import Database.Eventstore.Internal.Operation.ReadEventOperation
 import Database.Eventstore.Internal.Operation.ReadStreamEventsOperation
 import Database.Eventstore.Internal.Operation.TransactionStartOperation
@@ -208,6 +213,50 @@ eventStoreReadStreamEventsCommon mgr dir stream_id start count res_link_tos = do
                                        start
                                        count
                                        res_link_tos
+
+    msgQueue mgr (RegisterOperation op)
+    return as
+  where
+    settings = mgrSettings mgr
+
+--------------------------------------------------------------------------------
+eventStoreReadAllEventsForward :: ConnectionManager
+                               -> Int64
+                               -> Int64
+                               -> Int32
+                               -> Bool
+                               -> IO (Async AllEventsSlice)
+eventStoreReadAllEventsForward mgr =
+    eventStoreReadAllEventsCommon mgr Forward
+
+--------------------------------------------------------------------------------
+eventStoreReadAllEventsBackward :: ConnectionManager
+                                -> Int64
+                                -> Int64
+                                -> Int32
+                                -> Bool
+                                -> IO (Async AllEventsSlice)
+eventStoreReadAllEventsBackward mgr =
+    eventStoreReadAllEventsCommon mgr Backward
+
+--------------------------------------------------------------------------------
+eventStoreReadAllEventsCommon :: ConnectionManager
+                              -> ReadDirection
+                              -> Int64
+                              -> Int64
+                              -> Int32
+                              -> Bool
+                              -> IO (Async AllEventsSlice)
+eventStoreReadAllEventsCommon mgr dir c_pos p_pos max_c res_link_tos = do
+    (as, mvar) <- createAsync
+
+    let op = readAllEventsOperation settings
+                                    dir
+                                    mvar
+                                    c_pos
+                                    p_pos
+                                    max_c
+                                    res_link_tos
 
     msgQueue mgr (RegisterOperation op)
     return as

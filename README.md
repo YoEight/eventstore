@@ -11,6 +11,7 @@ Basically, all we have for now are:
   4. Transaction
   5. ReadEvent
   6. ReadStreamEvents (Forward and Backward)
+  7. ReadAllEvents (Forward and Backward)
 
 Requirements
 ============
