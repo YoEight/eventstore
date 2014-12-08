@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Operation.DeleteStreamOperation
+-- Module : Database.EventStore.Internal.Operation.DeleteStreamOperation
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,20 +9,19 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Operation.DeleteStreamOperation
+module Database.EventStore.Internal.Operation.DeleteStreamOperation
     ( deleteStreamOperation ) where
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.STM
 import Data.Maybe
-import Data.Traversable
 
 --------------------------------------------------------------------------------
 import Data.Text
 
 --------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Operation.Common
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Operation.Common
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 deleteStreamOperation :: Settings

@@ -13,10 +13,10 @@ name:                eventstore
 version:             0.1.0.0
 
 -- A short (one-line) description of the package.
--- synopsis:
+synopsis: EventStore Haskell TCP Client
 
 -- A longer description of the package.
--- description:
+description: EventStore Haskell TCP Client
 
 -- The license under which the package is released.
 license:             BSD3
@@ -45,24 +45,26 @@ extra-source-files:  README.md
 -- Constraint on the version of Cabal needed to build this package.
 cabal-version:       >=1.10
 
+source-repository head
+  type: git
+  location: git://github.com/YoEight/eventstore.git
 
 library
   -- Modules exported by the library.
-  exposed-modules: Database.Eventstore
+  exposed-modules: Database.EventStore
 
   -- Modules included in this library but not exported.
-  other-modules:   Database.Eventstore.ConnectionManager
-                   Database.Eventstore.Internal.Packages
-                   Database.Eventstore.Internal.Processor
-                   Database.Eventstore.Internal.Reader
-                   Database.Eventstore.Internal.Types
-                   Database.Eventstore.Internal.Operation.Common
-                   Database.Eventstore.Internal.Operation.DeleteStreamOperation
-                   Database.Eventstore.Internal.Operation.ReadAllEventsOperation
-                   Database.Eventstore.Internal.Operation.ReadEventOperation
-                   Database.Eventstore.Internal.Operation.ReadStreamEventsOperation
-                   Database.Eventstore.Internal.Operation.TransactionStartOperation
-                   Database.Eventstore.Internal.Operation.WriteEventsOperation
+  other-modules:   Database.EventStore.Internal.Packages
+                   Database.EventStore.Internal.Processor
+                   Database.EventStore.Internal.Reader
+                   Database.EventStore.Internal.Types
+                   Database.EventStore.Internal.Operation.Common
+                   Database.EventStore.Internal.Operation.DeleteStreamOperation
+                   Database.EventStore.Internal.Operation.ReadAllEventsOperation
+                   Database.EventStore.Internal.Operation.ReadEventOperation
+                   Database.EventStore.Internal.Operation.ReadStreamEventsOperation
+                   Database.EventStore.Internal.Operation.TransactionStartOperation
+                   Database.EventStore.Internal.Operation.WriteEventsOperation
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:

@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Packages
+-- Module : Database.EventStore.Internal.Packages
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,7 +9,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Packages
+module Database.EventStore.Internal.Packages
     ( -- * Package Smart Contructors
       deleteStreamPackage
     , heartbeatPackage
@@ -32,7 +32,7 @@ import Data.UUID
 import System.Random
 
 --------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- Encode

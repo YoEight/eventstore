@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Operation.ReadEventOperation
+-- Module : Database.EventStore.Internal.Operation.ReadEventOperation
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,21 +9,19 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Operation.ReadEventOperation
+module Database.EventStore.Internal.Operation.ReadEventOperation
     ( readEventOperation ) where
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.STM
 import Data.Int
-import Data.Maybe
-import Data.Traversable
 
 --------------------------------------------------------------------------------
 import Data.Text
 
 --------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Operation.Common
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Operation.Common
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 readEventOperation :: Settings

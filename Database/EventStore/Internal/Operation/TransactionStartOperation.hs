@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Operation.TransactionStartOperation
+-- Module : Database.EventStore.Internal.Operation.TransactionStartOperation
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,7 +9,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Operation.TransactionStartOperation
+module Database.EventStore.Internal.Operation.TransactionStartOperation
     ( transactionStartOperation ) where
 
 --------------------------------------------------------------------------------
@@ -23,8 +23,8 @@ import Data.Text
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
-import Database.Eventstore.Internal.Operation.Common
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Operation.Common
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data TransactionEnv
