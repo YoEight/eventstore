@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Processor
+-- Module : Database.EventStore.Internal.Processor
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,7 +9,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Processor
+module Database.EventStore.Internal.Processor
     ( Application(..)
     , newProcessor
     ) where
@@ -19,29 +19,21 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import qualified Data.ByteString as B
-import           Data.Foldable (for_)
 import qualified Data.Map.Strict as M
-import           Data.Maybe
-import           Data.Monoid
-import           Data.Serialize.Get
 import           Data.Serialize.Put
-import           Data.Traversable (for)
-import           Data.Word
 import           System.IO
 import           Text.Printf
 
 --------------------------------------------------------------------------------
-import Data.ProtocolBuffers
-import Data.Serialize.Put
 import Data.Time
 import Data.UUID
 import Network
 import System.Random
 
 --------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Packages
-import Database.Eventstore.Internal.Reader
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Packages
+import Database.EventStore.Internal.Reader
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- Env
@@ -63,13 +55,13 @@ getMsg env = atomically $ readTChan (_chan env)
 sendMsg :: Env -> Msg -> IO ()
 sendMsg env msg = atomically $ writeTChan (_chan env) msg
 
---------------------------------------------------------------------------------
-heartbeatInterval :: Env -> NominalDiffTime
-heartbeatInterval env = _heartbeatInterval $ _settings env
+-- --------------------------------------------------------------------------------
+-- heartbeatInterval :: Env -> NominalDiffTime
+-- heartbeatInterval env = _heartbeatInterval $ _settings env
 
---------------------------------------------------------------------------------
-heartbeatTimeout :: Env -> NominalDiffTime
-heartbeatTimeout env = _heartbeatTimeout $ _settings env
+-- --------------------------------------------------------------------------------
+-- heartbeatTimeout :: Env -> NominalDiffTime
+-- heartbeatTimeout env = _heartbeatTimeout $ _settings env
 
 --------------------------------------------------------------------------------
 newEnv :: Settings -> TChan Msg -> HostName -> Int -> IO Env
@@ -107,18 +99,18 @@ data Connection
 
 --------------------------------------------------------------------------------
 connectionSend :: Connection -> Put -> IO ()
-connectionSend conn put = B.hPut handle (runPut put) >> hFlush handle
+connectionSend conn put = B.hPut hdl (runPut put) >> hFlush hdl
   where
-    handle = _connHandle conn
+    hdl = _connHandle conn
 
 --------------------------------------------------------------------------------
 connectionClose :: Connection -> IO ()
 connectionClose conn = do
     killThread thread_id
-    hClose handle
+    hClose hdl
     printf "Disconnected %s\n" conn_id_str
   where
-    handle      = _connHandle conn
+    hdl         = _connHandle conn
     thread_id   = _connReaderThreadId conn
     conn_id_str = toString $ _connId conn
 
@@ -145,7 +137,7 @@ data HeartbeatInfo
 
 --------------------------------------------------------------------------------
 -- | Holds every needed piece of information in order to properly communicate
---   with an Eventstore backend
+--   with an EventStore backend
 data State
     = State
       { _lastTime      :: !UTCTime
@@ -183,7 +175,7 @@ newState = do
         info        = HeartbeatInfo
                       { _lastPackage   = package_num
                       , _intervalStage = True
-                      , _elapsedTime   = fromIntegral 0
+                      , _elapsedTime   = fromIntegral (0 :: Integer)
                       }
 
         state       = State
@@ -210,17 +202,17 @@ newProcessor settings chan host port = do
 --------------------------------------------------------------------------------
 connecting :: Processor
 connecting env state = do
-    handle <- connectTo host (PortNumber $ fromIntegral port)
-    hSetBuffering handle NoBuffering
+    hdl <- connectTo host (PortNumber $ fromIntegral port)
+    hSetBuffering hdl NoBuffering
 
-    rid      <- forkFinally (readerThread chan handle) recovering
+    rid      <- forkFinally (readerThread chan hdl) recovering
     conn_id  <- randomIO
     cur_time <- getCurrentTime
     let pack_num  = _packageNumber state
         new_state = updateHeartbeatInfo state cur_time True pack_num
         conn      = Connection
                     { _connId             = conn_id
-                    , _connHandle         = handle
+                    , _connHandle         = hdl
                     , _connReaderThreadId = rid
                     }
 
@@ -311,13 +303,6 @@ handleHeartbeatRequest conn pack =
   where
     corr_id     = packageCorrelation pack
     pack_resp   = heartbeatResponsePackage corr_id
-    corr_id_str = toString corr_id
-
---------------------------------------------------------------------------------
-handleBadRequest :: Package -> IO ()
-handleBadRequest pack = printf "BadRequest on %s\n" cor_id
-  where
-    cor_id = toString $ packageCorrelation pack
 
 --------------------------------------------------------------------------------
 unhandledPackage :: Package -> IO ()

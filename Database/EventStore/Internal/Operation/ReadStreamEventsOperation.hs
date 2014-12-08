@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Operation.ReadStreamEventsOperation
+-- Module : Database.EventStore.Internal.Operation.ReadStreamEventsOperation
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,20 +9,19 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Operation.ReadStreamEventsOperation
+module Database.EventStore.Internal.Operation.ReadStreamEventsOperation
     ( readStreamEventsOperation ) where
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.STM
 import Data.Int
-import Data.Maybe
 
 --------------------------------------------------------------------------------
 import Data.Text
 
 --------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Operation.Common
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Operation.Common
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 readStreamEventsOperation :: Settings
@@ -33,7 +32,7 @@ readStreamEventsOperation :: Settings
                           -> Int32
                           -> Bool
                           -> Operation
-readStreamEventsOperation settings dir mvar stream_id start count res_link_tos =
+readStreamEventsOperation settings dir mvar stream_id start cnt res_link_tos =
     createOperation params
   where
     req = case dir of
@@ -53,7 +52,7 @@ readStreamEventsOperation settings dir mvar stream_id start count res_link_tos =
                  let req_master = _requireMaster settings
                      request    = newReadStreamEvents stream_id
                                                       start
-                                                      count
+                                                      cnt
                                                       res_link_tos
                                                       req_master in
                  return request

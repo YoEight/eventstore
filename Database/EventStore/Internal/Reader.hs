@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Reader
+-- Module : Database.EventStore.Internal.Reader
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,13 +9,12 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Reader (readerThread) where
+module Database.EventStore.Internal.Reader (readerThread) where
 
 --------------------------------------------------------------------------------
 import           Prelude hiding (take)
 import           Control.Concurrent.STM
 import qualified Data.ByteString as B
-import           Data.Word
 import           System.IO
 import           Text.Printf
 
@@ -24,16 +23,12 @@ import Data.Serialize.Get
 import Data.UUID
 
 --------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 readerThread :: TChan Msg -> Handle -> IO ()
 readerThread chan h = loop
   where
-    carbage ""   = True
-    carbage "\n" = True
-    carbage _    = False
-
     parsePackage bs =
         case runGet getPackage bs of
             Left e     -> send chan (Notice $ printf "Parsing error [%s]\n" e)
@@ -42,7 +37,7 @@ readerThread chan h = loop
     loop = do
         header_bs <- B.hGet h 4
         case runGet getLengthPrefix header_bs of
-            Left e
+            Left _
                 -> send chan (Notice "Wrong package framing\n")
             Right length_prefix
                 -> B.hGet h length_prefix >>= parsePackage

@@ -4,7 +4,7 @@
 {-# OPTIONS_GHC -fcontext-stack=26 #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Types
+-- Module : Database.EventStore.Internal.Types
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -13,7 +13,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Types where
+module Database.EventStore.Internal.Types where
 
 --------------------------------------------------------------------------------
 import Control.Applicative ((<|>))
@@ -25,10 +25,9 @@ import Data.Maybe
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
-import GHC.TypeLits
 
 --------------------------------------------------------------------------------
-import           Control.Concurrent.Async
+import           Control.Concurrent.Async hiding (link)
 import qualified Data.Aeson as A
 import           Data.ProtocolBuffers
 import           Data.Text (Text)

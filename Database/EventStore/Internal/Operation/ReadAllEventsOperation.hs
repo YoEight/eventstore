@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Operation.ReadAllEventsOperation
+-- Module : Database.EventStore.Internal.Operation.ReadAllEventsOperation
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -10,7 +10,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Operation.ReadAllEventsOperation
+module Database.EventStore.Internal.Operation.ReadAllEventsOperation
     ( readAllEventsOperation ) where
 
 --------------------------------------------------------------------------------
@@ -19,11 +19,8 @@ import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import Data.Text
-
---------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Operation.Common
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Operation.Common
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 readAllEventsOperation :: Settings

@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.Eventstore.Internal.Operation.Common
+-- Module : Database.EventStore.Internal.Operation.Common
 -- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,7 +9,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.Eventstore.Internal.Operation.Common
+module Database.EventStore.Internal.Operation.Common
     ( OperationParams(..)
     , createOperation
     -- * Re-exports
@@ -19,11 +19,10 @@ module Database.Eventstore.Internal.Operation.Common
 --------------------------------------------------------------------------------
 import Data.ProtocolBuffers
 import Data.Serialize
-import Data.Text
 import Data.UUID
 
 --------------------------------------------------------------------------------
-import Database.Eventstore.Internal.Types
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data OperationParams request response
@@ -62,10 +61,10 @@ createPackage params uuid = do
 --------------------------------------------------------------------------------
 inspection :: Decode b => OperationParams a b -> Package -> IO Decision
 inspection params pack
-    | found == exp = deeperInspection params pack
-    | otherwise    = failed (InvalidServerResponse exp found)
+    | found == exp_v = deeperInspection params pack
+    | otherwise      = failed (InvalidServerResponse exp_v found)
   where
-    exp    = opResponseCmd params
+    exp_v  = opResponseCmd params
     failed = opFailure params
     found  = packageCmd pack
 
