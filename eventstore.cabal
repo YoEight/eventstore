@@ -10,7 +10,7 @@ name:                eventstore
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.1.0.0
+version:             0.1.0.1
 
 -- A short (one-line) description of the package.
 synopsis: EventStore Haskell TCP Client
@@ -58,13 +58,15 @@ library
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Reader
                    Database.EventStore.Internal.Types
-                   Database.EventStore.Internal.Operation.Common
+                   Database.EventStore.Internal.Manager.Operation
                    Database.EventStore.Internal.Operation.DeleteStreamOperation
                    Database.EventStore.Internal.Operation.ReadAllEventsOperation
                    Database.EventStore.Internal.Operation.ReadEventOperation
                    Database.EventStore.Internal.Operation.ReadStreamEventsOperation
                    Database.EventStore.Internal.Operation.TransactionStartOperation
                    Database.EventStore.Internal.Operation.WriteEventsOperation
+                   Database.EventStore.Internal.Util.Sodium
+                   Database.EventStore.Internal.Writer
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
@@ -74,18 +76,16 @@ library
                      , attoparsec >=0.12     && <0.13
                      , aeson      >=0.8      && <0.9
                      , async      >=2.0      && <2.1
-                     , binary     ==0.7.*
                      , bytestring >=0.10.4   && <0.10.5
                      , cereal     >=0.4      && <0.5
                      , containers >=0.5      && <0.6
                      , network    ==2.6.*
                      , protobuf   >=0.2      && <0.3
                      , random     ==1.*
+                     , sodium     ==0.11.*
                      , stm        >=2.2      && <2.5
-                     , suspend    ==0.2.*
                      , text       >=1.1.1    && <1.2
                      , time       >=1.4      && <1.6
-                     , timers     ==0.2.*
                      , uuid       ==1.3.*
 
   -- Directories containing source files.

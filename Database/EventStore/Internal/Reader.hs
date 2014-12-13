@@ -13,7 +13,7 @@ module Database.EventStore.Internal.Reader (readerThread) where
 
 --------------------------------------------------------------------------------
 import           Prelude hiding (take)
-import           Control.Concurrent.STM
+import           Control.Monad
 import qualified Data.ByteString as B
 import           System.IO
 import           Text.Printf
@@ -26,26 +26,19 @@ import Data.UUID
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-readerThread :: TChan Msg -> Handle -> IO ()
-readerThread chan h = loop
+readerThread :: (Package -> IO ()) -> Handle -> IO ()
+readerThread push_p h = forever $ do
+    header_bs <- B.hGet h 4
+    case runGet getLengthPrefix header_bs of
+        Left _
+            -> error "Wrong package framing"
+        Right length_prefix
+            -> B.hGet h length_prefix >>= parsePackage
   where
     parsePackage bs =
         case runGet getPackage bs of
-            Left e     -> send chan (Notice $ printf "Parsing error [%s]\n" e)
-            Right pack -> send chan (RecvPackage pack)
-
-    loop = do
-        header_bs <- B.hGet h 4
-        case runGet getLengthPrefix header_bs of
-            Left _
-                -> send chan (Notice "Wrong package framing\n")
-            Right length_prefix
-                -> B.hGet h length_prefix >>= parsePackage
-        loop
-
---------------------------------------------------------------------------------
-send :: TChan Msg -> Msg -> IO ()
-send chan msg = atomically $ writeTChan chan msg
+            Left e     -> error $ printf "Parsing error [%s]" e
+            Right pack -> push_p pack
 
 --------------------------------------------------------------------------------
 -- Parsers
@@ -56,7 +49,7 @@ getLengthPrefix = fmap fromIntegral getWord32le
 --------------------------------------------------------------------------------
 getPackage :: Get Package
 getPackage = do
-    cmd  <- getCmd
+    cmd  <- getWord8
     flg  <- getFlag
     col  <- getUUID
     rest <- remaining
@@ -70,14 +63,6 @@ getPackage = do
                }
 
     return pack
-
---------------------------------------------------------------------------------
-getCmd :: Get Command
-getCmd = do
-    wd <- getWord8
-    case word8Cmd wd of
-        Just cmd -> return cmd
-        _        -> fail $ printf "TCP: Unhandled command value 0x%x" wd
 
 --------------------------------------------------------------------------------
 getFlag :: Get Flag

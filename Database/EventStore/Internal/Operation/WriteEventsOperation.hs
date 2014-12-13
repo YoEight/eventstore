@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DataKinds     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation.WriteEventsOperation
@@ -14,15 +16,60 @@ module Database.EventStore.Internal.Operation.WriteEventsOperation
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.STM
+import Data.Int
 import Data.Maybe
 import Data.Traversable
+import GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
+import Data.ProtocolBuffers
 import Data.Text
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Operation.Common
+import Database.EventStore.Internal.Manager.Operation
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+data WriteEvents
+    = WriteEvents
+      { writeStreamId        :: Required 1 (Value Text)
+      , writeExpectedVersion :: Required 2 (Value Int32)
+      , writeEvents          :: Repeated 3 (Message NewEvent)
+      , writeRequireMaster   :: Required 4 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Encode WriteEvents
+
+--------------------------------------------------------------------------------
+newWriteEvents :: Text        -- ^ Stream
+               -> Int32       -- ^ Expected version
+               -> [NewEvent]  -- ^ Events
+               -> Bool        -- ^ Require master
+               -> WriteEvents
+newWriteEvents stream_id exp_ver evts req_master =
+    WriteEvents
+    { writeStreamId        = putField stream_id
+    , writeExpectedVersion = putField exp_ver
+    , writeEvents          = putField evts
+    , writeRequireMaster   = putField req_master
+    }
+
+--------------------------------------------------------------------------------
+data WriteEventsCompleted
+    = WriteEventsCompleted
+      { writeCompletedResult          :: Required 1 (Enumeration OpResult)
+      , writeCompletedMessage         :: Optional 2 (Value Text)
+      , writeCompletedFirstNumber     :: Required 3 (Value Int32)
+      , writeCompletedLastNumber      :: Required 4 (Value Int32)
+      , writeCompletedPreparePosition :: Optional 5 (Value Int64)
+      , writeCompletedCommitPosition  :: Optional 6 (Value Int64)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode WriteEventsCompleted
 
 --------------------------------------------------------------------------------
 writeEventsOperation :: Settings
@@ -30,30 +77,27 @@ writeEventsOperation :: Settings
                      -> Text
                      -> ExpectedVersion
                      -> [Event]
-                     -> Operation
+                     -> OperationParams
 writeEventsOperation settings mvar evt_stream exp_ver evts =
-    createOperation params
-  where
-    params =
-        OperationParams
-        { opSettings    = settings
-        , opRequestCmd  = WriteEventsCmd
-        , opResponseCmd = WriteEventsCompletedCmd
+    OperationParams
+    { opSettings    = settings
+    , opRequestCmd  = 0x82
+    , opResponseCmd = 0x83
 
-        , opRequest = do
-              new_evts <- traverse eventToNewEvent evts
+    , opRequest = do
+        new_evts <- traverse eventToNewEvent evts
 
-              let require_master = _requireMaster settings
-                  exp_ver_int32  = expVersionInt32 exp_ver
-                  request        = newWriteEvents evt_stream
+        let require_master = _requireMaster settings
+            exp_ver_int32  = expVersionInt32 exp_ver
+            request        = newWriteEvents evt_stream
                                                   exp_ver_int32
                                                   new_evts
                                                   require_master
-              return request
+        return request
 
-        , opSuccess = inspect mvar evt_stream exp_ver
-        , opFailure = failed mvar
-        }
+    , opSuccess = inspect mvar evt_stream exp_ver
+    , opFailure = failed mvar
+    }
 
 --------------------------------------------------------------------------------
 inspect :: TMVar (OperationExceptional WriteResult)

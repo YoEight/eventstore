@@ -53,7 +53,7 @@ data OperationException
     | StreamDeleted Text                        -- ^ Stream
     | InvalidTransaction
     | AccessDenied Text                         -- ^ Stream
-    | InvalidServerResponse Command Command     -- ^ Expected, Found
+    | InvalidServerResponse Word8 Word8         -- ^ Expected, Found
     | ProtobufDecodingError String
     | ServerError (Maybe Text)
     deriving (Show, Typeable)
@@ -123,13 +123,6 @@ expVersionInt32 EmptyStream = 0
 --------------------------------------------------------------------------------
 -- EventStore Messages
 --------------------------------------------------------------------------------
-data Operation
-    = Operation
-      { operationCreatePackage :: UUID    -> IO Package
-      , operationInspect       :: Package -> IO Decision
-      }
-
---------------------------------------------------------------------------------
 data OpResult
     = OP_SUCCESS
     | OP_PREPARE_TIMEOUT
@@ -176,88 +169,6 @@ newEvent evt_type data_type meta_type evt_data evt_meta = do
                      }
 
     return new_evt
-
---------------------------------------------------------------------------------
-data WriteEvents
-    = WriteEvents
-      { writeStreamId        :: Required 1 (Value Text)
-      , writeExpectedVersion :: Required 2 (Value Int32)
-      , writeEvents          :: Repeated 3 (Message NewEvent)
-      , writeRequireMaster   :: Required 4 (Value Bool)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Encode WriteEvents
-
---------------------------------------------------------------------------------
-newWriteEvents :: Text        -- ^ Stream
-               -> Int32       -- ^ Expected version
-               -> [NewEvent]  -- ^ Events
-               -> Bool        -- ^ Require master
-               -> WriteEvents
-newWriteEvents stream_id exp_ver evts req_master =
-    WriteEvents
-    { writeStreamId        = putField stream_id
-    , writeExpectedVersion = putField exp_ver
-    , writeEvents          = putField evts
-    , writeRequireMaster   = putField req_master
-    }
-
---------------------------------------------------------------------------------
-data WriteEventsCompleted
-    = WriteEventsCompleted
-      { writeCompletedResult          :: Required 1 (Enumeration OpResult)
-      , writeCompletedMessage         :: Optional 2 (Value Text)
-      , writeCompletedFirstNumber     :: Required 3 (Value Int32)
-      , writeCompletedLastNumber      :: Required 4 (Value Int32)
-      , writeCompletedPreparePosition :: Optional 5 (Value Int64)
-      , writeCompletedCommitPosition  :: Optional 6 (Value Int64)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Decode WriteEventsCompleted
-
---------------------------------------------------------------------------------
-data DeleteStream
-    = DeleteStream
-      { deleteStreamId              :: Required 1 (Value Text)
-      , deleteStreamExpectedVersion :: Required 2 (Value Int32)
-      , deleteStreamRequireMaster   :: Required 3 (Value Bool)
-      , deleteStreamHardDelete      :: Optional 4 (Value Bool)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Encode DeleteStream
-
---------------------------------------------------------------------------------
-newDeleteStream :: Text
-                -> Int32
-                -> Bool
-                -> Maybe Bool
-                -> DeleteStream
-newDeleteStream stream_id exp_ver req_master hard_delete =
-    DeleteStream
-    { deleteStreamId              = putField stream_id
-    , deleteStreamExpectedVersion = putField exp_ver
-    , deleteStreamRequireMaster   = putField req_master
-    , deleteStreamHardDelete      = putField hard_delete
-    }
-
---------------------------------------------------------------------------------
-data DeleteStreamCompleted
-    = DeleteStreamCompleted
-      { deleteCompletedResult          :: Required 1 (Enumeration OpResult)
-      , deleteCompletedMessage         :: Optional 2 (Value Text)
-      , deleteCompletedPreparePosition :: Optional 3 (Value Int64)
-      , deleteCompletedCommitPosition  :: Optional 4 (Value Int64)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Decode DeleteStreamCompleted
 
 --------------------------------------------------------------------------------
 data TransactionStart
@@ -364,39 +275,6 @@ data TransactionCommitCompleted
 instance Decode TransactionCommitCompleted
 
 --------------------------------------------------------------------------------
-data ReadEvent
-    = ReadEvent
-      { readEventStreamId       :: Required 1 (Value Text)
-      , readEventNumber         :: Required 2 (Value Int32)
-      , readEventResolveLinkTos :: Required 3 (Value Bool)
-      , readEventRequireMaster  :: Required 4 (Value Bool)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Encode ReadEvent
-
---------------------------------------------------------------------------------
-newReadEvent :: Text -> Int32 -> Bool -> Bool -> ReadEvent
-newReadEvent stream_id evt_num res_link_tos req_master =
-    ReadEvent
-    { readEventStreamId       = putField stream_id
-    , readEventNumber         = putField evt_num
-    , readEventResolveLinkTos = putField res_link_tos
-    , readEventRequireMaster  = putField req_master
-    }
-
---------------------------------------------------------------------------------
-data ReadEventResult
-    = RE_SUCCESS
-    | RE_NOT_FOUND
-    | RE_NO_STREAM
-    | RE_STREAM_DELETED
-    | RE_ERROR
-    | RE_ACCESS_DENIED
-    deriving (Eq, Enum, Show)
-
---------------------------------------------------------------------------------
 data EventRecord
     = EventRecord
       { eventRecordStreamId     :: Required 1  (Value Text)
@@ -427,112 +305,6 @@ data ResolvedIndexedEvent
 instance Decode ResolvedIndexedEvent
 
 --------------------------------------------------------------------------------
-data ReadEventCompleted
-    = ReadEventCompleted
-      { readCompletedResult       :: Required 1 (Enumeration ReadEventResult)
-      , readCompletedIndexedEvent :: Required 2 (Message ResolvedIndexedEvent)
-      , readCompletedError        :: Optional 3 (Value Text)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Decode ReadEventCompleted
-
---------------------------------------------------------------------------------
-data ReadStreamEvents
-    = ReadStreamEvents
-      { readStreamId             :: Required 1 (Value Text)
-      , readStreamEventNumber    :: Required 2 (Value Int32)
-      , readStreamMaxCount       :: Required 3 (Value Int32)
-      , readStreamResolveLinkTos :: Required 4 (Value Bool)
-      , readStreamRequireMaster  :: Required 5 (Value Bool)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-newReadStreamEvents :: Text
-                    -> Int32
-                    -> Int32
-                    -> Bool
-                    -> Bool
-                    -> ReadStreamEvents
-newReadStreamEvents stream_id evt_num max_c res_link_tos req_master =
-    ReadStreamEvents
-    { readStreamId             = putField stream_id
-    , readStreamEventNumber    = putField evt_num
-    , readStreamMaxCount       = putField max_c
-    , readStreamResolveLinkTos = putField res_link_tos
-    , readStreamRequireMaster  = putField req_master
-    }
-
---------------------------------------------------------------------------------
-instance Encode ReadStreamEvents
-
---------------------------------------------------------------------------------
-data ReadStreamResult
-    = RS_SUCCESS
-    | RS_NO_STREAM
-    | RS_STREAM_DELETED
-    | RS_NOT_MODIFIED
-    | RS_ERROR
-    | RS_ACCESS_DENIED
-    deriving (Eq, Enum, Show)
-
---------------------------------------------------------------------------------
-data ReadStreamEventsCompleted
-    = ReadStreamEventsCompleted
-      { readSECEvents             :: Repeated 1 (Message ResolvedIndexedEvent)
-      , readSECResult             :: Required 2 (Enumeration ReadStreamResult)
-      , readSECNextNumber         :: Required 3 (Value Int32)
-      , readSECLastNumber         :: Required 4 (Value Int32)
-      , readSECEndOfStream        :: Required 5 (Value Bool)
-      , readSECLastCommitPosition :: Required 6 (Value Int64)
-      , readSECError              :: Optional 7 (Value Text)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Decode ReadStreamEventsCompleted
-
---------------------------------------------------------------------------------
-data ReadAllEvents
-    = ReadAllEvents
-      { readAllEventsCommitPosition  :: Required 1 (Value Int64)
-      , readAllEventsPreparePosition :: Required 2 (Value Int64)
-      , readAllEventsMaxCount        :: Required 3 (Value Int32)
-      , readAllEventsResolveLinkTos  :: Required 4 (Value Bool)
-      , readAllEventsRequireMaster   :: Required 5 (Value Bool)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Encode ReadAllEvents
-
---------------------------------------------------------------------------------
-newReadAllEvents :: Int64
-                 -> Int64
-                 -> Int32
-                 -> Bool
-                 -> Bool
-                 -> ReadAllEvents
-newReadAllEvents c_pos p_pos max_c res_link_tos req_master =
-    ReadAllEvents
-    { readAllEventsCommitPosition  = putField c_pos
-    , readAllEventsPreparePosition = putField p_pos
-    , readAllEventsMaxCount        = putField max_c
-    , readAllEventsResolveLinkTos  = putField res_link_tos
-    , readAllEventsRequireMaster   = putField req_master
-    }
-
---------------------------------------------------------------------------------
-data ReadAllResult
-    = RA_SUCCESS
-    | RA_NOT_MODIFIED
-    | RA_ERROR
-    | RA_ACCESS_DENIED
-    deriving (Eq, Enum, Show)
-
---------------------------------------------------------------------------------
 data ResolvedEventBuf
     = ResolvedEventBuf
       { resolvedEventBufEvent           :: Required 1 (Message EventRecord)
@@ -544,22 +316,6 @@ data ResolvedEventBuf
 
 --------------------------------------------------------------------------------
 instance Decode ResolvedEventBuf
-
---------------------------------------------------------------------------------
-data ReadAllEventsCompleted
-    = ReadAllEventsCompleted
-      { readAECCommitPosition      :: Required 1 (Value Int64)
-      , readAECPreparePosition     :: Required 2 (Value Int64)
-      , readAECEvents              :: Repeated 3 (Message ResolvedEventBuf)
-      , readAECNextCommitPosition  :: Required 4 (Value Int64)
-      , readAECNextPreparePosition :: Required 5 (Value Int64)
-      , readAECResult              :: Optional 6 (Enumeration ReadAllResult)
-      , readAECError               :: Optional 7 (Value Text)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Decode ReadAllEventsCompleted
 
 --------------------------------------------------------------------------------
 -- Result
@@ -675,109 +431,10 @@ resolvedEventOriginalStreamId =
     fmap recordedEventStreamId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
-data ReadResult
-    = ReadResult
-      { readResultStatus        :: !ReadEventResult
-      , readResultStreamId      :: !Text
-      , readResultEventNumber   :: !Int32
-      , readResultResolvedEvent :: !(Maybe ResolvedEvent)
-      }
-    deriving Show
-
---------------------------------------------------------------------------------
-newReadResult :: ReadEventResult
-              -> Text
-              -> Int32
-              -> ResolvedIndexedEvent
-              -> ReadResult
-newReadResult status stream_id evt_num rie = rr
-  where
-    may_re =
-        case status of
-            RE_SUCCESS -> Just $ newResolvedEvent rie
-            _          -> Nothing
-
-    rr = ReadResult
-         { readResultStatus        = status
-         , readResultStreamId      = stream_id
-         , readResultEventNumber   = evt_num
-         , readResultResolvedEvent = may_re
-         }
-
---------------------------------------------------------------------------------
 data ReadDirection
     = Forward
     | Backward
     deriving Show
-
---------------------------------------------------------------------------------
-data StreamEventsSlice
-    = StreamEventsSlice
-      { streamEventsSliceResult    :: !ReadStreamResult
-      , streamEventsSliceStreamId  :: !Text
-      , streamEventsSliceStart     :: !Int32
-      , streamEventsSliceNext      :: !Int32
-      , streamEventsSliceLast      :: !Int32
-      , streamEventsSliceIsEOS     :: !Bool
-      , streamEventsSliceEvents    :: ![ResolvedEvent]
-      , streamEventsSliceDirection :: !ReadDirection
-      }
-    deriving Show
-
---------------------------------------------------------------------------------
-newStreamEventsSlice :: Text
-                     -> Int32
-                     -> ReadDirection
-                     -> ReadStreamEventsCompleted
-                     -> StreamEventsSlice
-newStreamEventsSlice stream_id start dir reco = ses
-  where
-    evts = getField $ readSECEvents reco
-
-    ses = StreamEventsSlice
-          { streamEventsSliceResult    = getField $ readSECResult reco
-          , streamEventsSliceStreamId  = stream_id
-          , streamEventsSliceStart     = start
-          , streamEventsSliceNext      = getField $ readSECNextNumber reco
-          , streamEventsSliceLast      = getField $ readSECLastNumber reco
-          , streamEventsSliceIsEOS     = getField $ readSECEndOfStream reco
-          , streamEventsSliceEvents    = fmap newResolvedEvent evts
-          , streamEventsSliceDirection = dir
-          }
-
---------------------------------------------------------------------------------
-data AllEventsSlice
-    = AllEventsSlice
-      { allEventsSliceResult    :: !ReadAllResult
-      , allEventsSliceFrom      :: !Position
-      , allEventsSliceNext      :: !Position
-      , allEventsSliceIsEOS     :: !Bool
-      , allEventsSliceEvents    :: ![ResolvedEvent]
-      , allEventsSliceDirection :: !ReadDirection
-      }
-    deriving Show
-
---------------------------------------------------------------------------------
-newAllEventsSlice :: ReadDirection -> ReadAllEventsCompleted -> AllEventsSlice
-newAllEventsSlice dir raec = aes
-  where
-    res      = fromMaybe RA_SUCCESS (getField $ readAECResult raec)
-    evts     = fmap newResolvedEventFromBuf (getField $ readAECEvents raec)
-    r_com    = getField $ readAECCommitPosition raec
-    r_pre    = getField $ readAECPreparePosition raec
-    r_n_com  = getField $ readAECNextCommitPosition raec
-    r_n_pre  = getField $ readAECNextPreparePosition raec
-    from_pos = Position r_com r_pre
-    next_pos = Position r_n_com r_n_pre
-
-    aes = AllEventsSlice
-          { allEventsSliceResult    = res
-          , allEventsSliceFrom      = from_pos
-          , allEventsSliceNext      = next_pos
-          , allEventsSliceIsEOS     = null evts
-          , allEventsSliceEvents    = evts
-          , allEventsSliceDirection = dir
-          }
 
 --------------------------------------------------------------------------------
 -- Transaction
@@ -806,115 +463,16 @@ flagWord8 None          = 0x00
 flagWord8 Authenticated = 0x01
 
 --------------------------------------------------------------------------------
--- Command
---------------------------------------------------------------------------------
-data Command
-    = HeartbeatRequest
-    | HeartbeatResponse
-    | WriteEventsCmd
-    | WriteEventsCompletedCmd
-    | DeleteStreamCmd
-    | DeleteStreamCompletedCmd
-    | TransactionStartCmd
-    | TransactionStartCompletedCmd
-    | TransactionWriteCmd
-    | TransactionWriteCompletedCmd
-    | TransactionCommitCmd
-    | TransactionCommitCompletedCmd
-    | ReadEventCmd
-    | ReadEventCompletedCmd
-    | ReadStreamEventsForwardCmd
-    | ReadStreamEventsForwardCompletedCmd
-    | ReadStreamEventsBackwardCmd
-    | ReadStreamEventsBackwardCompletedCmd
-    | ReadAllEventsForwardCmd
-    | ReadAllEventsForwardCompletedCmd
-    | ReadAllEventsBackwardCmd
-    | ReadAllEventsBackwardCompletedCmd
-    -- | CreateChunk
-    -- | BadRequest
-    -- | NotHandled
-    deriving (Eq, Show)
-
---------------------------------------------------------------------------------
-cmdWord8 :: Command -> Word8
-cmdWord8 cmd =
-    case cmd of
-        HeartbeatRequest                     -> 0x01
-        HeartbeatResponse                    -> 0x02
-        WriteEventsCmd                       -> 0x82
-        WriteEventsCompletedCmd              -> 0x83
-        DeleteStreamCmd                      -> 0x8A
-        DeleteStreamCompletedCmd             -> 0x8B
-        TransactionStartCmd                  -> 0x84
-        TransactionStartCompletedCmd         -> 0x85
-        TransactionWriteCmd                  -> 0x86
-        TransactionWriteCompletedCmd         -> 0x87
-        TransactionCommitCmd                 -> 0x88
-        TransactionCommitCompletedCmd        -> 0x89
-        ReadEventCmd                         -> 0xB0
-        ReadEventCompletedCmd                -> 0xB1
-        ReadStreamEventsForwardCmd           -> 0xB2
-        ReadStreamEventsForwardCompletedCmd  -> 0xB3
-        ReadStreamEventsBackwardCmd          -> 0xB4
-        ReadStreamEventsBackwardCompletedCmd -> 0xB5
-        ReadAllEventsForwardCmd              -> 0xB6
-        ReadAllEventsForwardCompletedCmd     -> 0xB7
-        ReadAllEventsBackwardCmd             -> 0xB8
-        ReadAllEventsBackwardCompletedCmd    -> 0xB9
-        -- CreateChunk       -> 0x12
-        -- BadRequest        -> 0xF0
-        -- NotHandled        -> 0xF1
-
---------------------------------------------------------------------------------
-word8Cmd :: Word8 -> Maybe Command
-word8Cmd wd =
-    case wd of
-        0x01 -> Just HeartbeatRequest
-        0x02 -> Just HeartbeatResponse
-        0x82 -> Just WriteEventsCmd
-        0x83 -> Just WriteEventsCompletedCmd
-        0x8A -> Just DeleteStreamCmd
-        0x8B -> Just DeleteStreamCompletedCmd
-        0x84 -> Just TransactionStartCmd
-        0x85 -> Just TransactionStartCompletedCmd
-        0x86 -> Just TransactionWriteCmd
-        0x87 -> Just TransactionWriteCompletedCmd
-        0x88 -> Just TransactionCommitCmd
-        0x89 -> Just TransactionCommitCompletedCmd
-        0xB0 -> Just ReadEventCmd
-        0xB1 -> Just ReadEventCompletedCmd
-        0xB2 -> Just ReadStreamEventsForwardCmd
-        0xB3 -> Just ReadStreamEventsForwardCompletedCmd
-        0xB4 -> Just ReadStreamEventsBackwardCmd
-        0xB5 -> Just ReadStreamEventsBackwardCompletedCmd
-        0xB6 -> Just ReadAllEventsForwardCmd
-        0xB7 -> Just ReadAllEventsForwardCompletedCmd
-        0xB8 -> Just ReadAllEventsBackwardCmd
-        0xB9 -> Just ReadAllEventsBackwardCompletedCmd
-        -- 0x12 -> Just CreateChunk
-        -- 0xF0 -> Just BadRequest
-        -- 0xF1 -> Just NotHandled
-        _    -> Nothing
-
---------------------------------------------------------------------------------
+-- Package
 --------------------------------------------------------------------------------
 data Package
     = Package
-      { packageCmd         :: !Command
+      { packageCmd         :: !Word8
       , packageFlag        :: !Flag
       , packageCorrelation :: !UUID
       , packageData        :: !ByteString
       }
     deriving Show
-
---------------------------------------------------------------------------------
-data Msg
-    = Reconnect
-    | RecvPackage Package
-    | RegisterOperation Operation
-    | Notice String
-    | Tick
 
 --------------------------------------------------------------------------------
 -- Settings

@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation.TransactionStartOperation
@@ -14,60 +15,60 @@ module Database.EventStore.Internal.Operation.TransactionStartOperation
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.STM
+import Data.Int
 import Data.Maybe
 import Data.Traversable
 
 --------------------------------------------------------------------------------
-import Data.Int
+import Control.Concurrent.Async
+import Data.ProtocolBuffers
 import Data.Text
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.Async
-import Database.EventStore.Internal.Operation.Common
+import Database.EventStore.Internal.Manager.Operation
+import Database.EventStore.Internal.Processor
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data TransactionEnv
     = TransactionEnv
       { _transSettings        :: Settings
-      , _transChan            :: TChan Msg
+      , _transProcessor       :: Processor
       , _transStreamId        :: Text
       , _transExpectedVersion :: ExpectedVersion
       }
 
 --------------------------------------------------------------------------------
 transactionStartOperation :: Settings
-                          -> TChan Msg
+                          -> Processor
                           -> TMVar (OperationExceptional Transaction)
                           -> Text
                           -> ExpectedVersion
-                          -> Operation
-transactionStartOperation settings chan mvar stream_id exp_ver =
-    createOperation params
+                          -> OperationParams
+transactionStartOperation settings procss mvar stream_id exp_ver =
+    OperationParams
+    { opSettings    = settings
+    , opRequestCmd  = 0x84
+    , opResponseCmd = 0x85
+
+    , opRequest =
+        let req_master  = _requireMaster settings
+            exp_ver_int = expVersionInt32 exp_ver
+            request     = newTransactionStart stream_id
+                                              exp_ver_int
+                                              req_master in
+         return request
+
+    , opSuccess = inspectTrans env mvar
+    , opFailure = failed mvar
+    }
   where
     env = TransactionEnv
           { _transSettings        = settings
-          , _transChan            = chan
+          , _transProcessor       = procss
           , _transStreamId        = stream_id
           , _transExpectedVersion = exp_ver
           }
-
-    params = OperationParams
-             { opSettings    = settings
-             , opRequestCmd  = TransactionStartCmd
-             , opResponseCmd = TransactionStartCompletedCmd
-
-             , opRequest =
-                   let req_master  = _requireMaster settings
-                       exp_ver_int = expVersionInt32 exp_ver
-                       request     = newTransactionStart stream_id
-                                                         exp_ver_int
-                                                         req_master in
-                    return request
-
-             , opSuccess = inspectTrans env mvar
-             , opFailure = failed mvar
-             }
 
 --------------------------------------------------------------------------------
 inspectTrans :: TransactionEnv
@@ -111,89 +112,82 @@ failed mvar e = do
 
 --------------------------------------------------------------------------------
 createTransaction :: TransactionEnv -> Int64 -> Transaction
-createTransaction env trans_id = trans
+createTransaction env@TransactionEnv{..} trans_id = trans
   where
-    stream_id = _transStreamId env
-    chan      = _transChan env
-    exp_ver   = _transExpectedVersion env
-    trans     = Transaction
-                { transactionId              = trans_id
-                , transactionStreamId        = stream_id
-                , transactionExpectedVersion = exp_ver
+    trans = Transaction
+            { transactionId              = trans_id
+            , transactionStreamId        = _transStreamId
+            , transactionExpectedVersion = _transExpectedVersion
 
-                , transactionCommit = do
-                      (as, mvar) <- createAsync
+            , transactionCommit = do
+                  (as, mvar) <- createAsync
 
-                      let op = transactionCommitOperation env trans_id mvar
+                  let op = transactionCommitOperation env trans_id mvar
 
-                      sendMsg chan (RegisterOperation op)
-                      return as
+                  processorNewOperation _transProcessor op
+                  return as
 
-                , transactionSendEvents = \evts -> do
-                      (as, mvar) <- createAsync
+            , transactionSendEvents = \evts -> do
+                  (as, mvar) <- createAsync
 
-                      let op = transactionWriteOperation env trans_id mvar evts
+                  let op = transactionWriteOperation env trans_id mvar evts
 
-                      sendMsg chan (RegisterOperation op)
-                      return as
+                  processorNewOperation _transProcessor op
+                  return as
 
-                , transactionRollback = return ()
-                }
+            , transactionRollback = return ()
+            }
 
 --------------------------------------------------------------------------------
 transactionWriteOperation :: TransactionEnv
                           -> Int64
                           -> TMVar (OperationExceptional ())
                           -> [Event]
-                          -> Operation
+                          -> OperationParams
 transactionWriteOperation env trans_id mvar evts =
-    createOperation params
+    OperationParams
+    { opSettings    = settings
+    , opRequestCmd  = 0x86
+    , opResponseCmd = 0x87
+
+    , opRequest = do
+        new_evts <- traverse eventToNewEvent evts
+
+        let request = newTransactionWrite trans_id
+                      new_evts
+                      req_master
+
+        return request
+
+    , opSuccess = inspectWrite env mvar
+    , opFailure = failed mvar
+    }
   where
     settings   = _transSettings env
     req_master = _requireMaster settings
-
-    params     = OperationParams
-                 { opSettings    = settings
-                 , opRequestCmd  = TransactionWriteCmd
-                 , opResponseCmd = TransactionWriteCompletedCmd
-
-                 , opRequest = do
-                       new_evts <- traverse eventToNewEvent evts
-
-                       let request = newTransactionWrite trans_id
-                                                           new_evts
-                                                           req_master
-
-                       return request
-
-                 , opSuccess = inspectWrite env mvar
-                 , opFailure = failed mvar
-                 }
 
 --------------------------------------------------------------------------------
 transactionCommitOperation :: TransactionEnv
                            -> Int64
                            -> TMVar (OperationExceptional WriteResult)
-                           -> Operation
+                           -> OperationParams
 transactionCommitOperation env trans_id mvar =
-    createOperation params
+    OperationParams
+    { opSettings    = settings
+    , opRequestCmd  = 0x88
+    , opResponseCmd = 0x89
+
+    , opRequest =
+        let request = newTransactionCommit trans_id req_master in
+
+         return request
+
+    , opSuccess = inspectCommit env mvar
+    , opFailure = failed mvar
+    }
   where
     settings   = _transSettings env
     req_master = _requireMaster settings
-
-    params     = OperationParams
-                 { opSettings    = settings
-                 , opRequestCmd  = TransactionCommitCmd
-                 , opResponseCmd = TransactionCommitCompletedCmd
-
-                 , opRequest =
-                       let request = newTransactionCommit trans_id req_master in
-
-                       return request
-
-                 , opSuccess = inspectCommit env mvar
-                 , opFailure = failed mvar
-                 }
 
 --------------------------------------------------------------------------------
 inspectWrite :: TransactionEnv
@@ -273,10 +267,6 @@ eventToNewEvent evt =
     evt_data_type      = eventDataType $ eventData evt
     evt_metadata_bytes = eventMetadataBytes $ eventData evt
     evt_metadata_type  = eventMetadataType $ eventData evt
-
---------------------------------------------------------------------------------
-sendMsg :: TChan Msg -> Msg -> IO ()
-sendMsg chan msg = atomically $ writeTChan chan msg
 
 --------------------------------------------------------------------------------
 createAsync :: IO (Async a, TMVar (OperationExceptional a))

@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DataKinds     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation.DeleteStreamOperation
@@ -14,14 +16,57 @@ module Database.EventStore.Internal.Operation.DeleteStreamOperation
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.STM
+import Data.Int
 import Data.Maybe
+import GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
+import Data.ProtocolBuffers
 import Data.Text
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Operation.Common
+import Database.EventStore.Internal.Manager.Operation
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+data DeleteStream
+    = DeleteStream
+      { deleteStreamId              :: Required 1 (Value Text)
+      , deleteStreamExpectedVersion :: Required 2 (Value Int32)
+      , deleteStreamRequireMaster   :: Required 3 (Value Bool)
+      , deleteStreamHardDelete      :: Optional 4 (Value Bool)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Encode DeleteStream
+
+--------------------------------------------------------------------------------
+newDeleteStream :: Text
+                -> Int32
+                -> Bool
+                -> Maybe Bool
+                -> DeleteStream
+newDeleteStream stream_id exp_ver req_master hard_delete =
+    DeleteStream
+    { deleteStreamId              = putField stream_id
+    , deleteStreamExpectedVersion = putField exp_ver
+    , deleteStreamRequireMaster   = putField req_master
+    , deleteStreamHardDelete      = putField hard_delete
+    }
+
+--------------------------------------------------------------------------------
+data DeleteStreamCompleted
+    = DeleteStreamCompleted
+      { deleteCompletedResult          :: Required 1 (Enumeration OpResult)
+      , deleteCompletedMessage         :: Optional 2 (Value Text)
+      , deleteCompletedPreparePosition :: Optional 3 (Value Int64)
+      , deleteCompletedCommitPosition  :: Optional 4 (Value Int64)
+      }
+    deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode DeleteStreamCompleted
 
 --------------------------------------------------------------------------------
 deleteStreamOperation :: Settings
@@ -29,27 +74,25 @@ deleteStreamOperation :: Settings
                       -> Text
                       -> ExpectedVersion
                       -> Maybe Bool
-                      -> Operation
+                      -> OperationParams
 deleteStreamOperation settings mvar stream_id exp_ver hard_del =
-    createOperation params
-  where
-    params = OperationParams
-             { opSettings    = settings
-             , opRequestCmd  = DeleteStreamCmd
-             , opResponseCmd = DeleteStreamCompletedCmd
+    OperationParams
+    { opSettings    = settings
+    , opRequestCmd  = 0x8A
+    , opResponseCmd = 0x8B
 
-             , opRequest =
-                   let req_master  = _requireMaster settings
-                       exp_ver_int = expVersionInt32 exp_ver
-                       request     = newDeleteStream stream_id
-                                                     exp_ver_int
-                                                     req_master
-                                                     hard_del in
-                   return request
+    , opRequest =
+        let req_master  = _requireMaster settings
+            exp_ver_int = expVersionInt32 exp_ver
+            request     = newDeleteStream stream_id
+                                          exp_ver_int
+                                          req_master
+                                          hard_del in
+         return request
 
-             , opSuccess = inspect mvar stream_id exp_ver
-             , opFailure = failed mvar
-             }
+    , opSuccess = inspect mvar stream_id exp_ver
+    , opFailure = failed mvar
+    }
 
 --------------------------------------------------------------------------------
 inspect :: TMVar (OperationExceptional DeleteResult)

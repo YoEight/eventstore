@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore
@@ -12,7 +13,7 @@
 module Database.EventStore
     ( Event
     , EventData
-    , EventStoreConnection
+    , Connection
     , ExpectedVersion(..)
     , HostName
     , Port
@@ -53,7 +54,6 @@ module Database.EventStore
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent
 import Control.Concurrent.STM
 import Data.Int
 
@@ -76,50 +76,40 @@ type HostName = String
 type Port     = Int
 
 --------------------------------------------------------------------------------
--- EventStoreConnection
+-- Connection
 --------------------------------------------------------------------------------
-data EventStoreConnection
-    = EventStoreConnection
-      { mgrChan     :: TChan Msg
-      , mgrSettings :: Settings
-      , mgrThreadId :: ThreadId
+data Connection
+    = Connection
+      { conProcessor :: Processor
+      , conSettings  :: Settings
       }
 
 --------------------------------------------------------------------------------
-msgQueue :: EventStoreConnection -> Msg -> IO ()
-msgQueue mgr msg = atomically $ writeTChan chan msg
-  where
-    chan = mgrChan mgr
-
---------------------------------------------------------------------------------
 -- | Creates a new connection to a single node. It maintains a full duplex
---   connection to the EventStore. An @EventStoreConnection@ operates quite
+--   connection to the EventStore. An EventStore @Connection@ operates quite
 --   differently than say a SQL connection. Normally when you use a SQL
 --   connection you want to keep the connection open for a much longer of time
 --   than when you use a SQL connection.
 --
---   Another difference  is that with the @EventStoreConnection@ all operation
+--   Another difference  is that with the EventStore @Connection@ all operation
 --   are handled in a full async manner (even if you call the synchronous
 --   behaviors). Many threads can use an EvenStore connection at the same time
 --   or a single thread can make many asynchronous requests. To get the most
 --   performance out of the connection it is generally recommend to use it in
 --   this way
-connect :: Settings -> HostName -> Port -> IO EventStoreConnection
+connect :: Settings -> HostName -> Port -> IO Connection
 connect settings host port = do
-    chan <- newTChanIO
-    app  <- newProcessor settings chan host port
-    tid  <- forkFinally (appProcess app) (\_ -> appFinalizer app)
+    processor <- newProcessor 3
+    processorConnect processor host port
 
-    return $ EventStoreConnection chan settings tid
-
---------------------------------------------------------------------------------
-shutdown :: EventStoreConnection -> IO ()
-shutdown mgr = killThread tid
-  where
-    tid = mgrThreadId mgr
+    return $ Connection processor settings
 
 --------------------------------------------------------------------------------
-sendEvent :: EventStoreConnection
+shutdown :: Connection -> IO ()
+shutdown Connection{..} = processorShutdown conProcessor
+
+--------------------------------------------------------------------------------
+sendEvent :: Connection
           -> Text             -- ^ Stream
           -> ExpectedVersion
           -> Event
@@ -128,71 +118,66 @@ sendEvent mgr evt_stream exp_ver evt =
     sendEvents mgr evt_stream exp_ver [evt]
 
 --------------------------------------------------------------------------------
-sendEvents :: EventStoreConnection
+sendEvents :: Connection
            -> Text             -- ^ Stream
            -> ExpectedVersion
            -> [Event]
            -> IO (Async WriteResult)
-sendEvents mgr evt_stream exp_ver evts = do
+sendEvents Connection{..} evt_stream exp_ver evts = do
     (as, mvar) <- createAsync
 
-    let op = writeEventsOperation settings mvar evt_stream exp_ver evts
+    let op = writeEventsOperation conSettings mvar evt_stream exp_ver evts
 
-    msgQueue mgr (RegisterOperation op)
+    processorNewOperation conProcessor op
     return as
-  where
-    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
-deleteStream :: EventStoreConnection
+deleteStream :: Connection
              -> Text
              -> ExpectedVersion
              -> Maybe Bool       -- ^ Hard delete
              -> IO (Async DeleteResult)
-deleteStream mgr evt_stream exp_ver hard_del = do
+deleteStream Connection{..} evt_stream exp_ver hard_del = do
     (as, mvar) <- createAsync
 
-    let op = deleteStreamOperation settings mvar evt_stream exp_ver hard_del
+    let op = deleteStreamOperation conSettings mvar evt_stream exp_ver hard_del
 
-    msgQueue mgr (RegisterOperation op)
+    processorNewOperation conProcessor op
     return as
-  where
-    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
-transactionStart :: EventStoreConnection
+transactionStart :: Connection
                  -> Text
                  -> ExpectedVersion
                  -> IO (Async Transaction)
-transactionStart mgr evt_stream exp_ver = do
+transactionStart Connection{..} evt_stream exp_ver = do
     (as, mvar) <- createAsync
 
-    let op = transactionStartOperation settings chan mvar evt_stream exp_ver
+    let op = transactionStartOperation conSettings
+                                       conProcessor
+                                       mvar
+                                       evt_stream
+                                       exp_ver
 
-    msgQueue mgr (RegisterOperation op)
+    processorNewOperation conProcessor op
     return as
-  where
-    chan     = mgrChan mgr
-    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
-readEvent :: EventStoreConnection
+readEvent :: Connection
           -> Text
           -> Int32
           -> Bool
           -> IO (Async ReadResult)
-readEvent mgr stream_id evt_num res_link_tos = do
+readEvent Connection{..} stream_id evt_num res_link_tos = do
     (as, mvar) <- createAsync
 
-    let op = readEventOperation settings mvar stream_id evt_num res_link_tos
+    let op = readEventOperation conSettings mvar stream_id evt_num res_link_tos
 
-    msgQueue mgr (RegisterOperation op)
+    processorNewOperation conProcessor op
     return as
-  where
-    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
-readStreamEventsForward :: EventStoreConnection
+readStreamEventsForward :: Connection
                         -> Text
                         -> Int32
                         -> Int32
@@ -202,7 +187,7 @@ readStreamEventsForward mgr =
     readStreamEventsCommon mgr Forward
 
 --------------------------------------------------------------------------------
-readStreamEventsBackward :: EventStoreConnection
+readStreamEventsBackward :: Connection
                          -> Text
                          -> Int32
                          -> Int32
@@ -212,17 +197,17 @@ readStreamEventsBackward mgr =
     readStreamEventsCommon mgr Backward
 
 --------------------------------------------------------------------------------
-readStreamEventsCommon :: EventStoreConnection
+readStreamEventsCommon :: Connection
                        -> ReadDirection
                        -> Text
                        -> Int32
                        -> Int32
                        -> Bool
                        -> IO (Async StreamEventsSlice)
-readStreamEventsCommon mgr dir stream_id start cnt res_link_tos = do
+readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
     (as, mvar) <- createAsync
 
-    let op = readStreamEventsOperation settings
+    let op = readStreamEventsOperation conSettings
                                        dir
                                        mvar
                                        stream_id
@@ -230,13 +215,11 @@ readStreamEventsCommon mgr dir stream_id start cnt res_link_tos = do
                                        cnt
                                        res_link_tos
 
-    msgQueue mgr (RegisterOperation op)
+    processorNewOperation conProcessor op
     return as
-  where
-    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
-readAllEventsForward :: EventStoreConnection
+readAllEventsForward :: Connection
                      -> Int64
                      -> Int64
                      -> Int32
@@ -246,7 +229,7 @@ readAllEventsForward mgr =
     readAllEventsCommon mgr Forward
 
 --------------------------------------------------------------------------------
-readAllEventsBackward :: EventStoreConnection
+readAllEventsBackward :: Connection
                       -> Int64
                       -> Int64
                       -> Int32
@@ -256,17 +239,17 @@ readAllEventsBackward mgr =
     readAllEventsCommon mgr Backward
 
 --------------------------------------------------------------------------------
-readAllEventsCommon :: EventStoreConnection
+readAllEventsCommon :: Connection
                     -> ReadDirection
                     -> Int64
                     -> Int64
                     -> Int32
                     -> Bool
                     -> IO (Async AllEventsSlice)
-readAllEventsCommon mgr dir c_pos p_pos max_c res_link_tos = do
+readAllEventsCommon Connection{..} dir c_pos p_pos max_c res_link_tos = do
     (as, mvar) <- createAsync
 
-    let op = readAllEventsOperation settings
+    let op = readAllEventsOperation conSettings
                                     dir
                                     mvar
                                     c_pos
@@ -274,10 +257,8 @@ readAllEventsCommon mgr dir c_pos p_pos max_c res_link_tos = do
                                     max_c
                                     res_link_tos
 
-    msgQueue mgr (RegisterOperation op)
+    processorNewOperation conProcessor op
     return as
-  where
-    settings = mgrSettings mgr
 
 --------------------------------------------------------------------------------
 createAsync :: IO (Async a, TMVar (OperationExceptional a))

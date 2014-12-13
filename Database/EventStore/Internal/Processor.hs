@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveDataTypeable  #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Processor
@@ -10,342 +13,290 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Processor
-    ( Application(..)
+    ( InternalException(..)
+    , Processor(..)
     , newProcessor
     ) where
 
 --------------------------------------------------------------------------------
-import           Control.Concurrent
-import           Control.Concurrent.STM
-import           Control.Exception
-import qualified Data.ByteString as B
-import qualified Data.Map.Strict as M
-import           Data.Serialize.Put
-import           System.IO
-import           Text.Printf
+import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Exception
+import Data.Monoid ((<>))
+import Data.Typeable
+import Data.Word
+import System.IO
+import Text.Printf
 
 --------------------------------------------------------------------------------
-import Data.Time
+import Control.Concurrent.Async
 import Data.UUID
+import FRP.Sodium
 import Network
 import System.Random
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Manager.Operation
 import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Reader
-import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Types hiding (Event, newEvent)
+import Database.EventStore.Internal.Util.Sodium
+import Database.EventStore.Internal.Writer
 
 --------------------------------------------------------------------------------
--- Env
+-- Processor
 --------------------------------------------------------------------------------
-data Env
-    = Env
-      { _hostname   :: HostName
-      , _port       :: Int
-      , _settings   :: Settings
-      , _chan       :: TChan Msg
-      , _finalizer  :: TVar (IO ())
+data Processor
+    = Processor
+      { processorConnect      :: HostName -> Int -> IO ()
+      , processorShutdown     :: IO ()
+      , processorNewOperation :: OperationParams -> IO ()
       }
 
 --------------------------------------------------------------------------------
-getMsg :: Env -> IO Msg
-getMsg env = atomically $ readTChan (_chan env)
+newProcessor :: Int -> IO Processor
+newProcessor max_at = sync $ network max_at
 
 --------------------------------------------------------------------------------
-sendMsg :: Env -> Msg -> IO ()
-sendMsg env msg = atomically $ writeTChan (_chan env) msg
-
--- --------------------------------------------------------------------------------
--- heartbeatInterval :: Env -> NominalDiffTime
--- heartbeatInterval env = _heartbeatInterval $ _settings env
-
--- --------------------------------------------------------------------------------
--- heartbeatTimeout :: Env -> NominalDiffTime
--- heartbeatTimeout env = _heartbeatTimeout $ _settings env
+-- Exception
+--------------------------------------------------------------------------------
+data ProcessorException
+    = MaxAttempt HostName Int Int -- ^ Hostname Port MaxAttempt value
+    deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
-newEnv :: Settings -> TChan Msg -> HostName -> Int -> IO Env
-newEnv settings chan host port = do
-    ref <- newTVarIO (return ())
-
-    return $ Env host port settings chan ref
+instance Exception ProcessorException
 
 --------------------------------------------------------------------------------
-registerFinalizer :: Env -> IO () -> IO ()
-registerFinalizer env action = atomically $ writeTVar var action
-  where
-    var = _finalizer env
-
+-- State
 --------------------------------------------------------------------------------
-runFinalizer :: Env -> IO ()
-runFinalizer env = do
-    action <- atomically $ do
-        act <- readTVar var
-        writeTVar var (return ())
-        return act
-    action
-  where
-    var = _finalizer env
-
---------------------------------------------------------------------------------
--- Connection
---------------------------------------------------------------------------------
-data Connection
-    = Connection
-      { _connId             :: UUID
-      , _connHandle         :: Handle
-      , _connReaderThreadId :: ThreadId
-      }
-
---------------------------------------------------------------------------------
-connectionSend :: Connection -> Put -> IO ()
-connectionSend conn put = B.hPut hdl (runPut put) >> hFlush hdl
-  where
-    hdl = _connHandle conn
-
---------------------------------------------------------------------------------
-connectionClose :: Connection -> IO ()
-connectionClose conn = do
-    killThread thread_id
-    hClose hdl
-    printf "Disconnected %s\n" conn_id_str
-  where
-    hdl         = _connHandle conn
-    thread_id   = _connReaderThreadId conn
-    conn_id_str = toString $ _connId conn
-
---------------------------------------------------------------------------------
---------------------------------------------------------------------------------
-type Processor = Env -> State -> IO ()
-
---------------------------------------------------------------------------------
-data Application
-    = Application
-      { appProcess   :: IO ()
-      , appFinalizer :: IO ()
-      }
-
---------------------------------------------------------------------------------
--- Manager state
---------------------------------------------------------------------------------
-data HeartbeatInfo
-    = HeartbeatInfo
-      { _lastPackage   :: !Int             -- ^ Last package since last update
-      , _intervalStage :: !Bool
-      , _elapsedTime   :: !NominalDiffTime -- ^ Elapsed time since last update
-      }
-
---------------------------------------------------------------------------------
--- | Holds every needed piece of information in order to properly communicate
---   with an EventStore backend
 data State
-    = State
-      { _lastTime      :: !UTCTime
-      , _heartbeatInfo :: !HeartbeatInfo
-      , _packageNumber :: !Int  -- ^ Number of received packages
-      , _operations    :: !(M.Map UUID Operation)
+    = Offline
+      { _maxAttempt :: !Int }
+    | Online
+      { _uuidCon      :: !UUID
+      , _maxAttempt   :: !Int
+      , _packageCount :: !Int
+      , _host         :: !HostName
+      , _port         :: !Int
+      , _cleanup      :: !(IO ())
       }
 
 --------------------------------------------------------------------------------
-updateHeartbeatInfo :: State
-                    -> UTCTime -- ^ Current time
-                    -> Bool    -- ^ Is interval stage
-                    -> Int     -- ^ Package number
-                    -> State
-updateHeartbeatInfo cur_state cur_time is_interval_state package_num = new_state
+initState :: Int -> State
+initState max_at = Offline max_at
+
+--------------------------------------------------------------------------------
+-- Event
+--------------------------------------------------------------------------------
+data Connect     = Connect HostName Int
+data Connected   = Connected HostName Int UUID (IO ())
+data Cleanup     = Cleanup
+data Reconnect   = Reconnect
+data Reconnected = Reconnected UUID (IO ())
+
+
+--------------------------------------------------------------------------------
+heartbeatRequestCmd :: Word8
+heartbeatRequestCmd = 0x01
+
+--------------------------------------------------------------------------------
+network :: Int -> Reactive Processor
+network max_at = do
+    (onConnect, pushConnect)         <- newEvent
+    (onConnected, pushConnected)     <- newEvent
+    (onCleanup, pushCleanup)         <- newEvent
+    (onReconnect, pushReconnect)     <- newEvent
+    (onReconnected, pushReconnected) <- newEvent
+    (onReceived, pushReceived)       <- newEvent
+    (onSend, pushSend)               <- newEvent
+
+    push_new_op <- operationNetwork pushSend
+                                    (pushReconnect Reconnect)
+                                    onReceived
+
+    let stateE = fmap connected  onConnected    <>
+                 fmap reconnected onReconnected <>
+                 fmap received onReceived
+
+    stateB <- accum (initState max_at) stateE
+
+    let heartbeatP pkg = packageCmd pkg == heartbeatRequestCmd
+        onlyHeartbeats = filterE heartbeatP onReceived
+
+        con_snap   = snapshot connectSnapshot onConnect stateB
+        reco_snap  = snapshot reconnectSnapshot onReconnect stateB
+        clean_snap = snapshot cleanupSnapshot onCleanup stateB
+
+        full_reco c = do
+            pushCleanup Cleanup
+            pushReconnect c
+
+        push_reco_io  = pushAsync full_reco Reconnect
+        push_recv_io  = \pkg -> sync $ pushReceived pkg
+        push_recod_io = pushAsync2 $ \u c -> pushReconnected $ Reconnected u c
+        push_send_io  = pushAsync pushSend
+        push_con_io   = pushAsync4 $ \h p u c ->
+                                      pushConnected $ Connected h p u c
+
+    _ <- listen con_snap $ \(ConnectionSnapshot max_a host port) ->
+             connection push_recv_io
+                        (push_con_io host port)
+                        push_reco_io
+                        onSend
+                        max_a
+                        host
+                        port
+
+    _ <- listen reco_snap $ \(ConnectionSnapshot max_a host port) ->
+             connection push_recv_io
+                        push_recod_io
+                        push_reco_io
+                        onSend
+                        max_a
+                        host
+                        port
+
+    _ <- listen clean_snap $ \(CleanupSnapshot finalizer) -> finalizer
+
+    _ <- listen onlyHeartbeats $ \pkg ->
+             push_send_io $ heartbeatResponsePackage (packageCorrelation pkg)
+
+    let processor =
+            Processor
+            { processorConnect      = \h p -> sync $ pushConnect $ Connect h p
+            , processorShutdown     = sync $ pushCleanup Cleanup
+            , processorNewOperation = \o -> sync $ push_new_op o
+            }
+
+    return processor
+
+--------------------------------------------------------------------------------
+-- Observer
+--------------------------------------------------------------------------------
+data ConnectionSnapshot
+    = ConnectionSnapshot
+      { _conMax  :: !Int
+      , _conHost :: !HostName
+      , _conPort :: !Int
+      }
+
+--------------------------------------------------------------------------------
+connectSnapshot :: Connect -> State -> ConnectionSnapshot
+connectSnapshot (Connect host port) s =
+    ConnectionSnapshot
+    { _conMax  = _maxAttempt s
+    , _conHost = host
+    , _conPort = port
+    }
+
+--------------------------------------------------------------------------------
+reconnectDelay :: Int
+reconnectDelay = 500000
+
+--------------------------------------------------------------------------------
+connection :: (Package -> IO ())
+           -> (UUID -> IO () -> IO ())
+           -> IO ()
+           -> Event Package
+           -> Int
+           -> HostName
+           -> Int
+           -> IO ()
+connection push_pkg push_con push_reco evt_pkg max_a host port = loop 1
   where
-    last_time      = _lastTime cur_state
-    elapsed_time   = diffUTCTime cur_time last_time
-    new_heart_info = HeartbeatInfo package_num is_interval_state elapsed_time
-    new_state      = cur_state { _heartbeatInfo = new_heart_info }
+    loop att
+        | max_a == att =
+              throwIO $ MaxAttempt host port max_a
+        | otherwise =
+              catch (doConnect att) $ \(_ :: SomeException) -> do
+                  threadDelay reconnectDelay
+                  loop (att + 1)
+
+    doConnect att = do
+        printf "Connecting...Attempt %d\n" att
+        hdl <- connectTo host (PortNumber $ fromIntegral port)
+        hSetBuffering hdl NoBuffering
+
+        uuid  <- randomIO
+        chan  <- newTChanIO
+        as_rl <- async $ sync $ listen evt_pkg (atomically . writeTChan chan)
+        rid   <- forkFinally (readerThread push_pkg hdl) (recovering push_reco)
+        wid   <- forkFinally (writerThread chan hdl) (recovering push_reco)
+
+        push_con uuid $ do
+            throwTo rid Stopped
+            throwTo wid Stopped
+            hClose hdl
+            rel_w <- wait as_rl
+            rel_w
+            printf "Disconnected %s\n" (toString uuid)
 
 --------------------------------------------------------------------------------
-incrPackageNumber :: State -> State
-incrPackageNumber cur_state = new_state
-  where
-    new_package_number = _packageNumber cur_state + 1
-    new_state          = cur_state { _packageNumber = new_package_number }
+recovering :: IO () -> Either SomeException () -> IO ()
+recovering recover (Left some_ex) = do
+    case fromException some_ex of
+        Just e ->
+            case e of
+                ConnectionClosedByServer
+                    -> recover
+                Stopped
+                    -> return ()
+        _ -> recover
+recovering _ _ = return ()
 
 --------------------------------------------------------------------------------
--- | Create an initial @State@
-newState :: IO State
-newState = do
-    cur_time <- getCurrentTime
-    let package_num = 0
-        info        = HeartbeatInfo
-                      { _lastPackage   = package_num
-                      , _intervalStage = True
-                      , _elapsedTime   = fromIntegral (0 :: Integer)
-                      }
-
-        state       = State
-                      { _lastTime      = cur_time
-                      , _heartbeatInfo = info
-                      , _packageNumber = package_num
-                      , _operations    = M.empty
-                      }
-
-    return state
+reconnectSnapshot :: Reconnect -> State -> ConnectionSnapshot
+reconnectSnapshot _ s =
+    ConnectionSnapshot
+    { _conMax  = _maxAttempt s
+    , _conHost = _host s
+    , _conPort = _port s
+    }
 
 --------------------------------------------------------------------------------
-newProcessor :: Settings -> TChan Msg -> HostName -> Int -> IO Application
-newProcessor settings chan host port = do
-    env   <- newEnv settings chan host port
-    state <- newState
-    let app = Application
-              { appProcess   = connecting env state
-              , appFinalizer = runFinalizer env
-              }
-
-    return app
+newtype CleanupSnapshot = CleanupSnapshot (IO ())
 
 --------------------------------------------------------------------------------
-connecting :: Processor
-connecting env state = do
-    hdl <- connectTo host (PortNumber $ fromIntegral port)
-    hSetBuffering hdl NoBuffering
-
-    rid      <- forkFinally (readerThread chan hdl) recovering
-    conn_id  <- randomIO
-    cur_time <- getCurrentTime
-    let pack_num  = _packageNumber state
-        new_state = updateHeartbeatInfo state cur_time True pack_num
-        conn      = Connection
-                    { _connId             = conn_id
-                    , _connHandle         = hdl
-                    , _connReaderThreadId = rid
-                    }
-
-    printf "Connected %s\n" (toString conn_id)
-    registerFinalizer env $
-        connectionClose conn
-
-    connected conn env new_state
-
-  where
-    port = _port env
-    host = _hostname env
-    chan = _chan env
-
-    recovering (Left some_ex)=
-        case fromException some_ex of
-            Just e ->
-                case e of
-                    ConnectionClosedByServer
-                        -> sendMsg env Reconnect
-                    Stopped
-                        -> return ()
-            _ -> sendMsg env Reconnect
-
-    recovering _ = return ()
+cleanupSnapshot :: Cleanup -> State -> CleanupSnapshot
+cleanupSnapshot _ s =
+    case s of
+        Offline {}
+            -> CleanupSnapshot (return ())
+        Online {}
+            -> CleanupSnapshot $ _cleanup s
 
 --------------------------------------------------------------------------------
-connected :: Connection -> Processor
-connected conn env state = getMsg env >>= go
-  where
-    go Reconnect = do
-        runFinalizer env
-        putStrLn "Reconnecting..."
-        connecting env state
-
-    go (RecvPackage pack) = do
-        new_state <- handlePackage conn env state pack
-        connected conn env new_state
-
-    go (RegisterOperation op) =
-        registerOperation conn op env state
-
-    go (Notice msg) = do
-        print msg
-        connected conn env state
-
-    go Tick =
-        connected conn env state
+-- Model
+--------------------------------------------------------------------------------
+connected :: Connected -> State -> State
+connected (Connected host port uuid cl) s =
+    case s of
+        Offline {}
+            -> Online
+               { _uuidCon      = uuid
+               , _maxAttempt   = _maxAttempt s
+               , _packageCount = 0
+               , _host         = host
+               , _port         = port
+               , _cleanup      = cl
+               }
+        _ -> s
 
 --------------------------------------------------------------------------------
-registerOperation :: Connection -> Operation -> Processor
-registerOperation conn op env state = do
-    uuid <- randomIO
-    pack <- operationCreatePackage op uuid
-
-    let new_op_map = M.insert uuid op op_map
-        new_state  = state { _operations = new_op_map }
-
-    connectionSend conn (putPackage pack)
-    connected conn env new_state
-  where
-    op_map = _operations state
+reconnected :: Reconnected -> State -> State
+reconnected (Reconnected uuid cl) s =
+    case s of
+        Online {}
+            -> s { _uuidCon = uuid
+                 , _cleanup = cl
+                 }
+        _ -> s
 
 --------------------------------------------------------------------------------
-handlePackage :: Connection -> Env -> State -> Package -> IO State
-handlePackage conn env state pack = go (packageCmd pack)
-  where
-    go HeartbeatRequest = do
-        handleHeartbeatRequest conn pack
-        return new_state
-
-    go HeartbeatResponse =
-        return new_state
-
-    go _ =
-        case M.lookup corr_id op_map of
-            Just op -> handleOperation env new_state pack op
-            _       -> fmap (const new_state) $ unhandledPackage pack
-
-    corr_id   = packageCorrelation pack
-    op_map    = _operations state
-    new_state = incrPackageNumber state
-
---------------------------------------------------------------------------------
-handleHeartbeatRequest :: Connection -> Package -> IO ()
-handleHeartbeatRequest conn pack =
-    connectionSend conn (putPackage pack_resp)
-  where
-    corr_id     = packageCorrelation pack
-    pack_resp   = heartbeatResponsePackage corr_id
-
---------------------------------------------------------------------------------
-unhandledPackage :: Package -> IO ()
-unhandledPackage pack = printf "Unhandled command: %s\n" cmd_str
-  where
-    cmd_str = show $ packageCmd pack
-
---------------------------------------------------------------------------------
-handleOperation :: Env -> State -> Package -> Operation -> IO State
-handleOperation env state pack op = do
-    decision <- operationInspect op pack
-    case decision of
-        DoNothing ->
-            return state
-        EndOperation ->
-            return new_state
-        Retry
-            -> do sendMsg env (RegisterOperation op)
-                  return new_state
-        Reconnection
-            -> do sendMsg env Reconnect
-                  sendMsg env (RegisterOperation op)
-                  return new_state
-        _ -> fail "Unexpected decision Processor.hs"
-  where
-    corr_id    = packageCorrelation pack
-    op_map     = _operations state
-    new_op_map = M.delete corr_id op_map
-    new_state  = state { _operations = new_op_map }
-
--- --------------------------------------------------------------------------------
--- manageHeartbeats :: ConnectionManager -> IO ()
--- manageHeartbeats mgr@ConnectionManager{..} = do
---     elapsed  <- managerElapsedTime mgr
---     info     <- atomically $ readTVar mgrHeartbeatInfo
---     pack_num <- atomically $ readTVar mgrPackageNumber
---     let timeout = if heartbeatIntervalStage info
---                   then heartbeatInterval
---                   else heartbeatTimeout
-
---     if pack_num /= heartbeatLastPackage info
---         then managerUpdateHeartbeatInfo mgr pack_num True
---         else when (heartbeatIntervalStage info) $ do
---                  pack <- heartbeatPackage
---                  doSendPackage mgr pack
---                  managerUpdateHeartbeatInfo mgr (heartbeatLastPackage info) False
+received :: Package -> State -> State
+received _ s =
+    case s of
+        Online {}
+            -> let cnt = _packageCount s in s { _packageCount = cnt + 1 }
+        _ -> s
