@@ -12,7 +12,8 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Operation
-    ( OperationParams(..)
+    ( Decision(..)
+    , OperationParams(..)
     , operationNetwork
     ) where
 
@@ -41,6 +42,14 @@ initManager = Manager M.empty
 
 --------------------------------------------------------------------------------
 -- Operation
+--------------------------------------------------------------------------------
+data Decision
+    = DoNothing
+    | EndOperation
+    | Retry
+    | Reconnection
+    | Subscribed
+
 --------------------------------------------------------------------------------
 data Operation
     = Operation

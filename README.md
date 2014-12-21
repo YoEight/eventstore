@@ -9,6 +9,7 @@ Basically, all we have for now are:
   4. ReadEvent
   5. ReadStreamEvents (Forward and Backward)
   6. ReadAllEvents (Forward and Backward)
+  7. Volatile subscriptions
 
 TODO
 ====

@@ -15,6 +15,7 @@
 module Database.EventStore.Internal.Processor
     ( InternalException(..)
     , Processor(..)
+    , Subscription(..)
     , newProcessor
     ) where
 
@@ -30,6 +31,7 @@ import Text.Printf
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
+import Data.Text (Text)
 import Data.UUID
 import FRP.Sodium
 import Network
@@ -37,6 +39,7 @@ import System.Random
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Operation
+import Database.EventStore.Internal.Manager.Subscription
 import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Reader
 import Database.EventStore.Internal.Types hiding (Event, newEvent)
@@ -48,9 +51,13 @@ import Database.EventStore.Internal.Writer
 --------------------------------------------------------------------------------
 data Processor
     = Processor
-      { processorConnect      :: HostName -> Int -> IO ()
-      , processorShutdown     :: IO ()
-      , processorNewOperation :: OperationParams -> IO ()
+      { processorConnect        :: HostName -> Int -> IO ()
+      , processorShutdown       :: IO ()
+      , processorNewOperation   :: OperationParams -> IO ()
+      , processorNewSubcription :: (Subscription -> IO ())
+                                   -> Text
+                                   -> Bool
+                                   -> IO ()
       }
 
 --------------------------------------------------------------------------------
@@ -115,6 +122,8 @@ network max_at = do
                                     (pushReconnect Reconnect)
                                     onReceived
 
+    push_sub <- subscriptionNetwork pushSend onReceived
+
     let stateE = fmap connected  onConnected    <>
                  fmap reconnected onReconnected <>
                  fmap received onReceived
@@ -164,9 +173,10 @@ network max_at = do
 
     let processor =
             Processor
-            { processorConnect      = \h p -> sync $ pushConnect $ Connect h p
-            , processorShutdown     = sync $ pushCleanup Cleanup
-            , processorNewOperation = \o -> sync $ push_new_op o
+            { processorConnect        = \h p -> sync $ pushConnect $ Connect h p
+            , processorShutdown       = sync $ pushCleanup Cleanup
+            , processorNewOperation   = \o -> sync $ push_new_op o
+            , processorNewSubcription = push_sub
             }
 
     return processor
