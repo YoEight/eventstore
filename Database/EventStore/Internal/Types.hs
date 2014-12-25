@@ -1,7 +1,6 @@
-{-# LANGUAGE    DeriveDataTypeable #-}
-{-# LANGUAGE    DeriveGeneric      #-}
-{-# LANGUAGE    DataKinds          #-}
-{-# OPTIONS_GHC -fcontext-stack=26 #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveGeneric      #-}
+{-# LANGUAGE DataKinds          #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Types
@@ -319,14 +318,6 @@ instance Decode ResolvedEventBuf
 
 --------------------------------------------------------------------------------
 -- Result
---------------------------------------------------------------------------------
-data Decision
-    = DoNothing
-    | EndOperation
-    | Retry
-    | Reconnection
-    | Subscribed
-
 --------------------------------------------------------------------------------
 data Position
     = Position

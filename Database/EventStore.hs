@@ -17,6 +17,7 @@ module Database.EventStore
     , ExpectedVersion(..)
     , HostName
     , Port
+    , Subscription(..)
       -- * Result
     , AllEventsSlice(..)
     , DeleteResult(..)
@@ -44,6 +45,7 @@ module Database.EventStore
     , sendEvents
     , shutdown
     , transactionStart
+    , subscribe
       -- * Transaction
     , Transaction
     , transactionCommit
@@ -261,9 +263,22 @@ readAllEventsCommon Connection{..} dir c_pos p_pos max_c res_link_tos = do
     return as
 
 --------------------------------------------------------------------------------
+subscribe :: Connection
+          -> Text
+          -> Bool
+          -> IO (Async Subscription)
+subscribe Connection{..} stream_id res_lnk_tos = do
+    tmp <- newEmptyTMVarIO
+    processorNewSubcription conProcessor
+                            (atomically . putTMVar tmp)
+                            stream_id
+                            res_lnk_tos
+    async $ atomically $ readTMVar tmp
+
+--------------------------------------------------------------------------------
 createAsync :: IO (Async a, TMVar (OperationExceptional a))
 createAsync = do
-    mvar <- atomically newEmptyTMVar
+    mvar <- newEmptyTMVarIO
     as   <- async $ atomically $ do
         res <- readTMVar mvar
         either throwSTM return res
