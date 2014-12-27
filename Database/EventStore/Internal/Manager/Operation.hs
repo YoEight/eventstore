@@ -71,23 +71,23 @@ data OperationParams
       }
 
 --------------------------------------------------------------------------------
-createOperation :: OperationParams -> Operation
-createOperation params =
+createOperation :: Settings -> OperationParams -> Operation
+createOperation sett params =
     Operation
-    { operationCreatePackage = createPackage params
+    { operationCreatePackage = createPackage sett params
     , operationInspect       = inspection params
     }
 
 --------------------------------------------------------------------------------
-createPackage :: OperationParams -> UUID -> IO Package
-createPackage OperationParams{..} uuid = do
+createPackage :: Settings -> OperationParams -> UUID -> IO Package
+createPackage Settings{..} OperationParams{..} uuid = do
     req <- opRequest
 
     let pack = Package
                { packageCmd         = opRequestCmd
                , packageCorrelation = uuid
-               , packageFlag        = None
                , packageData        = runPut $ encodeMessage req
+               , packageCred        = s_credentials
                }
 
     return pack
@@ -123,11 +123,12 @@ newtype Remove = Remove UUID
 data Response = Response !Package !Operation
 
 --------------------------------------------------------------------------------
-operationNetwork :: (Package -> Reactive ())
+operationNetwork :: Settings
+                 -> (Package -> Reactive ())
                  -> Reactive ()
                  -> Event Package
                  -> Reactive (OperationParams -> Reactive ())
-operationNetwork push_pkg push_reco e_pkg = do
+operationNetwork sett push_pkg push_reco e_pkg = do
     (on_new, push_new) <- newEvent
     (on_reg, push_reg) <- newEvent
     (on_rem, push_rem) <- newEvent
@@ -140,7 +141,7 @@ operationNetwork push_pkg push_reco e_pkg = do
 
     let resp_e = filterJust $ snapshot response e_pkg mgr_b
 
-        on_new_op = fmap createOperation on_new <> on_ret
+        on_new_op = fmap (createOperation sett) on_new <> on_ret
 
         push_reg_io   = pushAsync2 $ \uuid op -> push_reg $ Register uuid op
         push_rem_io   = pushAsync (push_rem . Remove)

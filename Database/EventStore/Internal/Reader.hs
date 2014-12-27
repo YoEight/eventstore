@@ -47,19 +47,24 @@ getLengthPrefix :: Get Int
 getLengthPrefix = fmap fromIntegral getWord32le
 
 --------------------------------------------------------------------------------
+authOffset :: Int
+authOffset = 18
+
+--------------------------------------------------------------------------------
 getPackage :: Get Package
 getPackage = do
     cmd  <- getWord8
     flg  <- getFlag
     col  <- getUUID
+    cred <- getCredentials flg
     rest <- remaining
     dta  <- getBytes rest
 
     let pack = Package
                { packageCmd         = cmd
-               , packageFlag        = flg
                , packageCorrelation = col
                , packageData        = dta
+               , packageCred        = cred
                }
 
     return pack
@@ -72,6 +77,20 @@ getFlag = do
         0x00 -> return None
         0x01 -> return Authenticated
         _    -> fail $ printf "TCP: Unhandled flag value 0x%x" wd
+
+--------------------------------------------------------------------------------
+getCredEntryLength :: Get Int
+getCredEntryLength = fmap fromIntegral getWord8
+
+--------------------------------------------------------------------------------
+getCredentials :: Flag -> Get (Maybe Credentials)
+getCredentials None = return Nothing
+getCredentials _ = do
+    loginLen <- getCredEntryLength
+    login    <- getBytes loginLen
+    passwLen <- getCredEntryLength
+    passw    <- getBytes passwLen
+    return $ Just $ credentials login passw
 
 --------------------------------------------------------------------------------
 getUUID :: Get UUID

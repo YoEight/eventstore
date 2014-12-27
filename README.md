@@ -10,13 +10,13 @@ Basically, all we have for now are:
   5. ReadStreamEvents (Forward and Backward)
   6. ReadAllEvents (Forward and Backward)
   7. Volatile subscriptions
+  8. Authentication
 
 TODO
 ====
 
   1. All kind of Subscriptions
-  2. Authentication
-  3. SSL
+  2. SSL
 
 Requirements
 ============

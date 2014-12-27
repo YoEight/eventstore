@@ -82,7 +82,7 @@ deleteStreamOperation settings mvar stream_id exp_ver hard_del =
     , opResponseCmd = 0x8B
 
     , opRequest =
-        let req_master  = _requireMaster settings
+        let req_master  = s_requireMaster settings
             exp_ver_int = expVersionInt32 exp_ver
             request     = newDeleteStream stream_id
                                           exp_ver_int

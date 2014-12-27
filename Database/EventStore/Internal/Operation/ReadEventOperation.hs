@@ -14,6 +14,7 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.ReadEventOperation
     ( ReadResult(..)
+    , ReadEventResult(..)
     , readEventOperation
     ) where
 
@@ -119,7 +120,7 @@ readEventOperation settings mvar stream_id evt_num res_link_tos =
     , opResponseCmd = 0xB1
 
     , opRequest =
-        let req_master = _requireMaster settings
+        let req_master = s_requireMaster settings
             request    = newReadEvent stream_id
                                       evt_num
                                       res_link_tos

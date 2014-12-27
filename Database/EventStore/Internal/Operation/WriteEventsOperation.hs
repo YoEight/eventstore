@@ -87,7 +87,7 @@ writeEventsOperation settings mvar evt_stream exp_ver evts =
     , opRequest = do
         new_evts <- traverse eventToNewEvent evts
 
-        let require_master = _requireMaster settings
+        let require_master = s_requireMaster settings
             exp_ver_int32  = expVersionInt32 exp_ver
             request        = newWriteEvents evt_stream
                                                   exp_ver_int32

@@ -13,6 +13,7 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.ReadStreamEventsOperation
     ( StreamEventsSlice(..)
+    , ReadStreamResult(..)
     , readStreamEventsOperation
     ) where
 
@@ -136,7 +137,7 @@ readStreamEventsOperation settings dir mvar stream_id start cnt res_link_tos =
     , opResponseCmd = resp
 
     , opRequest =
-        let req_master = _requireMaster settings
+        let req_master = s_requireMaster settings
             request    = newReadStreamEvents stream_id
                                              start
                                              cnt
