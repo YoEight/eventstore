@@ -14,10 +14,13 @@ module Database.EventStore
     ( Event
     , EventData
     , Connection
+    , Credentials
     , ExpectedVersion(..)
     , HostName
     , Port
+    , Settings(..)
     , Subscription(..)
+    , credentials
       -- * Result
     , AllEventsSlice(..)
     , DeleteResult(..)
@@ -25,6 +28,13 @@ module Database.EventStore
     , ReadResult(..)
     , RecordedEvent(..)
     , StreamEventsSlice(..)
+    , Position(..)
+    , ReadDirection(..)
+    , ReadAllResult(..)
+    , ReadEventResult(..)
+    , ResolvedEvent(..)
+    , ReadStreamResult(..)
+    , DropReason(..)
     , eventResolved
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
@@ -101,7 +111,7 @@ data Connection
 --   this way
 connect :: Settings -> HostName -> Port -> IO Connection
 connect settings host port = do
-    processor <- newProcessor 3
+    processor <- newProcessor settings
     processorConnect processor host port
 
     return $ Connection processor settings

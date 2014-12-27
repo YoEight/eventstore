@@ -52,7 +52,7 @@ transactionStartOperation settings procss mvar stream_id exp_ver =
     , opResponseCmd = 0x85
 
     , opRequest =
-        let req_master  = _requireMaster settings
+        let req_master  = s_requireMaster settings
             exp_ver_int = expVersionInt32 exp_ver
             request     = newTransactionStart stream_id
                                               exp_ver_int
@@ -164,7 +164,7 @@ transactionWriteOperation env trans_id mvar evts =
     }
   where
     settings   = _transSettings env
-    req_master = _requireMaster settings
+    req_master = s_requireMaster settings
 
 --------------------------------------------------------------------------------
 transactionCommitOperation :: TransactionEnv
@@ -187,7 +187,7 @@ transactionCommitOperation env trans_id mvar =
     }
   where
     settings   = _transSettings env
-    req_master = _requireMaster settings
+    req_master = s_requireMaster settings
 
 --------------------------------------------------------------------------------
 inspectWrite :: TransactionEnv

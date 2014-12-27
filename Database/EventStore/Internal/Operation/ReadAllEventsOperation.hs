@@ -14,6 +14,7 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.ReadAllEventsOperation
     ( AllEventsSlice(..)
+    , ReadAllResult(..)
     , readAllEventsOperation
     ) where
 
@@ -135,7 +136,7 @@ readAllEventsOperation settings dir mvar c_pos p_pos max_c res_link_tos =
     , opResponseCmd = resp
 
     , opRequest =
-        let req_master = _requireMaster settings
+        let req_master = s_requireMaster settings
             request    = newReadAllEvents c_pos
                                           p_pos
                                           max_c

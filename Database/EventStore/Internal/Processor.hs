@@ -15,6 +15,7 @@
 module Database.EventStore.Internal.Processor
     ( InternalException(..)
     , Processor(..)
+    , DropReason(..)
     , Subscription(..)
     , newProcessor
     ) where
@@ -61,8 +62,8 @@ data Processor
       }
 
 --------------------------------------------------------------------------------
-newProcessor :: Int -> IO Processor
-newProcessor max_at = sync $ network max_at
+newProcessor :: Settings -> IO Processor
+newProcessor sett = sync $ network sett
 
 --------------------------------------------------------------------------------
 -- Exception
@@ -108,8 +109,8 @@ heartbeatRequestCmd :: Word8
 heartbeatRequestCmd = 0x01
 
 --------------------------------------------------------------------------------
-network :: Int -> Reactive Processor
-network max_at = do
+network :: Settings -> Reactive Processor
+network sett = do
     (onConnect, pushConnect)         <- newEvent
     (onConnected, pushConnected)     <- newEvent
     (onCleanup, pushCleanup)         <- newEvent
@@ -118,17 +119,18 @@ network max_at = do
     (onReceived, pushReceived)       <- newEvent
     (onSend, pushSend)               <- newEvent
 
-    push_new_op <- operationNetwork pushSend
+    push_new_op <- operationNetwork sett
+                                    pushSend
                                     (pushReconnect Reconnect)
                                     onReceived
 
-    push_sub <- subscriptionNetwork pushSend onReceived
+    push_sub <- subscriptionNetwork sett pushSend onReceived
 
     let stateE = fmap connected  onConnected    <>
                  fmap reconnected onReconnected <>
                  fmap received onReceived
 
-    stateB <- accum (initState max_at) stateE
+    stateB <- accum (initState $ s_maxRetries sett) stateE
 
     let heartbeatP pkg = packageCmd pkg == heartbeatRequestCmd
         onlyHeartbeats = filterE heartbeatP onReceived

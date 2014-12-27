@@ -15,7 +15,8 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Subscription
-    ( Subscription(..)
+    ( DropReason (..)
+    , Subscription(..)
     , subscriptionNetwork
     ) where
 
@@ -85,10 +86,10 @@ instance Decode StreamEventAppeared
 
 --------------------------------------------------------------------------------
 data DropReason
-    = Unsubscribed
-    | AccessDenied
-    | NotFound
-    | PersistentSubscriptionDeleted
+    = D_Unsubscribed
+    | D_AccessDenied
+    | D_NotFound
+    | D_PersistentSubscriptionDeleted
     deriving (Enum, Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -215,10 +216,11 @@ data Confirmation = Confirmation !UUID !SubscriptionConfirmation
 type NewSubscription = (Subscription -> IO ()) -> Text -> Bool -> IO ()
 
 --------------------------------------------------------------------------------
-subscriptionNetwork :: (Package -> Reactive ())
+subscriptionNetwork :: Settings
+                    -> (Package -> Reactive ())
                     -> Event Package
                     -> Reactive NewSubscription
-subscriptionNetwork push_pkg e_pkg = do
+subscriptionNetwork sett push_pkg e_pkg = do
     (on_sub, push_sub) <- newEvent
     (on_rem, push_rem) <- newEvent
 
@@ -247,7 +249,7 @@ subscriptionNetwork push_pkg e_pkg = do
                      , _subResolveLinkTos = res_lnk_tos
                      }
 
-    _ <- listen on_sub (push_pkg_io . createSubscribePackage)
+    _ <- listen on_sub (push_pkg_io . createSubscribePackage sett)
 
     _ <- listen on_app $ \(Appeared sub evt) ->
         atomically $ writeTChan (subEventChan sub) (Right evt)
@@ -258,13 +260,13 @@ subscriptionNetwork push_pkg e_pkg = do
     return push_sub_io
 
 --------------------------------------------------------------------------------
-createSubscribePackage :: Subscribe -> Package
-createSubscribePackage Subscribe{..} =
+createSubscribePackage :: Settings -> Subscribe -> Package
+createSubscribePackage Settings{..} Subscribe{..} =
     Package
     { packageCmd         = 0xC0
-    , packageFlag        = None
     , packageCorrelation = _subId
     , packageData        = runPut $ encodeMessage msg
+    , packageCred        = s_credentials
     }
   where
     msg = subscribeToStream _subStream _subResolveLinkTos
@@ -290,7 +292,7 @@ dropError push_rem Package{..} Manager{..} =
     go | packageCmd == subscriptionDropped = do
              sub <- M.lookup packageCorrelation _subscriptions
              msg <- maybeDecodeMessage packageData
-             let reason  = fromMaybe Unsubscribed $ getField $ dropReason msg
+             let reason  = fromMaybe D_Unsubscribed $ getField $ dropReason msg
                  dropped = Dropped
                            { droppedReason = reason
                            , droppedSub    = sub

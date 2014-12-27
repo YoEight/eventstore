@@ -454,14 +454,28 @@ flagWord8 None          = 0x00
 flagWord8 Authenticated = 0x01
 
 --------------------------------------------------------------------------------
+-- Credentials
+--------------------------------------------------------------------------------
+data Credentials
+    = Credentials
+      { credLogin    :: !ByteString
+      , credPassword :: !ByteString
+      }
+    deriving Show
+
+--------------------------------------------------------------------------------
+credentials :: ByteString -> ByteString -> Credentials
+credentials = Credentials
+
+--------------------------------------------------------------------------------
 -- Package
 --------------------------------------------------------------------------------
 data Package
     = Package
       { packageCmd         :: !Word8
-      , packageFlag        :: !Flag
       , packageCorrelation :: !UUID
       , packageData        :: !ByteString
+      , packageCred        :: !(Maybe Credentials)
       }
     deriving Show
 
@@ -471,17 +485,21 @@ data Package
 -- | Global @ConnectionManager@ settings
 data Settings
     = Settings
-      { _heartbeatInterval :: NominalDiffTime
-      , _heartbeatTimeout  :: NominalDiffTime
-      , _requireMaster     :: Bool
+      { s_heartbeatInterval :: NominalDiffTime
+      , s_heartbeatTimeout  :: NominalDiffTime
+      , s_requireMaster     :: Bool
+      , s_credentials       :: Maybe Credentials
+      , s_maxRetries        :: Int
       }
 
 --------------------------------------------------------------------------------
 defaultSettings :: Settings
 defaultSettings = Settings
-                  { _heartbeatInterval = msDiffTime 750  -- 750ms
-                  , _heartbeatTimeout  = msDiffTime 1500 -- 1500ms
-                  , _requireMaster     = True
+                  { s_heartbeatInterval = msDiffTime 750  -- 750ms
+                  , s_heartbeatTimeout  = msDiffTime 1500 -- 1500ms
+                  , s_requireMaster     = True
+                  , s_credentials       = Nothing
+                  , s_maxRetries        = 3
                   }
 
 --------------------------------------------------------------------------------
