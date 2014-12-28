@@ -121,7 +121,7 @@ data Subscription
       { subId              :: !UUID
       , subStream          :: !Text
       , subResolveLinkTos  :: !Bool
-      , subEventChan       :: !(TChan (Either DropReason ResolvedEventBuf))
+      , subEventChan       :: !(TChan (Either DropReason ResolvedEvent))
       , subLastCommitPos   :: !Int64
       , subLastEventNumber :: !(Maybe Int32)
       , subUnsubscribe     :: IO ()
@@ -172,7 +172,7 @@ onConfirmation Package{..}
 data Appeared
     = Appeared
       { _appSub :: !Subscription
-      , _appEvt :: !ResolvedEventBuf
+      , _appEvt :: !ResolvedEvent
       }
 
 --------------------------------------------------------------------------------
@@ -182,7 +182,7 @@ onEventAppeared Package{..} Manager{..}
           sub <- M.lookup packageCorrelation _subscriptions
           sea <- maybeDecodeMessage packageData
           let res_evt = getField $ streamResolvedEvent sea
-              app     = Appeared sub res_evt
+              app     = Appeared sub $ newResolvedEventFromBuf res_evt
 
           return app
     | otherwise = Nothing
