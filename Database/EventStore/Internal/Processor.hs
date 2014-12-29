@@ -55,10 +55,12 @@ data Processor
       { processorConnect        :: HostName -> Int -> IO ()
       , processorShutdown       :: IO ()
       , processorNewOperation   :: OperationParams -> IO ()
-      , processorNewSubcription :: (Subscription -> IO ())
-                                   -> Text
-                                   -> Bool
-                                   -> IO ()
+      , processorNewSubcription ::
+             (Subscription -> IO ())
+             -> (Subscription -> Either DropReason ResolvedEvent -> IO ())
+             -> Text
+             -> Bool
+             -> IO ()
       }
 
 --------------------------------------------------------------------------------
@@ -176,7 +178,7 @@ network sett = do
     let processor =
             Processor
             { processorConnect        = \h p -> sync $ pushConnect $ Connect h p
-            , processorShutdown       = sync $ pushCleanup Cleanup
+            , processorShutdown       = pushAsync pushCleanup Cleanup
             , processorNewOperation   = \o -> sync $ push_new_op o
             , processorNewSubcription = push_sub
             }

@@ -21,7 +21,9 @@ module Database.EventStore.Internal.Manager.Subscription
     ) where
 
 --------------------------------------------------------------------------------
-import           Control.Concurrent.STM
+import           Control.Concurrent
+import           Control.Concurrent.Async
+import           Control.Monad
 import           Control.Monad.Fix
 import           Data.ByteString (ByteString)
 import           Data.Int
@@ -102,10 +104,17 @@ data SubscriptionDropped
 instance Decode SubscriptionDropped
 
 --------------------------------------------------------------------------------
+data UnsubscribeFromStream = UnsubscribeFromStream deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Encode UnsubscribeFromStream
+
+--------------------------------------------------------------------------------
 data Pending
     = Pending
-      { penConfirmed :: Int64 -> Maybe Int32 -> IO Subscription
-      , penCallback  :: Subscription -> IO ()
+      { penConf  :: Int64 -> Maybe Int32 -> Subscription
+      , penCb    :: Subscription -> IO ()
+      , penEvtCb :: Subscription -> Either DropReason ResolvedEvent -> IO ()
       }
 
 --------------------------------------------------------------------------------
@@ -121,17 +130,25 @@ data Subscription
       { subId              :: !UUID
       , subStream          :: !Text
       , subResolveLinkTos  :: !Bool
-      , subEventChan       :: !(TChan (Either DropReason ResolvedEvent))
       , subLastCommitPos   :: !Int64
       , subLastEventNumber :: !(Maybe Int32)
       , subUnsubscribe     :: IO ()
       }
 
 --------------------------------------------------------------------------------
+data Sub
+    = Sub
+      { _subSub  :: Subscription
+      , _subCb   :: Subscription -> Either DropReason ResolvedEvent -> IO ()
+      , _subChan :: Chan (IO ())
+      , _subAS   :: Async ()
+      }
+
+--------------------------------------------------------------------------------
 data Manager
     = Manager
       { _pendings      :: !(M.Map UUID Pending)
-      , _subscriptions :: !(M.Map UUID Subscription)
+      , _subscriptions :: !(M.Map UUID Sub)
       }
 
 --------------------------------------------------------------------------------
@@ -173,6 +190,7 @@ data Appeared
     = Appeared
       { _appSub :: !Subscription
       , _appEvt :: !ResolvedEvent
+      , _appCb  :: Subscription -> ResolvedEvent -> IO ()
       }
 
 --------------------------------------------------------------------------------
@@ -182,21 +200,36 @@ onEventAppeared Package{..} Manager{..}
           sub <- M.lookup packageCorrelation _subscriptions
           sea <- maybeDecodeMessage packageData
           let res_evt = getField $ streamResolvedEvent sea
-              app     = Appeared sub $ newResolvedEventFromBuf res_evt
+              chan    = _subChan sub
+              evt_cb  = \s evt -> writeChan chan ((_subCb sub) s $ Right evt)
+              app     = Appeared
+                        { _appSub = _subSub sub
+                        , _appEvt = newResolvedEventFromBuf res_evt
+                        , _appCb  = evt_cb
+                        }
 
           return app
     | otherwise = Nothing
 
 --------------------------------------------------------------------------------
-confirmSub :: Confirmation -> Manager -> IO (Maybe Subscription)
+confirmSub :: Confirmation -> Manager -> IO (Maybe Sub)
 confirmSub (Confirmation uuid sc) Manager{..} =
     for (M.lookup uuid _pendings) $ \p -> do
         let last_com_pos = getField $ subscribeLastCommitPos sc
             last_evt_num = getField $ subscribeLastEventNumber sc
 
-        sub <- penConfirmed p last_com_pos last_evt_num
-        penCallback p sub
-        return sub
+        let sub = penConf p last_com_pos last_evt_num
+        penCb p sub
+        chan <- newChan
+        as   <- async $ forever $ do
+            action <- readChan chan
+            action
+        return Sub
+               { _subSub  = sub
+               , _subCb   = penEvtCb p
+               , _subChan = chan
+               , _subAS   = as
+               }
 
 --------------------------------------------------------------------------------
 -- Events
@@ -207,13 +240,19 @@ data Subscribe
       , _subCallback       :: Subscription -> IO ()
       , _subStream         :: !Text
       , _subResolveLinkTos :: !Bool
+      , _subEventAppeared  :: Subscription
+                           -> Either DropReason ResolvedEvent
+                           -> IO ()
       }
 
 --------------------------------------------------------------------------------
 data Confirmation = Confirmation !UUID !SubscriptionConfirmation
 
 --------------------------------------------------------------------------------
-type NewSubscription = (Subscription -> IO ()) -> Text -> Bool -> IO ()
+type NewSubscription =
+    (Subscription -> IO ())
+    -> (Subscription -> Either DropReason ResolvedEvent -> IO ())
+    -> Text -> Bool -> IO ()
 
 --------------------------------------------------------------------------------
 subscriptionNetwork :: Settings
@@ -229,33 +268,34 @@ subscriptionNetwork sett push_pkg e_pkg = do
             on_con_sub = filterJust $ executeSyncIO $ snapshot confirmSub
                                                                on_con
                                                                mgr_b
-            mgr_e = fmap (subscribe push_rem) on_sub <>
-                    fmap remove on_rem               <>
+            send_unsub = push_pkg . createUnsubscribePackage sett
+
+            mgr_e = fmap (subscribe send_unsub) on_sub <>
+                    fmap remove on_rem                 <>
                     fmap confirmed on_con_sub
 
         accum initManager mgr_e
 
-    let on_app      = filterJust $ snapshot onEventAppeared e_pkg mgr_b
-        on_drop     = filterJust $ execute $ snapshot (dropError push_rem)
+    let on_app  = filterJust $ snapshot onEventAppeared e_pkg mgr_b
+        on_drop = filterJust $ execute $ snapshot (dropError push_rem)
                                                       e_pkg
                                                       mgr_b
         push_pkg_io = pushAsync push_pkg
 
-        push_sub_io cb stream res_lnk_tos = randomIO >>= \uuid -> sync $
+        push_sub_io cb evt_cb stream res_lnk_tos = randomIO >>= \uuid -> sync $
             push_sub Subscribe
                      { _subId             = uuid
                      , _subCallback       = cb
                      , _subStream         = stream
                      , _subResolveLinkTos = res_lnk_tos
+                     , _subEventAppeared  = evt_cb
                      }
 
     _ <- listen on_sub (push_pkg_io . createSubscribePackage sett)
 
-    _ <- listen on_app $ \(Appeared sub evt) ->
-        atomically $ writeTChan (subEventChan sub) (Right evt)
+    _ <- listen on_app $ \(Appeared sub evt cb) -> cb sub evt
 
-    _ <- listen on_drop $ \(Dropped reason sub _) ->
-        atomically $ writeTChan (subEventChan sub) (Left reason)
+    _ <- listen on_drop $ \(Dropped reason sub _ cb) -> cb sub reason
 
     return push_sub_io
 
@@ -272,11 +312,22 @@ createSubscribePackage Settings{..} Subscribe{..} =
     msg = subscribeToStream _subStream _subResolveLinkTos
 
 --------------------------------------------------------------------------------
+createUnsubscribePackage :: Settings -> UUID -> Package
+createUnsubscribePackage Settings{..} uuid =
+    Package
+    { packageCmd         = 0xC3
+    , packageCorrelation = uuid
+    , packageData        = runPut $ encodeMessage UnsubscribeFromStream
+    , packageCred        = s_credentials
+    }
+
+--------------------------------------------------------------------------------
 data Dropped
     = Dropped
       { droppedReason :: !DropReason
       , droppedSub    :: !Subscription
       , droppedId     :: !UUID
+      , droppedCb     :: Subscription -> DropReason -> IO ()
       }
 
 --------------------------------------------------------------------------------
@@ -293,10 +344,21 @@ dropError push_rem Package{..} Manager{..} =
              sub <- M.lookup packageCorrelation _subscriptions
              msg <- maybeDecodeMessage packageData
              let reason  = fromMaybe D_Unsubscribed $ getField $ dropReason msg
+                 chan    = _subChan sub
+
+                 drop_cb = \s r -> do
+                     var <- newEmptyMVar
+                     writeChan chan $ do
+                         (_subCb sub) s (Left r)
+                         putMVar var ()
+                     readMVar var
+                     cancel $ _subAS sub
+
                  dropped = Dropped
                            { droppedReason = reason
-                           , droppedSub    = sub
+                           , droppedSub    = _subSub sub
                            , droppedId     = packageCorrelation
+                           , droppedCb     = drop_cb
                            }
 
              return dropped
@@ -311,30 +373,29 @@ subscribe unsub Subscribe{..} s@Manager{..} =
   where
     pending =
         Pending
-        { penConfirmed = new_sub
-        , penCallback  = _subCallback
+        { penConf  = new_sub
+        , penCb    = _subCallback
+        , penEvtCb = _subEventAppeared
         }
 
-    new_sub com_pos last_evt = do
-        chan <- newTChanIO
-        let sub = Subscription
-                  { subId              = _subId
-                  , subStream          = _subStream
-                  , subResolveLinkTos  = _subResolveLinkTos
-                  , subEventChan       = chan
-                  , subLastCommitPos   = com_pos
-                  , subLastEventNumber = last_evt
-                  , subUnsubscribe     = sync $ unsub _subId
-                  }
-
-        return sub
+    new_sub com_pos last_evt =
+        Subscription
+        { subId              = _subId
+        , subStream          = _subStream
+        , subResolveLinkTos  = _subResolveLinkTos
+        , subLastCommitPos   = com_pos
+        , subLastEventNumber = last_evt
+        , subUnsubscribe     = sync $ unsub _subId
+        }
 
 --------------------------------------------------------------------------------
-confirmed :: Subscription -> Manager -> Manager
-confirmed sub@Subscription{..} s@Manager{..} =
-    s { _pendings      = M.delete subId _pendings
-      , _subscriptions = M.insert subId sub _subscriptions
+confirmed :: Sub -> Manager -> Manager
+confirmed ss s@Manager{..} =
+    s { _pendings      = M.delete sub_id _pendings
+      , _subscriptions = M.insert sub_id ss _subscriptions
       }
+  where
+    sub_id = subId $ _subSub ss
 
 --------------------------------------------------------------------------------
 remove :: UUID -> Manager -> Manager
