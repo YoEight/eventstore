@@ -11,11 +11,12 @@ Basically, all we have for now are:
   6. ReadAllEvents (Forward and Backward)
   7. Volatile subscriptions
   8. Authentication
+  9. Catchup subscriptions
 
 TODO
 ====
 
-  1. All kind of Subscriptions
+  1. Persistent Subscriptions
   2. SSL
 
 Requirements
