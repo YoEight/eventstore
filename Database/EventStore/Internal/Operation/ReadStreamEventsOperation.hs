@@ -18,7 +18,7 @@ module Database.EventStore.Internal.Operation.ReadStreamEventsOperation
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.STM
+import Control.Concurrent
 import Data.Int
 import GHC.Generics (Generic)
 
@@ -124,7 +124,7 @@ newStreamEventsSlice stream_id start dir reco = ses
 --------------------------------------------------------------------------------
 readStreamEventsOperation :: Settings
                           -> ReadDirection
-                          -> TMVar (OperationExceptional StreamEventsSlice)
+                          -> MVar (OperationExceptional StreamEventsSlice)
                           -> Text
                           -> Int32
                           -> Int32
@@ -158,7 +158,7 @@ readStreamEventsOperation settings dir mvar stream_id start cnt res_link_tos =
                Backward -> 0xB5
 
 --------------------------------------------------------------------------------
-inspect :: TMVar (OperationExceptional StreamEventsSlice)
+inspect :: MVar (OperationExceptional StreamEventsSlice)
         -> ReadDirection
         -> Text
         -> Int32
@@ -173,22 +173,22 @@ inspect mvar dir stream_id start rsec = go (getField $ readSECResult rsec)
     go _                = succeed mvar dir stream_id start rsec
 
 --------------------------------------------------------------------------------
-succeed :: TMVar (OperationExceptional StreamEventsSlice)
+succeed :: MVar (OperationExceptional StreamEventsSlice)
         -> ReadDirection
         -> Text
         -> Int32
         -> ReadStreamEventsCompleted
         -> IO Decision
 succeed mvar dir stream_id start rsec = do
-    atomically $ putTMVar mvar (Right ses)
+    putMVar mvar (Right ses)
     return EndOperation
   where
     ses = newStreamEventsSlice stream_id start dir rsec
 
 --------------------------------------------------------------------------------
-failed :: TMVar (OperationExceptional StreamEventsSlice)
+failed :: MVar (OperationExceptional StreamEventsSlice)
        -> OperationException
        -> IO Decision
 failed mvar e = do
-    atomically $ putTMVar mvar (Left e)
+    putMVar mvar (Left e)
     return EndOperation

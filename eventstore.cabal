@@ -10,7 +10,7 @@ name:                eventstore
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.2.0.0
+version:             0.2.0.1
 
 -- A short (one-line) description of the package.
 synopsis: EventStore Haskell TCP Client
@@ -74,7 +74,6 @@ library
 
   -- Other library packages from which modules are imported.
   build-depends:       base       >=4.7      && <4.8
-                     , attoparsec >=0.12     && <0.13
                      , aeson      >=0.8      && <0.9
                      , async      >=2.0      && <2.1
                      , bytestring >=0.10.4   && <0.10.5
@@ -84,7 +83,6 @@ library
                      , protobuf   >=0.2      && <0.3
                      , random     ==1.*
                      , sodium     ==0.11.*
-                     , stm        >=2.2      && <2.5
                      , text       >=1.1.1    && <1.2
                      , time       >=1.4      && <1.6
                      , uuid       ==1.3.*

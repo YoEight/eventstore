@@ -19,7 +19,7 @@ module Database.EventStore.Internal.Operation.ReadEventOperation
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.STM
+import Control.Concurrent
 import Data.Int
 import GHC.Generics (Generic)
 
@@ -108,7 +108,7 @@ newReadResult status stream_id evt_num rie = rr
 
 --------------------------------------------------------------------------------
 readEventOperation :: Settings
-                   -> TMVar (OperationExceptional ReadResult)
+                   -> MVar (OperationExceptional ReadResult)
                    -> Text
                    -> Int32
                    -> Bool -- ^ Resolve link TOS
@@ -132,7 +132,7 @@ readEventOperation settings mvar stream_id evt_num res_link_tos =
     }
 
 --------------------------------------------------------------------------------
-inspect :: TMVar (OperationExceptional ReadResult)
+inspect :: MVar (OperationExceptional ReadResult)
         -> Text
         -> Int32
         -> ReadEventCompleted
@@ -146,13 +146,13 @@ inspect mvar stream_id evt_num reco = go (getField $ readCompletedResult reco)
     go _                = succeed mvar stream_id evt_num reco
 
 --------------------------------------------------------------------------------
-succeed :: TMVar (OperationExceptional ReadResult)
+succeed :: MVar (OperationExceptional ReadResult)
         -> Text
         -> Int32
         -> ReadEventCompleted
         -> IO Decision
 succeed mvar stream_id evt_num reco = do
-    atomically $ putTMVar mvar (Right rr)
+    putMVar mvar (Right rr)
     return EndOperation
   where
     status = getField $ readCompletedResult reco
@@ -160,9 +160,9 @@ succeed mvar stream_id evt_num reco = do
     rr     = newReadResult status stream_id evt_num rie
 
 --------------------------------------------------------------------------------
-failed :: TMVar (OperationExceptional ReadResult)
+failed :: MVar (OperationExceptional ReadResult)
        -> OperationException
        -> IO Decision
 failed mvar e = do
-    atomically $ putTMVar mvar (Left e)
+    putMVar mvar (Left e)
     return EndOperation

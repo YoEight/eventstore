@@ -22,7 +22,6 @@ module Database.EventStore.Internal.Processor
 
 --------------------------------------------------------------------------------
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Exception
 import Data.Monoid ((<>))
 import Data.Typeable
@@ -233,8 +232,8 @@ connection push_pkg push_con push_reco evt_pkg max_a host port = loop 1
         hSetBuffering hdl NoBuffering
 
         uuid  <- randomIO
-        chan  <- newTChanIO
-        as_rl <- async $ sync $ listen evt_pkg (atomically . writeTChan chan)
+        chan  <- newChan
+        as_rl <- async $ sync $ listen evt_pkg (writeChan chan)
         rid   <- forkFinally (readerThread push_pkg hdl) (recovering push_reco)
         wid   <- forkFinally (writerThread chan hdl) (recovering push_reco)
 

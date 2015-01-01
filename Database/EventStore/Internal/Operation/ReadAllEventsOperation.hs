@@ -19,7 +19,7 @@ module Database.EventStore.Internal.Operation.ReadAllEventsOperation
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.STM
+import Control.Concurrent
 import Data.Int
 import Data.Maybe
 import GHC.Generics (Generic)
@@ -123,7 +123,7 @@ newAllEventsSlice dir raec = aes
 --------------------------------------------------------------------------------
 readAllEventsOperation :: Settings
                        -> ReadDirection
-                       -> TMVar (OperationExceptional AllEventsSlice)
+                       -> MVar (OperationExceptional AllEventsSlice)
                        -> Int64
                        -> Int64
                        -> Int32
@@ -157,7 +157,7 @@ readAllEventsOperation settings dir mvar c_pos p_pos max_c res_link_tos =
                Backward -> 0xB9
 
 --------------------------------------------------------------------------------
-inspect :: TMVar (OperationExceptional AllEventsSlice)
+inspect :: MVar (OperationExceptional AllEventsSlice)
         -> ReadDirection
         -> ReadAllEventsCompleted
         -> IO Decision
@@ -171,20 +171,20 @@ inspect mvar dir raec = go res
     go _                = succeed mvar dir raec
 
 --------------------------------------------------------------------------------
-succeed :: TMVar (OperationExceptional AllEventsSlice)
+succeed :: MVar (OperationExceptional AllEventsSlice)
         -> ReadDirection
         -> ReadAllEventsCompleted
         -> IO Decision
 succeed mvar dir raec = do
-    atomically $ putTMVar mvar (Right ses)
+    putMVar mvar (Right ses)
     return EndOperation
   where
     ses = newAllEventsSlice dir raec
 
 --------------------------------------------------------------------------------
-failed :: TMVar (OperationExceptional AllEventsSlice)
+failed :: MVar (OperationExceptional AllEventsSlice)
        -> OperationException
        -> IO Decision
 failed mvar e = do
-    atomically $ putTMVar mvar (Left e)
+    putMVar mvar (Left e)
     return EndOperation

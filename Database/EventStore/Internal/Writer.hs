@@ -12,8 +12,8 @@
 module Database.EventStore.Internal.Writer (writerThread) where
 
 --------------------------------------------------------------------------------
+import           Control.Concurrent
 import           Control.Monad
-import           Control.Concurrent.STM
 import qualified Data.ByteString as B
 import           System.IO
 
@@ -25,8 +25,8 @@ import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-writerThread :: TChan Package -> Handle -> IO ()
+writerThread :: Chan Package -> Handle -> IO ()
 writerThread chan hdl = forever $ do
-    pkg <- atomically $ readTChan chan
+    pkg <- readChan chan
     B.hPut hdl (runPut $ putPackage pkg)
     hFlush hdl
