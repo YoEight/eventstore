@@ -66,7 +66,8 @@ module Database.EventStore
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.STM
+import Control.Concurrent
+import Control.Exception
 import Data.Int
 
 --------------------------------------------------------------------------------
@@ -279,20 +280,20 @@ subscribe :: Connection
           -> (Subscription -> Either DropReason ResolvedEvent -> IO ())
           -> IO (Async Subscription)
 subscribe Connection{..} stream_id res_lnk_tos cb = do
-    tmp <- newEmptyTMVarIO
+    tmp <- newEmptyMVar
     processorNewSubcription conProcessor
-                            (atomically . putTMVar tmp)
+                            (putMVar tmp)
                             cb
                             stream_id
                             res_lnk_tos
-    async $ atomically $ readTMVar tmp
+    async $ readMVar tmp
 
 --------------------------------------------------------------------------------
-createAsync :: IO (Async a, TMVar (OperationExceptional a))
+createAsync :: IO (Async a, MVar (OperationExceptional a))
 createAsync = do
-    mvar <- newEmptyTMVarIO
-    as   <- async $ atomically $ do
-        res <- readTMVar mvar
-        either throwSTM return res
+    mvar <- newEmptyMVar
+    as   <- async $ do
+        res <- readMVar mvar
+        either throwIO return res
 
     return (as, mvar)

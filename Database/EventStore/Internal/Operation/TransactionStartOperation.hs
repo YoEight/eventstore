@@ -14,7 +14,8 @@ module Database.EventStore.Internal.Operation.TransactionStartOperation
     ( transactionStartOperation ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.STM
+import Control.Concurrent
+import Control.Exception
 import Data.Int
 import Data.Maybe
 import Data.Traversable
@@ -41,7 +42,7 @@ data TransactionEnv
 --------------------------------------------------------------------------------
 transactionStartOperation :: Settings
                           -> Processor
-                          -> TMVar (OperationExceptional Transaction)
+                          -> MVar (OperationExceptional Transaction)
                           -> Text
                           -> ExpectedVersion
                           -> OperationParams
@@ -72,7 +73,7 @@ transactionStartOperation settings procss mvar stream_id exp_ver =
 
 --------------------------------------------------------------------------------
 inspectTrans :: TransactionEnv
-             -> TMVar (OperationExceptional Transaction)
+             -> MVar (OperationExceptional Transaction)
              -> TransactionStartCompleted
              -> IO Decision
 inspectTrans env mvar tsc = go (getField $ transactionSCResult tsc)
@@ -92,22 +93,22 @@ inspectTrans env mvar tsc = go (getField $ transactionSCResult tsc)
 
 --------------------------------------------------------------------------------
 succeedTrans :: TransactionEnv
-             -> TMVar (OperationExceptional Transaction)
+             -> MVar (OperationExceptional Transaction)
              -> TransactionStartCompleted
              -> IO Decision
 succeedTrans env mvar tsc = do
-    atomically $ putTMVar mvar (Right trans)
+    putMVar mvar (Right trans)
     return EndOperation
   where
     trans_id = getField $ transactionSCId tsc
     trans    = createTransaction env trans_id
 
 --------------------------------------------------------------------------------
-failed :: TMVar (OperationExceptional a)
+failed :: MVar (OperationExceptional a)
        -> OperationException
        -> IO Decision
 failed mvar e = do
-    atomically $ putTMVar mvar (Left e)
+    putMVar mvar (Left e)
     return EndOperation
 
 --------------------------------------------------------------------------------
@@ -141,7 +142,7 @@ createTransaction env@TransactionEnv{..} trans_id = trans
 --------------------------------------------------------------------------------
 transactionWriteOperation :: TransactionEnv
                           -> Int64
-                          -> TMVar (OperationExceptional ())
+                          -> MVar (OperationExceptional ())
                           -> [Event]
                           -> OperationParams
 transactionWriteOperation env trans_id mvar evts =
@@ -169,7 +170,7 @@ transactionWriteOperation env trans_id mvar evts =
 --------------------------------------------------------------------------------
 transactionCommitOperation :: TransactionEnv
                            -> Int64
-                           -> TMVar (OperationExceptional WriteResult)
+                           -> MVar (OperationExceptional WriteResult)
                            -> OperationParams
 transactionCommitOperation env trans_id mvar =
     OperationParams
@@ -191,7 +192,7 @@ transactionCommitOperation env trans_id mvar =
 
 --------------------------------------------------------------------------------
 inspectWrite :: TransactionEnv
-             -> TMVar (OperationExceptional ())
+             -> MVar (OperationExceptional ())
              -> TransactionWriteCompleted
              -> IO Decision
 inspectWrite env mvar twc = go (getField $ transactionWCResult twc)
@@ -210,16 +211,16 @@ inspectWrite env mvar twc = go (getField $ transactionWCResult twc)
     wrong_version = WrongExpectedVersion stream_id exp_ver
 
 --------------------------------------------------------------------------------
-succeedWrite :: TMVar (OperationExceptional ())
+succeedWrite :: MVar (OperationExceptional ())
              -> TransactionWriteCompleted
              -> IO Decision
 succeedWrite mvar _ = do
-    atomically $ putTMVar mvar (Right ())
+    putMVar mvar (Right ())
     return EndOperation
 
 --------------------------------------------------------------------------------
 inspectCommit :: TransactionEnv
-              -> TMVar (OperationExceptional WriteResult)
+              -> MVar (OperationExceptional WriteResult)
               -> TransactionCommitCompleted
               -> IO Decision
 inspectCommit env mvar tcc = go (getField $ transactionCCResult tcc)
@@ -238,11 +239,11 @@ inspectCommit env mvar tcc = go (getField $ transactionCCResult tcc)
     wrong_version = WrongExpectedVersion stream_id exp_ver
 
 --------------------------------------------------------------------------------
-succeedCommit :: TMVar (OperationExceptional WriteResult)
+succeedCommit :: MVar (OperationExceptional WriteResult)
               -> TransactionCommitCompleted
               -> IO Decision
 succeedCommit mvar tcc = do
-    atomically $ putTMVar mvar (Right wr)
+    putMVar mvar (Right wr)
     return EndOperation
   where
     last_evt_num = getField $ transactionCCLastNumber tcc
@@ -269,11 +270,11 @@ eventToNewEvent evt =
     evt_metadata_type  = eventMetadataType $ eventData evt
 
 --------------------------------------------------------------------------------
-createAsync :: IO (Async a, TMVar (OperationExceptional a))
+createAsync :: IO (Async a, MVar (OperationExceptional a))
 createAsync = do
-    mvar <- atomically newEmptyTMVar
-    as   <- async $ atomically $ do
-        res <- readTMVar mvar
-        either throwSTM return res
+    mvar <- newEmptyMVar
+    as   <- async $ do
+        res <- readMVar mvar
+        either throwIO return res
 
     return (as, mvar)

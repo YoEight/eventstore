@@ -15,7 +15,7 @@ module Database.EventStore.Internal.Operation.DeleteStreamOperation
     ( deleteStreamOperation ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.STM
+import Control.Concurrent
 import Data.Int
 import Data.Maybe
 import GHC.Generics (Generic)
@@ -70,7 +70,7 @@ instance Decode DeleteStreamCompleted
 
 --------------------------------------------------------------------------------
 deleteStreamOperation :: Settings
-                      -> TMVar (OperationExceptional DeleteResult)
+                      -> MVar (OperationExceptional DeleteResult)
                       -> Text
                       -> ExpectedVersion
                       -> Maybe Bool
@@ -95,7 +95,7 @@ deleteStreamOperation settings mvar stream_id exp_ver hard_del =
     }
 
 --------------------------------------------------------------------------------
-inspect :: TMVar (OperationExceptional DeleteResult)
+inspect :: MVar (OperationExceptional DeleteResult)
         -> Text
         -> ExpectedVersion
         -> DeleteStreamCompleted
@@ -114,11 +114,11 @@ inspect mvar stream exp_ver dsc = go (getField $ deleteCompletedResult dsc)
     wrong_version = WrongExpectedVersion stream exp_ver
 
 --------------------------------------------------------------------------------
-succeed :: TMVar (OperationExceptional DeleteResult)
+succeed :: MVar (OperationExceptional DeleteResult)
         -> DeleteStreamCompleted
         -> IO Decision
 succeed mvar wec = do
-    atomically $ putTMVar mvar (Right wr)
+    putMVar mvar (Right wr)
     return EndOperation
   where
     com_pos      = getField $ deleteCompletedCommitPosition wec
@@ -129,9 +129,9 @@ succeed mvar wec = do
     wr           = DeleteResult pos
 
 --------------------------------------------------------------------------------
-failed :: TMVar (OperationExceptional DeleteResult)
+failed :: MVar (OperationExceptional DeleteResult)
        -> OperationException
        -> IO Decision
 failed mvar e = do
-    atomically $ putTMVar mvar (Left e)
+    putMVar mvar (Left e)
     return EndOperation

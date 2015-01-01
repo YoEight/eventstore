@@ -15,7 +15,7 @@ module Database.EventStore.Internal.Operation.WriteEventsOperation
     ( writeEventsOperation ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.STM
+import Control.Concurrent
 import Data.Int
 import Data.Maybe
 import Data.Traversable
@@ -73,7 +73,7 @@ instance Decode WriteEventsCompleted
 
 --------------------------------------------------------------------------------
 writeEventsOperation :: Settings
-                     -> TMVar (OperationExceptional WriteResult)
+                     -> MVar (OperationExceptional WriteResult)
                      -> Text
                      -> ExpectedVersion
                      -> [Event]
@@ -100,7 +100,7 @@ writeEventsOperation settings mvar evt_stream exp_ver evts =
     }
 
 --------------------------------------------------------------------------------
-inspect :: TMVar (OperationExceptional WriteResult)
+inspect :: MVar (OperationExceptional WriteResult)
         -> Text
         -> ExpectedVersion
         -> WriteEventsCompleted
@@ -119,11 +119,11 @@ inspect mvar stream exp_ver wec = go (getField $ writeCompletedResult wec)
     wrong_version = WrongExpectedVersion stream exp_ver
 
 --------------------------------------------------------------------------------
-succeed :: TMVar (OperationExceptional WriteResult)
+succeed :: MVar (OperationExceptional WriteResult)
         -> WriteEventsCompleted
         -> IO Decision
 succeed mvar wec = do
-    atomically $ putTMVar mvar (Right wr)
+    putMVar mvar (Right wr)
     return EndOperation
   where
     last_evt_num = getField $ writeCompletedLastNumber wec
@@ -135,11 +135,11 @@ succeed mvar wec = do
     wr           = WriteResult last_evt_num pos
 
 --------------------------------------------------------------------------------
-failed :: TMVar (OperationExceptional WriteResult)
+failed :: MVar (OperationExceptional WriteResult)
        -> OperationException
        -> IO Decision
 failed mvar e = do
-    atomically $ putTMVar mvar (Left e)
+    putMVar mvar (Left e)
     return EndOperation
 
 --------------------------------------------------------------------------------
