@@ -277,13 +277,11 @@ readAllEventsCommon Connection{..} dir c_pos p_pos max_c res_link_tos = do
 subscribe :: Connection
           -> Text
           -> Bool
-          -> (Subscription -> Either DropReason ResolvedEvent -> IO ())
           -> IO (Async Subscription)
-subscribe Connection{..} stream_id res_lnk_tos cb = do
+subscribe Connection{..} stream_id res_lnk_tos = do
     tmp <- newEmptyMVar
     processorNewSubcription conProcessor
                             (putMVar tmp)
-                            cb
                             stream_id
                             res_lnk_tos
     async $ readMVar tmp
