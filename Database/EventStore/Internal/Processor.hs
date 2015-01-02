@@ -32,7 +32,6 @@ import Text.Printf
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
-import Data.Text (Text)
 import Data.UUID
 import FRP.Sodium
 import Network

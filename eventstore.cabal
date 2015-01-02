@@ -34,6 +34,7 @@ maintainer:          yo.eight@gmail.com
 -- A copyright notice.
 -- copyright:
 
+homepage:            http://github.com/YoEight/eventstore
 category:            Database
 
 build-type:          Simple
@@ -48,6 +49,10 @@ cabal-version:       >=1.10
 source-repository head
   type: git
   location: git://github.com/YoEight/eventstore.git
+
+flag maintainer
+  Description: Enforce strict code quality checks
+  Default: False
 
 library
   -- Modules exported by the library.
@@ -91,4 +96,9 @@ library
   -- hs-source-dirs:
 
   -- Base language which the package is written in.
+  if flag(maintainer)
+    ghc-options: -Wall -Werror
+  else
+    ghc-options: -Wall
+
   default-language:    Haskell2010

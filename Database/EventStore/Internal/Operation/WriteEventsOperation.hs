@@ -32,10 +32,10 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 data WriteEvents
     = WriteEvents
-      { writeStreamId        :: Required 1 (Value Text)
-      , writeExpectedVersion :: Required 2 (Value Int32)
-      , writeEvents          :: Repeated 3 (Message NewEvent)
-      , writeRequireMaster   :: Required 4 (Value Bool)
+      { _writeStreamId        :: Required 1 (Value Text)
+      , _writeExpectedVersion :: Required 2 (Value Int32)
+      , _writeEvents          :: Repeated 3 (Message NewEvent)
+      , _writeRequireMaster   :: Required 4 (Value Bool)
       }
     deriving (Generic, Show)
 
@@ -50,21 +50,21 @@ newWriteEvents :: Text        -- ^ Stream
                -> WriteEvents
 newWriteEvents stream_id exp_ver evts req_master =
     WriteEvents
-    { writeStreamId        = putField stream_id
-    , writeExpectedVersion = putField exp_ver
-    , writeEvents          = putField evts
-    , writeRequireMaster   = putField req_master
+    { _writeStreamId        = putField stream_id
+    , _writeExpectedVersion = putField exp_ver
+    , _writeEvents          = putField evts
+    , _writeRequireMaster   = putField req_master
     }
 
 --------------------------------------------------------------------------------
 data WriteEventsCompleted
     = WriteEventsCompleted
-      { writeCompletedResult          :: Required 1 (Enumeration OpResult)
-      , writeCompletedMessage         :: Optional 2 (Value Text)
-      , writeCompletedFirstNumber     :: Required 3 (Value Int32)
-      , writeCompletedLastNumber      :: Required 4 (Value Int32)
-      , writeCompletedPreparePosition :: Optional 5 (Value Int64)
-      , writeCompletedCommitPosition  :: Optional 6 (Value Int64)
+      { _writeCompletedResult          :: Required 1 (Enumeration OpResult)
+      , _writeCompletedMessage         :: Optional 2 (Value Text)
+      , _writeCompletedFirstNumber     :: Required 3 (Value Int32)
+      , _writeCompletedLastNumber      :: Required 4 (Value Int32)
+      , _writeCompletedPreparePosition :: Optional 5 (Value Int64)
+      , _writeCompletedCommitPosition  :: Optional 6 (Value Int64)
       }
     deriving (Generic, Show)
 
@@ -105,7 +105,7 @@ inspect :: MVar (OperationExceptional WriteResult)
         -> ExpectedVersion
         -> WriteEventsCompleted
         -> IO Decision
-inspect mvar stream exp_ver wec = go (getField $ writeCompletedResult wec)
+inspect mvar stream exp_ver wec = go (getField $ _writeCompletedResult wec)
   where
     go OP_SUCCESS                = succeed mvar wec
     go OP_PREPARE_TIMEOUT        = return Retry
@@ -126,9 +126,9 @@ succeed mvar wec = do
     putMVar mvar (Right wr)
     return EndOperation
   where
-    last_evt_num = getField $ writeCompletedLastNumber wec
-    com_pos      = getField $ writeCompletedCommitPosition wec
-    pre_pos      = getField $ writeCompletedPreparePosition wec
+    last_evt_num = getField $ _writeCompletedLastNumber wec
+    com_pos      = getField $ _writeCompletedCommitPosition wec
+    pre_pos      = getField $ _writeCompletedPreparePosition wec
     com_pos_int  = fromMaybe (-1) com_pos
     pre_pos_int  = fromMaybe (-1) pre_pos
     pos          = Position com_pos_int pre_pos_int
