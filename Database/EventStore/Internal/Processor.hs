@@ -17,6 +17,7 @@ module Database.EventStore.Internal.Processor
     , Processor(..)
     , DropReason(..)
     , Subscription(..)
+    , NewSubscriptionCB
     , newProcessor
     ) where
 
@@ -54,12 +55,7 @@ data Processor
       { processorConnect        :: HostName -> Int -> IO ()
       , processorShutdown       :: IO ()
       , processorNewOperation   :: OperationParams -> IO ()
-      , processorNewSubcription ::
-             (Subscription -> IO ())
-             -> (Subscription -> Either DropReason ResolvedEvent -> IO ())
-             -> Text
-             -> Bool
-             -> IO ()
+      , processorNewSubcription :: NewSubscriptionCB
       }
 
 --------------------------------------------------------------------------------
@@ -177,7 +173,7 @@ network sett = do
     let processor =
             Processor
             { processorConnect        = \h p -> sync $ pushConnect $ Connect h p
-            , processorShutdown       = pushAsync pushCleanup Cleanup
+            , processorShutdown       = sync $ pushCleanup Cleanup
             , processorNewOperation   = \o -> sync $ push_new_op o
             , processorNewSubcription = push_sub
             }
