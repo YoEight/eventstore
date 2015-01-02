@@ -47,10 +47,6 @@ getLengthPrefix :: Get Int
 getLengthPrefix = fmap fromIntegral getWord32le
 
 --------------------------------------------------------------------------------
-authOffset :: Int
-authOffset = 18
-
---------------------------------------------------------------------------------
 getPackage :: Get Package
 getPackage = do
     cmd  <- getWord8

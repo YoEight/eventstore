@@ -31,10 +31,10 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 data DeleteStream
     = DeleteStream
-      { deleteStreamId              :: Required 1 (Value Text)
-      , deleteStreamExpectedVersion :: Required 2 (Value Int32)
-      , deleteStreamRequireMaster   :: Required 3 (Value Bool)
-      , deleteStreamHardDelete      :: Optional 4 (Value Bool)
+      { _deleteStreamId              :: Required 1 (Value Text)
+      , _deleteStreamExpectedVersion :: Required 2 (Value Int32)
+      , _deleteStreamRequireMaster   :: Required 3 (Value Bool)
+      , _deleteStreamHardDelete      :: Optional 4 (Value Bool)
       }
     deriving (Generic, Show)
 
@@ -49,19 +49,19 @@ newDeleteStream :: Text
                 -> DeleteStream
 newDeleteStream stream_id exp_ver req_master hard_delete =
     DeleteStream
-    { deleteStreamId              = putField stream_id
-    , deleteStreamExpectedVersion = putField exp_ver
-    , deleteStreamRequireMaster   = putField req_master
-    , deleteStreamHardDelete      = putField hard_delete
+    { _deleteStreamId              = putField stream_id
+    , _deleteStreamExpectedVersion = putField exp_ver
+    , _deleteStreamRequireMaster   = putField req_master
+    , _deleteStreamHardDelete      = putField hard_delete
     }
 
 --------------------------------------------------------------------------------
 data DeleteStreamCompleted
     = DeleteStreamCompleted
-      { deleteCompletedResult          :: Required 1 (Enumeration OpResult)
-      , deleteCompletedMessage         :: Optional 2 (Value Text)
-      , deleteCompletedPreparePosition :: Optional 3 (Value Int64)
-      , deleteCompletedCommitPosition  :: Optional 4 (Value Int64)
+      { _deleteCompletedResult          :: Required 1 (Enumeration OpResult)
+      , _deleteCompletedMessage         :: Optional 2 (Value Text)
+      , _deleteCompletedPreparePosition :: Optional 3 (Value Int64)
+      , _deleteCompletedCommitPosition  :: Optional 4 (Value Int64)
       }
     deriving (Generic, Show)
 
@@ -100,7 +100,7 @@ inspect :: MVar (OperationExceptional DeleteResult)
         -> ExpectedVersion
         -> DeleteStreamCompleted
         -> IO Decision
-inspect mvar stream exp_ver dsc = go (getField $ deleteCompletedResult dsc)
+inspect mvar stream exp_ver dsc = go (getField $ _deleteCompletedResult dsc)
   where
     go OP_SUCCESS                = succeed mvar dsc
     go OP_PREPARE_TIMEOUT        = return Retry
@@ -121,8 +121,8 @@ succeed mvar wec = do
     putMVar mvar (Right wr)
     return EndOperation
   where
-    com_pos      = getField $ deleteCompletedCommitPosition wec
-    pre_pos      = getField $ deleteCompletedPreparePosition wec
+    com_pos      = getField $ _deleteCompletedCommitPosition wec
+    pre_pos      = getField $ _deleteCompletedPreparePosition wec
     com_pos_int  = fromMaybe (-1) com_pos
     pre_pos_int  = fromMaybe (-1) pre_pos
     pos          = Position com_pos_int pre_pos_int

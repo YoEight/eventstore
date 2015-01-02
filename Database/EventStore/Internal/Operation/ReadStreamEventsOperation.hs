@@ -33,11 +33,11 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 data ReadStreamEvents
     = ReadStreamEvents
-      { readStreamId             :: Required 1 (Value Text)
-      , readStreamEventNumber    :: Required 2 (Value Int32)
-      , readStreamMaxCount       :: Required 3 (Value Int32)
-      , readStreamResolveLinkTos :: Required 4 (Value Bool)
-      , readStreamRequireMaster  :: Required 5 (Value Bool)
+      { _readStreamId             :: Required 1 (Value Text)
+      , _readStreamEventNumber    :: Required 2 (Value Int32)
+      , _readStreamMaxCount       :: Required 3 (Value Int32)
+      , _readStreamResolveLinkTos :: Required 4 (Value Bool)
+      , _readStreamRequireMaster  :: Required 5 (Value Bool)
       }
     deriving (Generic, Show)
 
@@ -50,11 +50,11 @@ newReadStreamEvents :: Text
                     -> ReadStreamEvents
 newReadStreamEvents stream_id evt_num max_c res_link_tos req_master =
     ReadStreamEvents
-    { readStreamId             = putField stream_id
-    , readStreamEventNumber    = putField evt_num
-    , readStreamMaxCount       = putField max_c
-    , readStreamResolveLinkTos = putField res_link_tos
-    , readStreamRequireMaster  = putField req_master
+    { _readStreamId             = putField stream_id
+    , _readStreamEventNumber    = putField evt_num
+    , _readStreamMaxCount       = putField max_c
+    , _readStreamResolveLinkTos = putField res_link_tos
+    , _readStreamRequireMaster  = putField req_master
     }
 
 --------------------------------------------------------------------------------
@@ -73,13 +73,13 @@ data ReadStreamResult
 --------------------------------------------------------------------------------
 data ReadStreamEventsCompleted
     = ReadStreamEventsCompleted
-      { readSECEvents             :: Repeated 1 (Message ResolvedIndexedEvent)
-      , readSECResult             :: Required 2 (Enumeration ReadStreamResult)
-      , readSECNextNumber         :: Required 3 (Value Int32)
-      , readSECLastNumber         :: Required 4 (Value Int32)
-      , readSECEndOfStream        :: Required 5 (Value Bool)
-      , readSECLastCommitPosition :: Required 6 (Value Int64)
-      , readSECError              :: Optional 7 (Value Text)
+      { _readSECEvents             :: Repeated 1 (Message ResolvedIndexedEvent)
+      , _readSECResult             :: Required 2 (Enumeration ReadStreamResult)
+      , _readSECNextNumber         :: Required 3 (Value Int32)
+      , _readSECLastNumber         :: Required 4 (Value Int32)
+      , _readSECEndOfStream        :: Required 5 (Value Bool)
+      , _readSECLastCommitPosition :: Required 6 (Value Int64)
+      , _readSECError              :: Optional 7 (Value Text)
       }
     deriving (Generic, Show)
 
@@ -108,15 +108,15 @@ newStreamEventsSlice :: Text
                      -> StreamEventsSlice
 newStreamEventsSlice stream_id start dir reco = ses
   where
-    evts = getField $ readSECEvents reco
+    evts = getField $ _readSECEvents reco
 
     ses = StreamEventsSlice
-          { streamEventsSliceResult    = getField $ readSECResult reco
+          { streamEventsSliceResult    = getField $ _readSECResult reco
           , streamEventsSliceStreamId  = stream_id
           , streamEventsSliceStart     = start
-          , streamEventsSliceNext      = getField $ readSECNextNumber reco
-          , streamEventsSliceLast      = getField $ readSECLastNumber reco
-          , streamEventsSliceIsEOS     = getField $ readSECEndOfStream reco
+          , streamEventsSliceNext      = getField $ _readSECNextNumber reco
+          , streamEventsSliceLast      = getField $ _readSECLastNumber reco
+          , streamEventsSliceIsEOS     = getField $ _readSECEndOfStream reco
           , streamEventsSliceEvents    = fmap newResolvedEvent evts
           , streamEventsSliceDirection = dir
           }
@@ -164,9 +164,9 @@ inspect :: MVar (OperationExceptional StreamEventsSlice)
         -> Int32
         -> ReadStreamEventsCompleted
         -> IO Decision
-inspect mvar dir stream_id start rsec = go (getField $ readSECResult rsec)
+inspect mvar dir stream_id start rsec = go (getField $ _readSECResult rsec)
   where
-    may_err = getField $ readSECError rsec
+    may_err = getField $ _readSECError rsec
 
     go RS_ERROR         = failed mvar (ServerError may_err)
     go RS_ACCESS_DENIED = failed mvar (AccessDenied stream_id)
