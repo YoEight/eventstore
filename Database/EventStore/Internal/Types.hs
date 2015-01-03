@@ -54,7 +54,7 @@ data OperationException
     | AccessDenied Text                         -- ^ Stream
     | InvalidServerResponse Word8 Word8         -- ^ Expected, Found
     | ProtobufDecodingError String
-    | ServerError (Maybe Text)
+    | ServerError (Maybe Text)                  -- ^ Reason
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
@@ -66,6 +66,8 @@ type OperationExceptional a = Either OperationException a
 --------------------------------------------------------------------------------
 -- Event
 --------------------------------------------------------------------------------
+-- | Contains event information like its type and data. Only used for write
+--   queries.
 data Event
     = Event
       { eventType :: !Text
@@ -73,10 +75,13 @@ data Event
       }
 
 --------------------------------------------------------------------------------
-createEvent :: Text -> EventData -> Event
+createEvent :: Text      -- ^ Event type
+            -> EventData -- ^ Event data
+            -> Event
 createEvent = Event
 
 --------------------------------------------------------------------------------
+-- | Holds event data.
 data EventData
     = Json A.Value (Maybe A.Value)
 
@@ -89,10 +94,12 @@ eventMetadataType :: EventData -> Int32
 eventMetadataType _ = 0
 
 --------------------------------------------------------------------------------
+-- | Creates a event using JSON format
 withJson :: A.Value -> EventData
 withJson value = Json value Nothing
 
 --------------------------------------------------------------------------------
+-- | Create a event with metadata using JSON format
 withJsonAndMetadata :: A.Value -> A.Value -> EventData
 withJsonAndMetadata value metadata = Json value (Just metadata)
 
@@ -107,10 +114,24 @@ eventMetadataBytes (Json _ meta_m) = fmap (toStrict . A.encode) meta_m
 --------------------------------------------------------------------------------
 -- Expected Version
 --------------------------------------------------------------------------------
+-- | Constants used for expected version control.
+--
+--   The use of expected version can be a bit tricky especially when discussing
+--   idempotency assurances given by the EventStore.
+--
+--   The EventStore  will assure idempotency for all operations using any value
+--   in 'ExpectedVersion' except for 'Any'. When using 'Any' the EventStore will
+--   do its best to assure idempotency but will not guarantee idempotency.
 data ExpectedVersion
-    = Any         -- ^ Says that you should not conflict with anything
-    | NoStream    -- ^ Stream should not exist when doing your write
-    | EmptyStream -- ^ Stream should exist but be empty when doing the write
+    = Any
+      -- ^ This write should not conflict with anything and should always
+      --   succeed.
+    | NoStream
+      -- ^ The stream being written to should not yet exist. If it does exist
+      --   treat that as a concurrency problem.
+    | EmptyStream
+      -- ^ The stream should exist and should be empty. If it does not exist or
+      --   is not empty, treat that as a concurrency problem.
     deriving Show
 
 --------------------------------------------------------------------------------
@@ -319,38 +340,55 @@ instance Decode ResolvedEventBuf
 --------------------------------------------------------------------------------
 -- Result
 --------------------------------------------------------------------------------
+-- | A structure referring to a potential logical record position in the
+--   EventStore transaction file.
 data Position
     = Position
-      { positionCommit  :: !Int64
-      , positionPrepare :: !Int64
+      { positionCommit  :: !Int64 -- ^ Commit position of the record
+      , positionPrepare :: !Int64 -- ^ Prepare position of the record
       }
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Returned after writing to a stream.
 data WriteResult
     = WriteResult
       { writeNextExpectedVersion :: !Int32
-      , writePosition            :: !Position
+        -- ^ Next expected version of the stream.
+      , writePosition :: !Position
+        -- ^ 'Position' of the write.
       }
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Returned after deleting a stream. 'Position' of the write.
 newtype DeleteResult
     = DeleteResult { deleteStreamPosition :: Position }
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Represents a previously written event.
 data RecordedEvent
     = RecordedEvent
-      { recordedEventStreamId     :: !Text
-      , recordedEventId           :: !UUID
-      , recordedEventNumber       :: !Int32
-      , recordedEventType         :: !Text
-      , recordedEventData         :: !ByteString
-      , recordedEventMetadata     :: !(Maybe ByteString)
-      , recordedEventIsJson       :: !Bool
-      , recordedEventCreated      :: !(Maybe UTCTime)
+      { recordedEventStreamId :: !Text
+        -- ^ The event stream that this event  belongs to.
+      , recordedEventId :: !UUID
+        -- ^ Unique identifier representing this event.
+      , recordedEventNumber :: !Int32
+        -- ^ Number of this event in the stream.
+      , recordedEventType :: !Text
+        -- ^ Type of this event.
+      , recordedEventData :: !ByteString
+        -- ^ Representing the data of this event.
+      , recordedEventMetadata :: !(Maybe ByteString)
+        -- ^ Representing the metadada associated with this event.
+      , recordedEventIsJson :: !Bool
+        -- ^ Indicates whether the content is internally marked as json.
+      , recordedEventCreated :: !(Maybe UTCTime)
+        -- ^ Representing when this event was created in the system.
       , recordedEventCreatedEpoch :: !(Maybe Integer)
+        -- ^ Representing the milliseconds since the epoch when the event was
+        --   created in the system.
       }
     deriving Show
 
@@ -378,10 +416,14 @@ newRecordedEvent er = re
          }
 
 --------------------------------------------------------------------------------
+-- | A structure representing a single event or an resolved link event.
 data ResolvedEvent
     = ResolvedEvent
       { resolvedEventRecord :: !(Maybe RecordedEvent)
-      , resolvedEventLink   :: !(Maybe RecordedEvent)
+        -- ^ The event, or the resolved link event if this 'ResolvedEvent' is a
+        --   link event.
+      , resolvedEventLink :: !(Maybe RecordedEvent)
+        -- ^ The link event if this 'ResolvedEvent' is a link event.
       }
     deriving Show
 
@@ -408,36 +450,52 @@ newResolvedEventFromBuf reb = re
              }
 
 --------------------------------------------------------------------------------
+-- | Returns the event that was read or which triggered the subscription.
+--
+--   If this 'ResolvedEvent' represents a link event, the link will be the
+--   original event, otherwise it will be the event.
 resolvedEventOriginal :: ResolvedEvent -> Maybe RecordedEvent
 resolvedEventOriginal (ResolvedEvent record link) =
     link <|> record
 
 --------------------------------------------------------------------------------
+-- | Indicates whether this 'ResolvedEvent' is a resolved link event.
 eventResolved :: ResolvedEvent -> Bool
 eventResolved = isJust . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
+-- | The stream name of the original event.
 resolvedEventOriginalStreamId :: ResolvedEvent -> Maybe Text
 resolvedEventOriginalStreamId =
     fmap recordedEventStreamId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
+-- | Represents the direction of read operation (both from $all an usual
+--   streams).
 data ReadDirection
-    = Forward
-    | Backward
+    = Forward  -- ^ From beginning to end
+    | Backward -- ^ From end to beginning
     deriving Show
 
 --------------------------------------------------------------------------------
 -- Transaction
 --------------------------------------------------------------------------------
+-- | Represents a multi-request transaction with the EventStore.
 data Transaction
     = Transaction
-      { transactionId              :: Int64
-      , transactionStreamId        :: Text
+      { transactionId :: Int64
+        -- ^ The ID of the transaction. This can be used to recover a
+        -- transaction later.
+      , transactionStreamId :: Text
+        -- ^ The name of the stream.
       , transactionExpectedVersion :: ExpectedVersion
-      , transactionCommit          :: IO (Async WriteResult)
-      , transactionSendEvents      :: [Event] -> IO (Async ())
-      , transactionRollback        :: IO ()
+        -- ^ Expected version of the stream.
+      , transactionCommit :: IO (Async WriteResult)
+        -- ^ Asynchronously commits this transaction.
+      , transactionSendEvents :: [Event] -> IO (Async ())
+        -- ^ Asynchronously writes to a transaction in the EventStore.
+      , transactionRollback :: IO ()
+        -- ^ Rollback this transaction.
       }
 
 --------------------------------------------------------------------------------
@@ -456,6 +514,7 @@ flagWord8 Authenticated = 0x01
 --------------------------------------------------------------------------------
 -- Credentials
 --------------------------------------------------------------------------------
+-- | Holds login and password information.
 data Credentials
     = Credentials
       { credLogin    :: !ByteString
@@ -464,7 +523,9 @@ data Credentials
     deriving Show
 
 --------------------------------------------------------------------------------
-credentials :: ByteString -> ByteString -> Credentials
+credentials :: ByteString -- ^ Login
+            -> ByteString -- ^ Password
+            -> Credentials
 credentials = Credentials
 
 --------------------------------------------------------------------------------
@@ -482,7 +543,7 @@ data Package
 --------------------------------------------------------------------------------
 -- Settings
 --------------------------------------------------------------------------------
--- | Global @ConnectionManager@ settings
+-- | Global 'Connection' settings
 data Settings
     = Settings
       { s_heartbeatInterval :: NominalDiffTime
@@ -493,6 +554,7 @@ data Settings
       }
 
 --------------------------------------------------------------------------------
+-- | Default global settings.
 defaultSettings :: Settings
 defaultSettings = Settings
                   { s_heartbeatInterval = msDiffTime 750  -- 750ms

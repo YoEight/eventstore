@@ -61,6 +61,7 @@ newReadStreamEvents stream_id evt_num max_c res_link_tos req_master =
 instance Encode ReadStreamEvents
 
 --------------------------------------------------------------------------------
+-- | Enumeration detailing the possible outcomes of reading a slice of a stream
 data ReadStreamResult
     = RS_SUCCESS
     | RS_NO_STREAM
@@ -87,16 +88,26 @@ data ReadStreamEventsCompleted
 instance Decode ReadStreamEventsCompleted
 
 --------------------------------------------------------------------------------
+-- | Represents the result of a single read operation to the EventStore.
 data StreamEventsSlice
     = StreamEventsSlice
-      { streamEventsSliceResult    :: !ReadStreamResult
-      , streamEventsSliceStreamId  :: !Text
-      , streamEventsSliceStart     :: !Int32
-      , streamEventsSliceNext      :: !Int32
-      , streamEventsSliceLast      :: !Int32
-      , streamEventsSliceIsEOS     :: !Bool
-      , streamEventsSliceEvents    :: ![ResolvedEvent]
+      { streamEventsSliceResult :: !ReadStreamResult
+        -- ^ Representing the status of the read attempt.
+      , streamEventsSliceStreamId :: !Text
+        -- ^ The name of the stream read.
+      , streamEventsSliceStart :: !Int32
+        -- ^ The starting point (represented as a sequence number) of the read
+        --   operation.
+      , streamEventsSliceNext :: !Int32
+        -- ^ The next event number that can be read.
+      , streamEventsSliceLast :: !Int32
+        -- ^ The last event number in the stream.
+      , streamEventsSliceIsEOS :: !Bool
+        -- ^ Representing whether or not this is the end of the stream.
+      , streamEventsSliceEvents :: ![ResolvedEvent]
+        -- ^ The events read represented as 'ResolvedEvent'
       , streamEventsSliceDirection :: !ReadDirection
+        -- ^ The direction of the read request.
       }
     deriving Show
 

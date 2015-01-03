@@ -16,8 +16,15 @@ module Database.EventStore.Internal.Processor
     ( InternalException(..)
     , Processor(..)
     , DropReason(..)
-    , Subscription(..)
     , NewSubscriptionCB
+    , Subscription
+    , subAwait
+    , subId
+    , subStream
+    , subResolveLinkTos
+    , subLastCommitPos
+    , subLastEventNumber
+    , subUnsubscribe
     , newProcessor
     ) where
 

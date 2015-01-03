@@ -55,6 +55,7 @@ newReadEvent stream_id evt_num res_link_tos req_master =
     }
 
 --------------------------------------------------------------------------------
+-- | Enumeration representing the status of a single event read operation.
 data ReadEventResult
     = RE_SUCCESS
     | RE_NOT_FOUND
@@ -77,11 +78,12 @@ data ReadEventCompleted
 instance Decode ReadEventCompleted
 
 --------------------------------------------------------------------------------
+-- | Result of a single event read operation to the EventStore.
 data ReadResult
     = ReadResult
-      { readResultStatus        :: !ReadEventResult
-      , readResultStreamId      :: !Text
-      , readResultEventNumber   :: !Int32
+      { readResultStatus        :: !ReadEventResult       -- ^ Attempt status
+      , readResultStreamId      :: !Text                  -- ^ Stream name
+      , readResultEventNumber   :: !Int32                 -- ^ Event number
       , readResultResolvedEvent :: !(Maybe ResolvedEvent)
       }
     deriving Show
