@@ -1,4 +1,5 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore
@@ -45,6 +46,7 @@ module Database.EventStore
     , DropReason(..)
     , Subscription
     , subscribe
+    , subscribeToAll
     , subAwait
     , subId
     , subStream
@@ -56,6 +58,7 @@ module Database.EventStore
     , Catchup
     , CatchupError(..)
     , subscribeFrom
+    , subscribeToAllFrom
     , catchupAwait
     , catchupStream
     , catchupUnsubscribe
@@ -76,6 +79,8 @@ module Database.EventStore
     , eventResolved
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
+    , positionStart
+    , positionEnd
       -- * Misc
     , ExpectedVersion(..)
       -- * Re-export
@@ -260,8 +265,7 @@ readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
 --------------------------------------------------------------------------------
 -- | Reads events from the $all stream forward.
 readAllEventsForward :: Connection
-                     -> Int64      -- ^ Commit position
-                     -> Int64      -- ^ Prepare position
+                     -> Position
                      -> Int32      -- ^ Batch size
                      -> Bool       -- ^ Resolve Link Tos
                      -> IO (Async AllEventsSlice)
@@ -271,8 +275,7 @@ readAllEventsForward mgr =
 --------------------------------------------------------------------------------
 -- | Reads events from the $all stream backward
 readAllEventsBackward :: Connection
-                      -> Int64      -- ^ Commit position
-                      -> Int64      -- ^ Prepare position
+                      -> Position
                       -> Int32      -- ^ Batch size
                       -> Bool       -- ^ Resolve Link Tos
                       -> IO (Async AllEventsSlice)
@@ -282,12 +285,11 @@ readAllEventsBackward mgr =
 --------------------------------------------------------------------------------
 readAllEventsCommon :: Connection
                     -> ReadDirection
-                    -> Int64
-                    -> Int64
+                    -> Position
                     -> Int32
                     -> Bool
                     -> IO (Async AllEventsSlice)
-readAllEventsCommon Connection{..} dir c_pos p_pos max_c res_link_tos = do
+readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
     (as, mvar) <- createAsync
 
     let op = readAllEventsOperation conSettings
@@ -300,6 +302,8 @@ readAllEventsCommon Connection{..} dir c_pos p_pos max_c res_link_tos = do
 
     processorNewOperation conProcessor op
     return as
+  where
+    Position c_pos p_pos = pos
 
 --------------------------------------------------------------------------------
 -- | Subcribes to given stream.
@@ -312,6 +316,19 @@ subscribe Connection{..} stream_id res_lnk_tos = do
     processorNewSubcription conProcessor
                             (putMVar tmp)
                             stream_id
+                            res_lnk_tos
+    async $ readMVar tmp
+
+--------------------------------------------------------------------------------
+-- | Subcribes to $all stream.
+subscribeToAll :: Connection
+               -> Bool       -- ^ Resolve Link Tos
+               -> IO (Async Subscription)
+subscribeToAll Connection{..} res_lnk_tos = do
+    tmp <- newEmptyMVar
+    processorNewSubcription conProcessor
+                            (putMVar tmp)
+                            ""
                             res_lnk_tos
     async $ readMVar tmp
 
@@ -333,6 +350,21 @@ subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m = do
         readStreamEventsForward conn stream_id cur_num batch_size res_lnk_tos
 
     get_sub = subscribe conn stream_id res_lnk_tos
+
+--------------------------------------------------------------------------------
+-- | Same as 'subscribeFrom' but applied to $all stream.
+subscribeToAllFrom :: Connection
+                   -> Bool           -- ^ Resolve Link Tos
+                   -> Maybe Position -- ^ Last checkpoint
+                   -> Maybe Int32    -- ^ Batch size
+                   -> IO Catchup
+subscribeToAllFrom conn res_lnk_tos last_chk_pt batch_m = do
+    catchupAllStart evts_fwd get_sub last_chk_pt batch_m
+  where
+    evts_fwd pos batch_size =
+        readAllEventsForward conn pos batch_size res_lnk_tos
+
+    get_sub = subscribeToAll conn res_lnk_tos
 
 --------------------------------------------------------------------------------
 createAsync :: IO (Async a, MVar (OperationExceptional a))
