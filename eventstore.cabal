@@ -50,10 +50,6 @@ source-repository head
   type: git
   location: git://github.com/YoEight/eventstore.git
 
-flag maintainer
-  Description: Enforce strict code quality checks
-  Default: False
-
 library
   -- Modules exported by the library.
   exposed-modules: Database.EventStore
@@ -97,9 +93,6 @@ library
   -- hs-source-dirs:
 
   -- Base language which the package is written in.
-  if flag(maintainer)
-    ghc-options: -Wall -Werror
-  else
-    ghc-options: -Wall
+  ghc-options: -Wall
 
   default-language:    Haskell2010
