@@ -350,6 +350,16 @@ data Position
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Representing the start of the transaction file.
+positionStart :: Position
+positionStart = Position 0 0
+
+--------------------------------------------------------------------------------
+-- | Representing the end of the transaction file.
+positionEnd :: Position
+positionEnd = Position (-1) (-1)
+
+--------------------------------------------------------------------------------
 -- | Returned after writing to a stream.
 data WriteResult
     = WriteResult
