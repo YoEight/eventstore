@@ -17,7 +17,14 @@
 module Database.EventStore.Internal.Manager.Subscription
     ( DropReason (..)
     , NewSubscriptionCB
-    , Subscription(..)
+    , Subscription
+    , subAwait
+    , subId
+    , subStream
+    , subResolveLinkTos
+    , subLastCommitPos
+    , subLastEventNumber
+    , subUnsubscribe
     , subscriptionNetwork
     ) where
 
@@ -86,6 +93,7 @@ data StreamEventAppeared
 instance Decode StreamEventAppeared
 
 --------------------------------------------------------------------------------
+-- | Represents the reason subscription drop happened.
 data DropReason
     = D_Unsubscribed
     | D_AccessDenied
@@ -116,23 +124,32 @@ data Pending
       }
 
 --------------------------------------------------------------------------------
-data SubscriptionException
-    = StreamAccessDenied
-    | StreamNotFound
-    | SubscriptionDeleted
-    deriving Show
-
---------------------------------------------------------------------------------
+-- | Represents a subscription to a single stream or $all stream
+--   in the EventStore.
 data Subscription
     = Subscription
-      { subId              :: !UUID
-      , subStream          :: !Text
+      { subId :: !UUID
+        -- ^ ID of the subscription.
+      , subStream :: !Text
+        -- ^ The name of the stream to which the subscription is subscribed.
       , subResolveLinkTos  :: !Bool
-      , subLastCommitPos   :: !Int64
+        -- ^ Determines whether or not any link events encontered in the stream
+        --   will be resolved.
+      , subLastCommitPos :: !Int64
+        -- ^ The last commit position seen on the subscription (if this a
+        --   subscription to $all stream).
       , subLastEventNumber :: !(Maybe Int32)
-      , subChan            :: Chan (Either DropReason ResolvedEvent)
-      , subUnsubscribe     :: IO ()
+        -- ^ The last event number seen on the subscription (if this is a
+        --   subscription to a single stream).
+      , subChan :: Chan (Either DropReason ResolvedEvent)
+      , subUnsubscribe :: IO ()
+        -- ^ Asynchronously unsubscribe from the the stream.
       }
+
+--------------------------------------------------------------------------------
+-- | Awaits for the next 'ResolvedEvent'.
+subAwait :: Subscription -> IO (Either DropReason ResolvedEvent)
+subAwait Subscription{..} = readChan subChan
 
 --------------------------------------------------------------------------------
 data Manager

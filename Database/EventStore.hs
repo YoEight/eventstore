@@ -11,19 +11,55 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore
-    ( Event
+    ( -- * Event
+      Event
     , EventData
+    , createEvent
+    , withJson
+    , withJsonAndMetadata
+      -- * Connection
     , Connection
     , Credentials
-    , ExpectedVersion(..)
-    , HostName
-    , Port
     , Settings(..)
-    , Subscription(..)
-    , Catchup(..)
-    , CatchupError(..)
     , credentials
-      -- * Result
+    , defaultSettings
+    , connect
+    , shutdown
+     -- * Read Operations
+    , readEvent
+    , readAllEventsBackward
+    , readAllEventsForward
+    , readStreamEventsBackward
+    , readStreamEventsForward
+      -- * Write Operations
+    , deleteStream
+    , sendEvent
+    , sendEvents
+      -- * Transaction
+    , Transaction
+    , transactionStart
+    , transactionCommit
+    , transactionRollback
+    , transactionSendEvents
+      -- * Volatile Subscription
+    , DropReason(..)
+    , Subscription
+    , subscribe
+    , subAwait
+    , subId
+    , subStream
+    , subResolveLinkTos
+    , subLastCommitPos
+    , subLastEventNumber
+    , subUnsubscribe
+      -- * Catch-up Subscription
+    , Catchup
+    , CatchupError(..)
+    , subscribeFrom
+    , catchupAwait
+    , catchupStream
+    , catchupUnsubscribe
+     -- * Results
     , AllEventsSlice(..)
     , DeleteResult(..)
     , WriteResult(..)
@@ -36,34 +72,12 @@ module Database.EventStore
     , ReadEventResult(..)
     , ResolvedEvent(..)
     , ReadStreamResult(..)
-    , DropReason(..)
+    , OperationException(..)
     , eventResolved
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
-      -- * Event
-    , createEvent
-    , withJson
-    , withJsonAndMetadata
-      -- * Connection manager
-    , defaultSettings
-    , connect
-    , deleteStream
-    , readEvent
-    , readAllEventsBackward
-    , readAllEventsForward
-    , readStreamEventsBackward
-    , readStreamEventsForward
-    , sendEvent
-    , sendEvents
-    , shutdown
-    , transactionStart
-    , subscribe
-    , subscribeFrom
-      -- * Transaction
-    , Transaction
-    , transactionCommit
-    , transactionRollback
-    , transactionSendEvents
+      -- * Misc
+    , ExpectedVersion(..)
       -- * Re-export
     , module Control.Concurrent.Async
     ) where
@@ -89,12 +103,9 @@ import Database.EventStore.Internal.Operation.TransactionStartOperation
 import Database.EventStore.Internal.Operation.WriteEventsOperation
 
 --------------------------------------------------------------------------------
-type HostName = String
-type Port     = Int
-
---------------------------------------------------------------------------------
 -- Connection
 --------------------------------------------------------------------------------
+-- | Represents a connection to a single EventStore node.
 data Connection
     = Connection
       { conProcessor :: Processor
@@ -102,19 +113,22 @@ data Connection
       }
 
 --------------------------------------------------------------------------------
--- | Creates a new connection to a single node. It maintains a full duplex
---   connection to the EventStore. An EventStore @Connection@ operates quite
+-- | Creates a new 'Connection' to a single node. It maintains a full duplex
+--   connection to the EventStore. An EventStore 'Connection' operates quite
 --   differently than say a SQL connection. Normally when you use a SQL
 --   connection you want to keep the connection open for a much longer of time
 --   than when you use a SQL connection.
 --
---   Another difference  is that with the EventStore @Connection@ all operation
+--   Another difference  is that with the EventStore 'Connection' all operation
 --   are handled in a full async manner (even if you call the synchronous
---   behaviors). Many threads can use an EvenStore connection at the same time
+--   behaviors). Many threads can use an EvenStore 'Connection' at the same time
 --   or a single thread can make many asynchronous requests. To get the most
 --   performance out of the connection it is generally recommend to use it in
---   this way
-connect :: Settings -> HostName -> Port -> IO Connection
+--   this way.
+connect :: Settings
+        -> String   -- ^ HostName
+        -> Int      -- ^ Port
+        -> IO Connection
 connect settings host port = do
     processor <- newProcessor settings
     processorConnect processor host port
@@ -122,12 +136,14 @@ connect settings host port = do
     return $ Connection processor settings
 
 --------------------------------------------------------------------------------
+-- | Asynchronously closes the 'Connection'.
 shutdown :: Connection -> IO ()
 shutdown Connection{..} = processorShutdown conProcessor
 
 --------------------------------------------------------------------------------
+-- | Sends a single 'Event' to given stream.
 sendEvent :: Connection
-          -> Text             -- ^ Stream
+          -> Text             -- ^ Stream name
           -> ExpectedVersion
           -> Event
           -> IO (Async WriteResult)
@@ -135,8 +151,9 @@ sendEvent mgr evt_stream exp_ver evt =
     sendEvents mgr evt_stream exp_ver [evt]
 
 --------------------------------------------------------------------------------
+-- | Sends a list of 'Event' to given stream.
 sendEvents :: Connection
-           -> Text             -- ^ Stream
+           -> Text             -- ^ Stream name
            -> ExpectedVersion
            -> [Event]
            -> IO (Async WriteResult)
@@ -149,8 +166,9 @@ sendEvents Connection{..} evt_stream exp_ver evts = do
     return as
 
 --------------------------------------------------------------------------------
+-- | Deletes given stream.
 deleteStream :: Connection
-             -> Text
+             -> Text             -- ^ Stream name
              -> ExpectedVersion
              -> Maybe Bool       -- ^ Hard delete
              -> IO (Async DeleteResult)
@@ -163,8 +181,9 @@ deleteStream Connection{..} evt_stream exp_ver hard_del = do
     return as
 
 --------------------------------------------------------------------------------
+-- | Starts a transaction on given stream.
 transactionStart :: Connection
-                 -> Text
+                 -> Text            -- ^ Stream name
                  -> ExpectedVersion
                  -> IO (Async Transaction)
 transactionStart Connection{..} evt_stream exp_ver = do
@@ -180,10 +199,11 @@ transactionStart Connection{..} evt_stream exp_ver = do
     return as
 
 --------------------------------------------------------------------------------
+-- | Reads a single event from given stream.
 readEvent :: Connection
-          -> Text
-          -> Int32
-          -> Bool
+          -> Text       -- ^ Stream name
+          -> Int32      -- ^ Event number
+          -> Bool       -- ^ Resolve Link Tos
           -> IO (Async ReadResult)
 readEvent Connection{..} stream_id evt_num res_link_tos = do
     (as, mvar) <- createAsync
@@ -194,21 +214,23 @@ readEvent Connection{..} stream_id evt_num res_link_tos = do
     return as
 
 --------------------------------------------------------------------------------
+-- | Reads events from a given stream forward.
 readStreamEventsForward :: Connection
-                        -> Text
-                        -> Int32
-                        -> Int32
-                        -> Bool
+                        -> Text       -- ^ Stream name
+                        -> Int32      -- ^ From event number
+                        -> Int32      -- ^ Batch size
+                        -> Bool       -- ^ Resolve Link Tos
                         -> IO (Async StreamEventsSlice)
 readStreamEventsForward mgr =
     readStreamEventsCommon mgr Forward
 
 --------------------------------------------------------------------------------
+-- | Reads events from a given stream backward.
 readStreamEventsBackward :: Connection
-                         -> Text
-                         -> Int32
-                         -> Int32
-                         -> Bool
+                         -> Text       -- ^ Stream name
+                         -> Int32      -- ^ From event number
+                         -> Int32      -- ^ Batch size
+                         -> Bool       -- ^ Resolve Link Tos
                          -> IO (Async StreamEventsSlice)
 readStreamEventsBackward mgr =
     readStreamEventsCommon mgr Backward
@@ -236,21 +258,23 @@ readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
     return as
 
 --------------------------------------------------------------------------------
+-- | Reads events from the $all stream forward.
 readAllEventsForward :: Connection
-                     -> Int64
-                     -> Int64
-                     -> Int32
-                     -> Bool
+                     -> Int64      -- ^ Commit position
+                     -> Int64      -- ^ Prepare position
+                     -> Int32      -- ^ Batch size
+                     -> Bool       -- ^ Resolve Link Tos
                      -> IO (Async AllEventsSlice)
 readAllEventsForward mgr =
     readAllEventsCommon mgr Forward
 
 --------------------------------------------------------------------------------
+-- | Reads events from the $all stream backward
 readAllEventsBackward :: Connection
-                      -> Int64
-                      -> Int64
-                      -> Int32
-                      -> Bool
+                      -> Int64      -- ^ Commit position
+                      -> Int64      -- ^ Prepare position
+                      -> Int32      -- ^ Batch size
+                      -> Bool       -- ^ Resolve Link Tos
                       -> IO (Async AllEventsSlice)
 readAllEventsBackward mgr =
     readAllEventsCommon mgr Backward
@@ -278,9 +302,10 @@ readAllEventsCommon Connection{..} dir c_pos p_pos max_c res_link_tos = do
     return as
 
 --------------------------------------------------------------------------------
+-- | Subcribes to given stream.
 subscribe :: Connection
-          -> Text
-          -> Bool
+          -> Text       -- ^ Stream name
+          -> Bool       -- ^ Resolve Link Tos
           -> IO (Async Subscription)
 subscribe Connection{..} stream_id res_lnk_tos = do
     tmp <- newEmptyMVar
@@ -291,14 +316,18 @@ subscribe Connection{..} stream_id res_lnk_tos = do
     async $ readMVar tmp
 
 --------------------------------------------------------------------------------
+-- | Subscribes to given stream. If last checkpoint is defined, this will
+--   'readStreamEventsForward' from that event number, otherwise from the
+--   beginning. Once last stream event reached up, a subscription request will
+--   be sent using 'subscribe'.
 subscribeFrom :: Connection
-              -> Text
-              -> Bool
-              -> Maybe Int32
-              -> Maybe Int32
+              -> Text        -- ^ Stream name
+              -> Bool        -- ^ Resolve Link Tos
+              -> Maybe Int32 -- ^ Last checkpoint
+              -> Maybe Int32 -- ^ Batch size
               -> IO Catchup
 subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m = do
-    catchStart evts_fwd get_sub stream_id batch_m last_chk_pt
+    catchupStart evts_fwd get_sub stream_id batch_m last_chk_pt
   where
     evts_fwd cur_num batch_size =
         readStreamEventsForward conn stream_id cur_num batch_size res_lnk_tos

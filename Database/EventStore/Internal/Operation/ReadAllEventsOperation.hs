@@ -63,6 +63,8 @@ newReadAllEvents c_pos p_pos max_c res_link_tos req_master =
     }
 
 --------------------------------------------------------------------------------
+-- | Enumeration detailing the possible outcomes of reading a slice of $all
+--   stream.
 data ReadAllResult
     = RA_SUCCESS
     | RA_NOT_MODIFIED
@@ -87,14 +89,22 @@ data ReadAllEventsCompleted
 instance Decode ReadAllEventsCompleted
 
 --------------------------------------------------------------------------------
+-- | The result of a read operation from the $all stream.
 data AllEventsSlice
     = AllEventsSlice
-      { allEventsSliceResult    :: !ReadAllResult
-      , allEventsSliceFrom      :: !Position
-      , allEventsSliceNext      :: !Position
-      , allEventsSliceIsEOS     :: !Bool
-      , allEventsSliceEvents    :: ![ResolvedEvent]
+      { allEventsSliceResult :: !ReadAllResult
+        -- ^ Representing the status of the read attempt.
+      , allEventsSliceFrom :: !Position
+        -- ^ Representing the position where the next slice should be read
+        --   from.
+      , allEventsSliceNext :: !Position
+        -- ^ Representing the position where the next slice should be read from.
+      , allEventsSliceIsEOS :: !Bool
+        -- ^ Representing whether or not this is the end of the $all stream.
+      , allEventsSliceEvents :: ![ResolvedEvent]
+        -- ^ The events read.
       , allEventsSliceDirection :: !ReadDirection
+        -- ^ The direction of read request.
       }
     deriving Show
 

@@ -11,9 +11,12 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Catchup
-    ( Catchup(..)
+    ( Catchup
     , CatchupError(..)
-    , catchStart
+    , catchupAwait
+    , catchupStart
+    , catchupStream
+    , catchupUnsubscribe
     ) where
 
 --------------------------------------------------------------------------------
@@ -35,6 +38,8 @@ import Database.EventStore.Internal.Operation.ReadStreamEventsOperation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Errors that could arise during a catch-up subscription. 'Text' value
+--   represents the stream name.
 data CatchupError
     = CatchupStreamDisappeared Text
     | CatchupStreamDeleted Text
@@ -46,12 +51,20 @@ data CatchupError
 instance Exception CatchupError
 
 --------------------------------------------------------------------------------
+-- | Representing catch-up subscriptions.
 data Catchup
     = Catchup
-      { catchupStream      :: Text
+      { catchupStream :: Text
+        -- ^ The name of the stream to which the subscription is subscribed.
       , catchupChan        :: Chan (Either CatchupError ResolvedEvent)
       , catchupUnsubscribe :: IO ()
+        -- ^ Asynchronously unsubscribes from the stream.
       }
+
+--------------------------------------------------------------------------------
+-- | Awaits for the next 'ResolvedEvent'.
+catchupAwait :: Catchup -> IO (Either CatchupError ResolvedEvent)
+catchupAwait c = readChan $ catchupChan c
 
 --------------------------------------------------------------------------------
 defaultBatchSize :: Int32
@@ -62,13 +75,13 @@ secs :: Int
 secs = 1000000
 
 --------------------------------------------------------------------------------
-catchStart :: (Int32 -> Int32 -> IO (Async StreamEventsSlice))
-           -> IO (Async Subscription)
-           -> Text
-           -> Maybe Int32
-           -> Maybe Int32
-           -> IO Catchup
-catchStart evt_fwd get_sub stream_id batch_size_m last_m = do
+catchupStart :: (Int32 -> Int32 -> IO (Async StreamEventsSlice))
+             -> IO (Async Subscription)
+             -> Text
+             -> Maybe Int32
+             -> Maybe Int32
+             -> IO Catchup
+catchupStart evt_fwd get_sub stream_id batch_size_m last_m = do
     chan <- newChan
     var  <- newEmptyMVar
     let batch_size   = fromMaybe defaultBatchSize batch_size_m
@@ -88,7 +101,7 @@ catchStart evt_fwd get_sub stream_id batch_size_m last_m = do
         sub    <- wait action
         putMVar var sub
         forever $ do
-            evt_e <- readChan $ subChan sub
+            evt_e <- subAwait sub
             case evt_e of
                 Right evt -> writeChan chan (Right evt)
                 Left r    -> do
