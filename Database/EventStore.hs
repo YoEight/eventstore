@@ -20,6 +20,8 @@ module Database.EventStore
     , Port
     , Settings(..)
     , Subscription(..)
+    , Catchup(..)
+    , CatchupError(..)
     , credentials
       -- * Result
     , AllEventsSlice(..)
@@ -56,6 +58,7 @@ module Database.EventStore
     , shutdown
     , transactionStart
     , subscribe
+    , subscribeFrom
       -- * Transaction
     , Transaction
     , transactionCommit
@@ -75,6 +78,7 @@ import Control.Concurrent.Async
 import Data.Text
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Catchup
 import Database.EventStore.Internal.Processor
 import Database.EventStore.Internal.Types
 import Database.EventStore.Internal.Operation.DeleteStreamOperation
@@ -285,6 +289,21 @@ subscribe Connection{..} stream_id res_lnk_tos = do
                             stream_id
                             res_lnk_tos
     async $ readMVar tmp
+
+--------------------------------------------------------------------------------
+subscribeFrom :: Connection
+              -> Text
+              -> Bool
+              -> Maybe Int32
+              -> Maybe Int32
+              -> IO Catchup
+subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m = do
+    catchStart evts_fwd get_sub stream_id batch_m last_chk_pt
+  where
+    evts_fwd cur_num batch_size =
+        readStreamEventsForward conn stream_id cur_num batch_size res_lnk_tos
+
+    get_sub = subscribe conn stream_id res_lnk_tos
 
 --------------------------------------------------------------------------------
 createAsync :: IO (Async a, MVar (OperationExceptional a))

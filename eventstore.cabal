@@ -10,7 +10,7 @@ name:                eventstore
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.3.0.0
+version:             0.3.1.0
 
 -- A short (one-line) description of the package.
 synopsis: EventStore Haskell TCP Client
@@ -59,7 +59,8 @@ library
   exposed-modules: Database.EventStore
 
   -- Modules included in this library but not exported.
-  other-modules:   Database.EventStore.Internal.Packages
+  other-modules:   Database.EventStore.Catchup
+                   Database.EventStore.Internal.Packages
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Reader
                    Database.EventStore.Internal.Types
