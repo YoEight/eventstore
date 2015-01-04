@@ -1,5 +1,6 @@
 EventStore Haskell TCP client
 =============================
+[![Build Status](https://travis-ci.org/YoEight/eventstore.svg)](https://travis-ci.org/YoEight/eventstore)
 
 Basically, all we have for now are:
 
