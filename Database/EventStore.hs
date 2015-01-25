@@ -22,6 +22,9 @@ module Database.EventStore
     , Connection
     , Credentials
     , Settings(..)
+    , Retry
+    , atMost
+    , keepRetrying
     , credentials
     , defaultSettings
     , connect

@@ -83,19 +83,13 @@ instance Exception ProcessorException
 --------------------------------------------------------------------------------
 data State
     = Offline
-      { _maxAttempt :: !Int }
     | Online
       { _uuidCon      :: !UUID
-      , _maxAttempt   :: !Int
       , _packageCount :: !Int
       , _host         :: !HostName
       , _port         :: !Int
       , _cleanup      :: !(IO ())
       }
-
---------------------------------------------------------------------------------
-initState :: Int -> State
-initState max_at = Offline max_at
 
 --------------------------------------------------------------------------------
 -- Event
@@ -133,12 +127,12 @@ network sett = do
                  fmap reconnected onReconnected <>
                  fmap received onReceived
 
-    stateB <- accum (initState $ s_maxRetries sett) stateE
+    stateB <- accum Offline stateE
 
     let heartbeatP pkg = packageCmd pkg == heartbeatRequestCmd
         onlyHeartbeats = filterE heartbeatP onReceived
 
-        con_snap   = snapshot connectSnapshot onConnect stateB
+        con_snap   = fmap connectSnapshot onConnect
         reco_snap  = snapshot reconnectSnapshot onReconnect stateB
         clean_snap = snapshot cleanupSnapshot onCleanup stateB
 
@@ -153,21 +147,21 @@ network sett = do
         push_con_io   = pushAsync4 $ \h p u c ->
                                       pushConnected $ Connected h p u c
 
-    _ <- listen con_snap $ \(ConnectionSnapshot max_a host port) ->
-             connection push_recv_io
+    _ <- listen con_snap $ \(ConnectionSnapshot host port) ->
+             connection sett
+                        push_recv_io
                         (push_con_io host port)
                         push_reco_io
                         onSend
-                        max_a
                         host
                         port
 
-    _ <- listen reco_snap $ \(ConnectionSnapshot max_a host port) ->
-             connection push_recv_io
+    _ <- listen reco_snap $ \(ConnectionSnapshot host port) ->
+             connection sett
+                        push_recv_io
                         push_recod_io
                         push_reco_io
                         onSend
-                        max_a
                         host
                         port
 
@@ -191,42 +185,49 @@ network sett = do
 --------------------------------------------------------------------------------
 data ConnectionSnapshot
     = ConnectionSnapshot
-      { _conMax  :: !Int
-      , _conHost :: !HostName
+      { _conHost :: !HostName
       , _conPort :: !Int
       }
 
 --------------------------------------------------------------------------------
-connectSnapshot :: Connect -> State -> ConnectionSnapshot
-connectSnapshot (Connect host port) s =
+connectSnapshot :: Connect -> ConnectionSnapshot
+connectSnapshot (Connect host port) =
     ConnectionSnapshot
-    { _conMax  = _maxAttempt s
-    , _conHost = host
+    { _conHost = host
     , _conPort = port
     }
 
 --------------------------------------------------------------------------------
-reconnectDelay :: Int
-reconnectDelay = 500000
+secs :: Int
+secs = 1000000
 
 --------------------------------------------------------------------------------
-connection :: (Package -> IO ())
+connection :: Settings
+           -> (Package -> IO ())
            -> (UUID -> IO () -> IO ())
            -> IO ()
            -> Event Package
-           -> Int
            -> HostName
            -> Int
            -> IO ()
-connection push_pkg push_con push_reco evt_pkg max_a host port = loop 1
+connection sett push_pkg push_con push_reco evt_pkg host port = go
   where
-    loop att
-        | max_a == att =
-              throwIO $ MaxAttempt host port max_a
-        | otherwise =
-              catch (doConnect att) $ \(_ :: SomeException) -> do
-                  threadDelay reconnectDelay
-                  loop (att + 1)
+    go =
+        case s_retry sett of
+            AtMost n ->
+                let loop i =
+                        catch (doConnect i) $ \(_ :: SomeException) -> do
+                            threadDelay delay
+                            if n <= i then throwIO $ MaxAttempt host port n
+                                      else loop (i + 1) in
+                 loop 1
+            KeepRetrying ->
+                let endlessly i =
+                        catch (doConnect i) $ \(_ :: SomeException) ->
+                            threadDelay delay >> endlessly (i + 1) in
+                endlessly (1 :: Int)
+
+    delay = (s_reconnect_delay_secs sett) * secs
 
     doConnect att = do
         printf "Connecting...Attempt %d\n" att
@@ -264,9 +265,8 @@ recovering _ _ = return ()
 reconnectSnapshot :: Reconnect -> State -> ConnectionSnapshot
 reconnectSnapshot _ s =
     ConnectionSnapshot
-    { _conMax  = _maxAttempt s
-    , _conHost = _host s
-    , _conPort = _port s
+    { _conHost  = _host s
+    , _conPort  = _port s
     }
 
 --------------------------------------------------------------------------------
@@ -287,10 +287,9 @@ cleanupSnapshot _ s =
 connected :: Connected -> State -> State
 connected (Connected host port uuid cl) s =
     case s of
-        Offline {}
+        Offline
             -> Online
                { _uuidCon      = uuid
-               , _maxAttempt   = _maxAttempt s
                , _packageCount = 0
                , _host         = host
                , _port         = port

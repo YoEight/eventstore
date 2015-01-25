@@ -553,25 +553,45 @@ data Package
 --------------------------------------------------------------------------------
 -- Settings
 --------------------------------------------------------------------------------
+-- | Represents reconnection strategy.
+data Retry
+    = AtMost Int
+    | KeepRetrying
+
+--------------------------------------------------------------------------------
+-- | Indicates how many times we should try to reconnect to the server. A value
+--   less than or equal to 0 means no retry.
+atMost :: Int -> Retry
+atMost = AtMost
+
+--------------------------------------------------------------------------------
+-- | Indicates we should try to reconnect to the server until the end of the
+--   Universe.
+keepRetrying :: Retry
+keepRetrying = KeepRetrying
+
+--------------------------------------------------------------------------------
 -- | Global 'Connection' settings
 data Settings
     = Settings
-      { s_heartbeatInterval :: NominalDiffTime
-      , s_heartbeatTimeout  :: NominalDiffTime
-      , s_requireMaster     :: Bool
-      , s_credentials       :: Maybe Credentials
-      , s_maxRetries        :: Int
+      { s_heartbeatInterval    :: NominalDiffTime
+      , s_heartbeatTimeout     :: NominalDiffTime
+      , s_requireMaster        :: Bool
+      , s_credentials          :: Maybe Credentials
+      , s_retry                :: Retry
+      , s_reconnect_delay_secs :: Int -- ^ In seconds
       }
 
 --------------------------------------------------------------------------------
 -- | Default global settings.
 defaultSettings :: Settings
 defaultSettings = Settings
-                  { s_heartbeatInterval = msDiffTime 750  -- 750ms
-                  , s_heartbeatTimeout  = msDiffTime 1500 -- 1500ms
-                  , s_requireMaster     = True
-                  , s_credentials       = Nothing
-                  , s_maxRetries        = 3
+                  { s_heartbeatInterval    = msDiffTime 750  -- 750ms
+                  , s_heartbeatTimeout     = msDiffTime 1500 -- 1500ms
+                  , s_requireMaster        = True
+                  , s_credentials          = Nothing
+                  , s_retry                = atMost 3
+                  , s_reconnect_delay_secs = 3
                   }
 
 --------------------------------------------------------------------------------
