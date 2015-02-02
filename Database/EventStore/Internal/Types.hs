@@ -15,7 +15,7 @@
 module Database.EventStore.Internal.Types where
 
 --------------------------------------------------------------------------------
-import Control.Applicative ((<|>))
+import Control.Applicative
 import Control.Exception
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (fromStrict, toStrict)
@@ -23,6 +23,7 @@ import Data.Int
 import Data.Maybe
 import Data.Typeable
 import Data.Word
+import Foreign.C.Types (CTime(..))
 import GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
@@ -396,11 +397,12 @@ data RecordedEvent
         -- ^ Indicates whether the content is internally marked as json.
       , recordedEventCreated :: !(Maybe UTCTime)
         -- ^ Representing when this event was created in the system.
-      , recordedEventCreatedEpoch :: !(Maybe Integer)
-        -- ^ Representing the milliseconds since the epoch when the event was
-        --   created in the system.
       }
     deriving Show
+
+--------------------------------------------------------------------------------
+toUTC :: Int64 -> UTCTime
+toUTC = posixSecondsToUTCTime . (/1000) . realToFrac . CTime
 
 --------------------------------------------------------------------------------
 newRecordedEvent :: EventRecord -> RecordedEvent
@@ -409,9 +411,8 @@ newRecordedEvent er = re
     evt_id      = getField $ eventRecordId er
     evt_uuid    = fromJust $ fromByteString $ fromStrict evt_id
     data_type   = getField $ eventRecordDataType er
-    created     = getField $ eventRecordCreated er
     epoch       = getField $ eventRecordCreatedEpoch er
-    utc_created = fmap (posixSecondsToUTCTime . fromInteger . toInteger) created
+    utc_created = fmap toUTC epoch
 
     re = RecordedEvent
          { recordedEventStreamId     = getField $ eventRecordStreamId er
@@ -422,7 +423,6 @@ newRecordedEvent er = re
          , recordedEventMetadata     = getField $ eventRecordMetadata er
          , recordedEventIsJson       = data_type == 1
          , recordedEventCreated      = utc_created
-         , recordedEventCreatedEpoch = fmap toInteger epoch
          }
 
 --------------------------------------------------------------------------------
