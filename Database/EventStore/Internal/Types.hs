@@ -121,18 +121,13 @@ eventMetadataBytes (Json _ meta_m) = fmap (toStrict . A.encode) meta_m
 --   idempotency assurances given by the EventStore.
 --
 --   The EventStore  will assure idempotency for all operations using any value
---   in 'ExpectedVersion' except for 'Any'. When using 'Any' the EventStore will
+--   in 'ExpectedVersion' except for 'anyStream'. When using 'anyStream' the EventStore will
 --   do its best to assure idempotency but will not guarantee idempotency.
 data ExpectedVersion
     = Any
-      -- ^ This write should not conflict with anything and should always
-      --   succeed.
     | NoStream
-      -- ^ The stream being written to should not yet exist. If it does exist
-      --   treat that as a concurrency problem.
     | EmptyStream
-      -- ^ The stream should exist and should be empty. If it does not exist or
-      --   is not empty, treat that as a concurrency problem.
+    | Exact Int32
     deriving Show
 
 --------------------------------------------------------------------------------
@@ -140,6 +135,32 @@ expVersionInt32 :: ExpectedVersion -> Int32
 expVersionInt32 Any         = -2
 expVersionInt32 NoStream    = -1
 expVersionInt32 EmptyStream = 0
+expVersionInt32 (Exact i)   = i
+
+--------------------------------------------------------------------------------
+-- | This write should not conflict with anything and should always succeed.
+anyStream :: ExpectedVersion
+anyStream = Any
+
+--------------------------------------------------------------------------------
+-- | The stream being written to should not yet exist. If it does exist
+--   treat that as a concurrency problem.
+noStream :: ExpectedVersion
+noStream = NoStream
+
+--------------------------------------------------------------------------------
+-- | The stream should exist and should be empty. If it does not exist or
+--   is not empty, treat that as a concurrency problem.
+emptyStream :: ExpectedVersion
+emptyStream =EmptyStream
+
+--------------------------------------------------------------------------------
+-- | States that the last event written to the stream should have a
+--   sequence number matching your expected value.
+exactStream :: Int32 -> ExpectedVersion
+exactStream i
+    | i < 0     = error $ "expected version must be >= 0, but is " ++ show i
+    | otherwise = Exact i
 
 --------------------------------------------------------------------------------
 -- EventStore Messages

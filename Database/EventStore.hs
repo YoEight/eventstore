@@ -87,7 +87,11 @@ module Database.EventStore
     , positionStart
     , positionEnd
       -- * Misc
-    , ExpectedVersion(..)
+    , ExpectedVersion
+    , anyStream
+    , noStream
+    , emptyStream
+    , exactStream
       -- * Re-export
     , module Control.Concurrent.Async
     ) where
