@@ -19,6 +19,8 @@ module Database.EventStore.Catchup
     , catchupAllStart
     , catchupStream
     , catchupUnsubscribe
+    , waitTillCatchup
+    , hasCaughtUp
     ) where
 
 --------------------------------------------------------------------------------
@@ -58,7 +60,8 @@ data Catchup
     = Catchup
       { catchupStream :: Text
         -- ^ The name of the stream to which the subscription is subscribed.
-      , catchupChan        :: Chan (Either CatchupError ResolvedEvent)
+      , catchupChan :: Chan (Either CatchupError ResolvedEvent)
+      , catchupSubMVar :: MVar Subscription
       , catchupUnsubscribe :: IO ()
         -- ^ Asynchronously unsubscribes from the stream.
       }
@@ -101,6 +104,7 @@ catchupStart evt_fwd get_sub stream_id batch_size_m last_m = do
     let catchup = Catchup
                   { catchupStream      = stream_id
                   , catchupChan        = chan
+                  , catchupSubMVar     = var
                   , catchupUnsubscribe = do
                       cancel as
                       sub_m <- tryTakeMVar var
@@ -136,6 +140,7 @@ catchupAllStart evt_fwd get_sub last_chk_pt_m batch_size_m = do
     let catchup = Catchup
                   { catchupStream      = ""
                   , catchupChan        = chan
+                  , catchupSubMVar     = var
                   , catchupUnsubscribe = do
                       cancel as
                       sub_m <- tryTakeMVar var
@@ -214,3 +219,17 @@ keepAwaitingSubEvent stream_id chan sub = forever $ do
 
             writeChan chan (Left e)
             throwIO e
+
+--------------------------------------------------------------------------------
+-- | Waits until 'Catchup' subscription catch-up its stream.
+waitTillCatchup :: Catchup -> IO ()
+waitTillCatchup c = do
+    _ <- readMVar $ catchupSubMVar c
+    return ()
+
+--------------------------------------------------------------------------------
+-- | Non blocking version of `waitTillCatchup`.
+hasCaughtUp :: Catchup -> IO Bool
+hasCaughtUp c = do
+    res <- tryReadMVar $ catchupSubMVar c
+    return $ isJust res

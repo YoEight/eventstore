@@ -65,6 +65,8 @@ module Database.EventStore
     , catchupAwait
     , catchupStream
     , catchupUnsubscribe
+    , waitTillCatchup
+    , hasCaughtUp
      -- * Results
     , AllEventsSlice(..)
     , DeleteResult(..)
