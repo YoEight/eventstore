@@ -32,6 +32,7 @@ module Database.EventStore.Internal.Manager.Subscription
 import           Control.Concurrent
 import           Control.Monad.Fix
 import           Data.ByteString (ByteString)
+import           Data.Functor
 import           Data.Int
 import qualified Data.Map.Strict as M
 import           Data.Maybe
@@ -269,13 +270,13 @@ subscriptionNetwork sett push_pkg e_pkg = do
                                                       mgr_b
         push_pkg_io = pushAsync push_pkg
 
-        push_sub_io cb stream res_lnk_tos = randomIO >>= \uuid -> sync $
-            push_sub Subscribe
-                     { _subId             = uuid
-                     , _subCallback       = cb
-                     , _subStream         = stream
-                     , _subResolveLinkTos = res_lnk_tos
-                     }
+        push_sub_io cb stream res_lnk_tos = randomIO >>= \uuid -> void $
+            forkIO $ sync $ push_sub Subscribe
+                                     { _subId             = uuid
+                                     , _subCallback       = cb
+                                     , _subStream         = stream
+                                     , _subResolveLinkTos = res_lnk_tos
+                                     }
 
     _ <- listen on_sub (push_pkg_io . createSubscribePackage sett)
 

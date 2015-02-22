@@ -31,6 +31,7 @@ module Database.EventStore.Internal.Processor
 --------------------------------------------------------------------------------
 import Control.Concurrent
 import Control.Exception
+import Data.Functor (void)
 import Data.Monoid ((<>))
 import Data.Typeable
 import Data.Word
@@ -66,7 +67,7 @@ data Processor
 
 --------------------------------------------------------------------------------
 newProcessor :: Settings -> IO Processor
-newProcessor sett = sync $ network sett
+newProcessor sett = sync . network sett =<< newChan
 
 --------------------------------------------------------------------------------
 -- Exception
@@ -106,8 +107,8 @@ heartbeatRequestCmd :: Word8
 heartbeatRequestCmd = 0x01
 
 --------------------------------------------------------------------------------
-network :: Settings -> Reactive Processor
-network sett = do
+network :: Settings -> Chan Package -> Reactive Processor
+network sett chan = do
     (onConnect, pushConnect)         <- newEvent
     (onConnected, pushConnected)     <- newEvent
     (onCleanup, pushCleanup)         <- newEvent
@@ -149,6 +150,7 @@ network sett = do
 
     _ <- listen con_snap $ \(ConnectionSnapshot host port) ->
              connection sett
+                        chan
                         push_recv_io
                         (push_con_io host port)
                         push_reco_io
@@ -158,6 +160,7 @@ network sett = do
 
     _ <- listen reco_snap $ \(ConnectionSnapshot host port) ->
              connection sett
+                        chan
                         push_recv_io
                         push_recod_io
                         push_reco_io
@@ -172,9 +175,12 @@ network sett = do
 
     let processor =
             Processor
-            { processorConnect        = \h p -> sync $ pushConnect $ Connect h p
-            , processorShutdown       = sync $ pushCleanup Cleanup
-            , processorNewOperation   = \o -> sync $ push_new_op o
+            { processorConnect        = \h p -> void $ forkIO $
+                                                sync $ pushConnect $ Connect h p
+            , processorShutdown       = void $ forkIO $ sync $
+                                        pushCleanup Cleanup
+            , processorNewOperation   = \o -> void $ forkIO $
+                                              sync $ push_new_op o
             , processorNewSubcription = push_sub
             }
 
@@ -203,6 +209,7 @@ secs = 1000000
 
 --------------------------------------------------------------------------------
 connection :: Settings
+           -> Chan Package
            -> (Package -> IO ())
            -> (UUID -> IO () -> IO ())
            -> IO ()
@@ -210,7 +217,7 @@ connection :: Settings
            -> HostName
            -> Int
            -> IO ()
-connection sett push_pkg push_con push_reco evt_pkg host port = go
+connection sett chan push_pkg push_con push_reco evt_pkg host port = go
   where
     go =
         case s_retry sett of
@@ -235,7 +242,6 @@ connection sett push_pkg push_con push_reco evt_pkg host port = go
         hSetBuffering hdl NoBuffering
 
         uuid  <- randomIO
-        chan  <- newChan
         as_rl <- async $ sync $ listen evt_pkg (writeChan chan)
         rid   <- forkFinally (readerThread push_pkg hdl) (recovering push_reco)
         wid   <- forkFinally (writerThread chan hdl) (recovering push_reco)

@@ -1,3 +1,8 @@
+0.7.0.1
+-------
+* Tight package channnel to connection instance in order to prevent loss on connection drops.
+* `Connection` has asynchronous operation for real now.
+
 0.7.0.0
 -------
 * Fix date conversion. `recordedEventCreateEpoch` is no longer exposed.
