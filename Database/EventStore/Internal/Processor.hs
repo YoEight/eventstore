@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveDataTypeable  #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
@@ -13,7 +12,8 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Processor
-    ( InternalException(..)
+    ( ConnectionException(..)
+    , InternalException(..)
     , Processor(..)
     , DropReason(..)
     , NewSubscriptionCB
@@ -33,19 +33,16 @@ import Control.Concurrent
 import Control.Exception
 import Data.Functor (void)
 import Data.Monoid ((<>))
-import Data.Typeable
 import Data.Word
-import System.IO
 import Text.Printf
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.Async
 import Data.UUID
 import FRP.Sodium
 import Network
-import System.Random
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Manager.Operation
 import Database.EventStore.Internal.Manager.Subscription
 import Database.EventStore.Internal.Packages
@@ -70,16 +67,6 @@ newProcessor :: Settings -> IO Processor
 newProcessor sett = sync . network sett =<< newChan
 
 --------------------------------------------------------------------------------
--- Exception
---------------------------------------------------------------------------------
-data ProcessorException
-    = MaxAttempt HostName Int Int -- ^ Hostname Port MaxAttempt value
-    deriving (Show, Typeable)
-
---------------------------------------------------------------------------------
-instance Exception ProcessorException
-
---------------------------------------------------------------------------------
 -- State
 --------------------------------------------------------------------------------
 data State
@@ -100,7 +87,6 @@ data Connected   = Connected HostName Int UUID (IO ())
 data Cleanup     = Cleanup
 data Reconnect   = Reconnect
 data Reconnected = Reconnected UUID (IO ())
-
 
 --------------------------------------------------------------------------------
 heartbeatRequestCmd :: Word8
@@ -154,7 +140,6 @@ network sett chan = do
                         push_recv_io
                         (push_con_io host port)
                         push_reco_io
-                        onSend
                         host
                         port
 
@@ -164,7 +149,6 @@ network sett chan = do
                         push_recv_io
                         push_recod_io
                         push_reco_io
-                        onSend
                         host
                         port
 
@@ -183,6 +167,8 @@ network sett chan = do
                                               sync $ push_new_op o
             , processorNewSubcription = push_sub
             }
+
+    _ <- listen onSend (writeChan chan)
 
     return processor
 
@@ -204,55 +190,23 @@ connectSnapshot (Connect host port) =
     }
 
 --------------------------------------------------------------------------------
-secs :: Int
-secs = 1000000
-
---------------------------------------------------------------------------------
 connection :: Settings
            -> Chan Package
            -> (Package -> IO ())
            -> (UUID -> IO () -> IO ())
            -> IO ()
-           -> Event Package
            -> HostName
            -> Int
            -> IO ()
-connection sett chan push_pkg push_con push_reco evt_pkg host port = go
-  where
-    go =
-        case s_retry sett of
-            AtMost n ->
-                let loop i =
-                        catch (doConnect i) $ \(_ :: SomeException) -> do
-                            threadDelay delay
-                            if n <= i then throwIO $ MaxAttempt host port n
-                                      else loop (i + 1) in
-                 loop 1
-            KeepRetrying ->
-                let endlessly i =
-                        catch (doConnect i) $ \(_ :: SomeException) ->
-                            threadDelay delay >> endlessly (i + 1) in
-                endlessly (1 :: Int)
-
-    delay = (s_reconnect_delay_secs sett) * secs
-
-    doConnect att = do
-        printf "Connecting...Attempt %d\n" att
-        hdl <- connectTo host (PortNumber $ fromIntegral port)
-        hSetBuffering hdl NoBuffering
-
-        uuid  <- randomIO
-        as_rl <- async $ sync $ listen evt_pkg (writeChan chan)
-        rid   <- forkFinally (readerThread push_pkg hdl) (recovering push_reco)
-        wid   <- forkFinally (writerThread chan hdl) (recovering push_reco)
-
-        push_con uuid $ do
-            throwTo rid Stopped
-            throwTo wid Stopped
-            hClose hdl
-            rel_w <- wait as_rl
-            rel_w
-            printf "Disconnected %s\n" (toString uuid)
+connection sett chan push_pkg push_con push_reco host port = do
+    conn <- newConnection sett host port
+    rid  <- forkFinally (readerThread push_pkg conn) (recovering push_reco)
+    wid  <- forkFinally (writerThread chan conn) (recovering push_reco)
+    push_con (connUUID conn) $ do
+        throwTo rid Stopped
+        throwTo wid Stopped
+        connClose conn
+        printf "Disconnected %s\n" (toString $ connUUID conn)
 
 --------------------------------------------------------------------------------
 recovering :: IO () -> Either SomeException () -> IO ()

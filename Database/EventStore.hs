@@ -20,6 +20,7 @@ module Database.EventStore
     , withJsonAndMetadata
       -- * Connection
     , Connection
+    , ConnectionException(..)
     , Credentials
     , Settings(..)
     , Retry

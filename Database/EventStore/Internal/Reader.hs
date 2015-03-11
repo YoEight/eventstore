@@ -12,28 +12,27 @@
 module Database.EventStore.Internal.Reader (readerThread) where
 
 --------------------------------------------------------------------------------
-import           Prelude hiding (take)
-import           Control.Monad
-import qualified Data.ByteString as B
-import           System.IO
-import           Text.Printf
+import Prelude hiding (take)
+import Control.Monad
+import Text.Printf
 
 --------------------------------------------------------------------------------
 import Data.Serialize.Get
 import Data.UUID
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-readerThread :: (Package -> IO ()) -> Handle -> IO ()
-readerThread push_p h = forever $ do
-    header_bs <- B.hGet h 4
+readerThread :: (Package -> IO ()) -> Connection -> IO ()
+readerThread push_p c = forever $ do
+    header_bs <- connRecv c 4
     case runGet getLengthPrefix header_bs of
         Left _
             -> error "Wrong package framing"
         Right length_prefix
-            -> B.hGet h length_prefix >>= parsePackage
+            -> connRecv c length_prefix >>= parsePackage
   where
     parsePackage bs =
         case runGet getPackage bs of
