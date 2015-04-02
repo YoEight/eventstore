@@ -10,7 +10,7 @@ name:                eventstore
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.7.0.0
+version:             0.7.0.1
 
 -- A short (one-line) description of the package.
 synopsis: EventStore TCP Client
@@ -77,10 +77,10 @@ library
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:       base       >=4.7      && <4.8
+  build-depends:       base       >=4.7      && <5
                      , aeson      >=0.8      && <0.9
                      , async      >=2.0      && <2.1
-                     , bytestring >=0.10.4   && <0.10.5
+                     , bytestring >=0.10.4   && <0.11
                      , cereal     >=0.4      && <0.5
                      , containers >=0.5      && <0.6
                      , network    ==2.6.*
