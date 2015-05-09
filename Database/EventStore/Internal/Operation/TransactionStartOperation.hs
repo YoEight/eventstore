@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP             #-}
 {-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
@@ -19,10 +18,8 @@ import Control.Concurrent
 import Control.Exception
 import Data.Int
 import Data.Maybe
-#if MIN_VERSION_base(4,8,0)
-#else
 import Data.Traversable
-#endif
+import Prelude
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async

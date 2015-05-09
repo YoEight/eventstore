@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP           #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DataKinds     #-}
 --------------------------------------------------------------------------------
@@ -19,11 +18,9 @@ module Database.EventStore.Internal.Operation.WriteEventsOperation
 import Control.Concurrent
 import Data.Int
 import Data.Maybe
-#if MIN_VERSION_base(4,8,0)
-#else
 import Data.Traversable
-#endif
 import GHC.Generics (Generic)
+import Prelude
 
 --------------------------------------------------------------------------------
 import Data.ProtocolBuffers
