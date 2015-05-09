@@ -259,12 +259,14 @@ succeedCommit mvar tcc = do
 eventToNewEvent :: Event -> IO NewEvent
 eventToNewEvent evt =
     newEvent evt_type
+             evt_id
              evt_data_type
              evt_metadata_type
              evt_data_bytes
              evt_metadata_bytes
   where
     evt_type           = eventType evt
+    evt_id             = eventId evt
     evt_data_bytes     = eventDataBytes $ eventData evt
     evt_data_type      = eventDataType $ eventData evt
     evt_metadata_bytes = eventMetadataBytes $ eventData evt

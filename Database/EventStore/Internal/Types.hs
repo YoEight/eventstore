@@ -72,12 +72,14 @@ type OperationExceptional a = Either OperationException a
 data Event
     = Event
       { eventType :: !Text
+      , eventId   :: !(Maybe UUID)
       , eventData :: !EventData
       }
 
 --------------------------------------------------------------------------------
-createEvent :: Text      -- ^ Event type
-            -> EventData -- ^ Event data
+createEvent :: Text       -- ^ Event type
+            -> Maybe UUID -- ^ Event ID, generated if 'Nothing'
+            -> EventData  -- ^ Event data
             -> Event
 createEvent = Event
 
@@ -193,13 +195,14 @@ instance Encode NewEvent
 
 --------------------------------------------------------------------------------
 newEvent :: Text             -- ^ Event type
+         -> Maybe UUID       -- ^ Event ID
          -> Int32            -- ^ Data content type
          -> Int32            -- ^ Metadata content type
          -> ByteString       -- ^ Event data
          -> Maybe ByteString -- ^ Metadata
          -> IO NewEvent
-newEvent evt_type data_type meta_type evt_data evt_meta = do
-    new_uuid <- randomIO
+newEvent evt_type evt_id data_type meta_type evt_data evt_meta = do
+    new_uuid <- maybe randomIO return evt_id
     let uuid_bytes = toStrict $ toByteString new_uuid
         new_evt    = NewEvent
                      { newEventId           = putField uuid_bytes
