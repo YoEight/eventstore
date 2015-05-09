@@ -1,3 +1,8 @@
+0.7.1.0
+-------
+* Internal connection changes
+* Allow creating an event with an existing ID
+
 0.7.0.1
 -------
 * Tight package channnel to connection instance in order to prevent loss on connection drops.
