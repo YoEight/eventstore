@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE RecordWildCards    #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Types
@@ -15,26 +17,36 @@
 module Database.EventStore.Internal.Types where
 
 --------------------------------------------------------------------------------
-import Control.Applicative
-import Control.Exception
-import Data.ByteString (ByteString)
-import Data.ByteString.Lazy (fromStrict, toStrict)
-import Data.Int
-import Data.Maybe
-import Data.Typeable
-import Data.Word
-import Foreign.C.Types (CTime(..))
-import GHC.Generics (Generic)
+import Data.Monoid (Endo(..))
+
+--------------------------------------------------------------------------------
+import           Control.Applicative
+import           Control.Exception
+import           Control.Monad
+import           Data.ByteString (ByteString)
+import           Data.ByteString.Lazy (fromStrict, toStrict)
+import           Data.Int
+import           Data.Maybe
+import qualified Data.Set as S
+import           Data.Typeable
+import           Data.Word
+import           Foreign.C.Types (CTime(..))
+import           GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
 import           Control.Concurrent.Async hiding (link)
-import qualified Data.Aeson as A
+import qualified Data.Aeson          as A
+import           Data.Aeson.Types (Object, ToJSON(..), Pair, Parser, (.=))
+import qualified Data.HashMap.Strict as H
 import           Data.ProtocolBuffers
 import           Data.Text (Text)
 import           Data.Time
 import           Data.Time.Clock.POSIX
 import           Data.UUID (UUID, fromByteString, toByteString)
 import           System.Random
+
+--------------------------------------------------------------------------------
+import Database.EventStore.Internal.TimeSpan
 
 --------------------------------------------------------------------------------
 -- Exceptions
@@ -123,8 +135,9 @@ eventMetadataBytes (Json _ meta_m) = fmap (toStrict . A.encode) meta_m
 --   idempotency assurances given by the EventStore.
 --
 --   The EventStore  will assure idempotency for all operations using any value
---   in 'ExpectedVersion' except for 'anyStream'. When using 'anyStream' the EventStore will
---   do its best to assure idempotency but will not guarantee idempotency.
+--   in 'ExpectedVersion' except for 'anyStream'. When using 'anyStream' the
+--   EventStore will do its best to assure idempotency but will not guarantee
+--   idempotency.
 data ExpectedVersion
     = Any
     | NoStream
@@ -154,7 +167,7 @@ noStream = NoStream
 -- | The stream should exist and should be empty. If it does not exist or
 --   is not empty, treat that as a concurrency problem.
 emptyStream :: ExpectedVersion
-emptyStream =EmptyStream
+emptyStream = EmptyStream
 
 --------------------------------------------------------------------------------
 -- | States that the last event written to the stream should have a
@@ -622,3 +635,331 @@ defaultSettings = Settings
 -- | Millisecond timespan
 msDiffTime :: Float -> NominalDiffTime
 msDiffTime i = fromRational $ toRational (i / 1000)
+
+--------------------------------------------------------------------------------
+-- | Represents an access control list for a stream.
+data StreamACL
+    = StreamACL
+      { streamACLReadRoles :: ![Text]
+        -- ^ Roles and users permitted to read the stream.
+      , streamACLWriteRoles :: ![Text]
+        -- ^ Roles and users permitted to write to the stream.
+      , streamACLDeleteRoles :: ![Text]
+        -- ^ Roles and users permitted to delete to the stream.
+      , streamACLMetaReadRoles :: ![Text]
+        -- ^ Roles and users permitted to read stream metadata.
+      , streamACLMetaWriteRoles :: ![Text]
+        -- ^ Roles and users permitted to write stream metadata.
+      } deriving Show
+
+--------------------------------------------------------------------------------
+-- | 'StreamACL' with no role or users whatsoever.
+emptyStreamACL :: StreamACL
+emptyStreamACL = StreamACL
+                 { streamACLReadRoles      = []
+                 , streamACLWriteRoles     = []
+                 , streamACLDeleteRoles    = []
+                 , streamACLMetaReadRoles  = []
+                 , streamACLMetaWriteRoles = []
+                 }
+
+--------------------------------------------------------------------------------
+-- | Represents stream metadata with strongly typed properties for system values
+--   and a dictionary-like interface for custom values.
+data StreamMetadata
+    = StreamMetadata
+      { streamMetadataMaxCount :: !(Maybe Int32)
+        -- ^ The maximum number of events allowed in the stream.
+      , streamMetadataMaxAge :: !(Maybe TimeSpan)
+        -- ^ The maximum age of events allowed in the stream.
+      , streamMetadataTruncateBefore :: !(Maybe Int32)
+        -- ^ The event number from which previous events can be scavenged. This
+        --   is used to implement soft-deletion of streams.
+      , streamMetadataCacheControl :: !(Maybe TimeSpan)
+        -- ^ The amount of time for which the stream head is cachable.
+      , streamMetadataACL :: !StreamACL
+        -- ^ The access control list for the stream.
+      , streamMetadataCustom :: !Object
+        -- ^ An enumerable of key-value pairs of keys to JSON text for
+        --   user-provider metadata.
+      } deriving Show
+
+--------------------------------------------------------------------------------
+instance A.FromJSON StreamMetadata where
+    parseJSON = parseStreamMetadata
+
+--------------------------------------------------------------------------------
+-- | 'StreamMetadata' with everything set to 'Nothing', using 'emptyStreamACL'
+--   and an empty 'Object'.
+emptyStreamMetadata :: StreamMetadata
+emptyStreamMetadata = StreamMetadata
+                      { streamMetadataMaxCount       = Nothing
+                      , streamMetadataMaxAge         = Nothing
+                      , streamMetadataTruncateBefore = Nothing
+                      , streamMetadataCacheControl   = Nothing
+                      , streamMetadataACL            = emptyStreamACL
+                      , streamMetadataCustom         = H.empty
+                      }
+
+--------------------------------------------------------------------------------
+customMetaToPairs :: Object -> [Pair]
+customMetaToPairs = fmap go . H.toList
+  where
+    go (k,v) = k .= v
+
+--------------------------------------------------------------------------------
+streamACLJSON :: StreamACL -> A.Value
+streamACLJSON StreamACL{..} =
+    A.object [ p_readRoles      .= streamACLReadRoles
+             , p_writeRoles     .= streamACLWriteRoles
+             , p_deleteRoles    .= streamACLDeleteRoles
+             , p_metaReadRoles  .= streamACLMetaReadRoles
+             , p_metaWriteRoles .= streamACLMetaWriteRoles
+             ]
+
+--------------------------------------------------------------------------------
+streamMetadataJSON :: StreamMetadata -> A.Value
+streamMetadataJSON StreamMetadata{..} =
+    A.object $ [ p_maxAge         .= streamMetadataMaxAge
+               , p_maxCount       .= streamMetadataMaxCount
+               , p_truncateBefore .= streamMetadataTruncateBefore
+               , p_cacheControl   .= streamMetadataCacheControl
+               , p_acl            .= streamACLJSON streamMetadataACL
+               ] ++ custPairs
+  where
+    custPairs = customMetaToPairs streamMetadataCustom
+
+--------------------------------------------------------------------------------
+-- Stream ACL Properties
+--------------------------------------------------------------------------------
+p_readRoles :: Text
+p_readRoles = "$r"
+
+--------------------------------------------------------------------------------
+p_writeRoles :: Text
+p_writeRoles = "$w"
+
+--------------------------------------------------------------------------------
+p_deleteRoles :: Text
+p_deleteRoles = "$d"
+
+--------------------------------------------------------------------------------
+p_metaReadRoles :: Text
+p_metaReadRoles = "$mr"
+
+--------------------------------------------------------------------------------
+p_metaWriteRoles :: Text
+p_metaWriteRoles = "$mw"
+
+--------------------------------------------------------------------------------
+-- Internal MetaData Properties
+--------------------------------------------------------------------------------
+p_maxAge :: Text
+p_maxAge = "$maxAge"
+
+--------------------------------------------------------------------------------
+p_maxCount :: Text
+p_maxCount = "$maxCount"
+
+--------------------------------------------------------------------------------
+p_truncateBefore :: Text
+p_truncateBefore = "$tb"
+
+--------------------------------------------------------------------------------
+p_cacheControl :: Text
+p_cacheControl = "$cacheControl"
+
+--------------------------------------------------------------------------------
+p_acl :: Text
+p_acl = "$acl"
+
+--------------------------------------------------------------------------------
+internalMetaProperties :: S.Set Text
+internalMetaProperties =
+    S.fromList [ p_maxAge
+               , p_maxCount
+               , p_truncateBefore
+               , p_cacheControl
+               , p_acl
+               ]
+
+--------------------------------------------------------------------------------
+keepUserProperties :: Object -> Object
+keepUserProperties = H.filterWithKey go
+  where
+    go k _ = not $ S.member k internalMetaProperties
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+parseNominalDiffTime :: Text -> Object -> Parser (Maybe NominalDiffTime)
+parseNominalDiffTime k m = fmap (fmap go) (m A..: k)
+  where
+    go i = (realToFrac $ CTime i)
+
+--------------------------------------------------------------------------------
+parseStreamACL :: A.Value -> Parser StreamACL
+parseStreamACL (A.Object m) =
+    StreamACL              <$>
+    m A..: p_readRoles     <*>
+    m A..: p_writeRoles    <*>
+    m A..: p_deleteRoles   <*>
+    m A..: p_metaReadRoles <*>
+    m A..: p_metaWriteRoles
+parseStreamACL _ = mzero
+
+--------------------------------------------------------------------------------
+parseStreamMetadata :: A.Value -> Parser StreamMetadata
+parseStreamMetadata (A.Object m) =
+    StreamMetadata                    <$>
+    m A..: p_maxCount                 <*>
+    m A..: p_maxAge                   <*>
+    m A..: p_truncateBefore           <*>
+    m A..: p_cacheControl             <*>
+    (m A..: p_acl >>= parseStreamACL) <*>
+    pure (keepUserProperties m)
+parseStreamMetadata _ = mzero
+
+--------------------------------------------------------------------------------
+-- Builder
+--------------------------------------------------------------------------------
+type Builder a = Endo a
+
+--------------------------------------------------------------------------------
+build :: a -> Builder a -> a
+build a (Endo k) = k a
+
+--------------------------------------------------------------------------------
+type StreamACLBuilder = Builder StreamACL
+
+--------------------------------------------------------------------------------
+-- | Sets role names with read permission for the stream.
+setReadRoles :: [Text] -> StreamACLBuilder
+setReadRoles xs = Endo $ \s -> s { streamACLReadRoles = xs }
+
+--------------------------------------------------------------------------------
+-- | Sets a single role name with read permission for the stream.
+setReadRole :: Text -> StreamACLBuilder
+setReadRole x = setReadRoles [x]
+
+--------------------------------------------------------------------------------
+-- | Sets role names with write permission for the stream.
+setWriteRoles :: [Text] -> StreamACLBuilder
+setWriteRoles xs = Endo $ \s -> s { streamACLWriteRoles = xs }
+
+--------------------------------------------------------------------------------
+-- | Sets a single role name with write permission for the stream.
+setWriteRole :: Text -> StreamACLBuilder
+setWriteRole x = setWriteRoles [x]
+
+--------------------------------------------------------------------------------
+-- | Sets role names with delete permission for the stream.
+setDeleteRoles :: [Text] -> StreamACLBuilder
+setDeleteRoles xs = Endo $ \s -> s { streamACLDeleteRoles = xs }
+
+--------------------------------------------------------------------------------
+-- | Sets a single role name with delete permission for the stream.
+setDeleteRole :: Text -> StreamACLBuilder
+setDeleteRole x = setDeleteRoles [x]
+
+--------------------------------------------------------------------------------
+-- | Sets role names with metadata read permission for the stream.
+setMetaReadRoles :: [Text] -> StreamACLBuilder
+setMetaReadRoles xs = Endo $ \s -> s { streamACLMetaReadRoles = xs }
+
+--------------------------------------------------------------------------------
+-- | Sets a single role name with metadata read permission for the stream.
+setMetaReadRole :: Text -> StreamACLBuilder
+setMetaReadRole x = setMetaReadRoles [x]
+
+--------------------------------------------------------------------------------
+-- | Sets role names with metadata write permission for the stream.
+setMetaWriteRoles :: [Text] -> StreamACLBuilder
+setMetaWriteRoles xs = Endo $ \s -> s { streamACLMetaWriteRoles = xs }
+
+--------------------------------------------------------------------------------
+-- | Sets a single role name with metadata write permission for the stream.
+setMetaWriteRole :: Text -> StreamACLBuilder
+setMetaWriteRole x = setMetaWriteRoles [x]
+
+--------------------------------------------------------------------------------
+-- | Builds a 'StreamACL' from a 'StreamACLBuilder'.
+buildStreamACL :: StreamACLBuilder -> StreamACL
+buildStreamACL b = modifyStreamACL b emptyStreamACL
+
+--------------------------------------------------------------------------------
+-- | Modifies a 'StreamACL' using a 'StreamACLBuilder'.
+modifyStreamACL :: StreamACLBuilder -> StreamACL -> StreamACL
+modifyStreamACL b acl = build acl b
+
+--------------------------------------------------------------------------------
+type StreamMetadataBuilder = Builder StreamMetadata
+
+--------------------------------------------------------------------------------
+-- | Sets the maximum number of events allowed in the stream.
+setMaxCount :: Int32 -> StreamMetadataBuilder
+setMaxCount i = Endo $ \s -> s { streamMetadataMaxCount = Just i }
+
+--------------------------------------------------------------------------------
+-- | Sets the maximum age of events allowed in the stream.
+setMaxAge :: TimeSpan -> StreamMetadataBuilder
+setMaxAge d = Endo $ \s -> s { streamMetadataMaxAge = Just d }
+
+--------------------------------------------------------------------------------
+-- | Sets the event number from which previous events can be scavenged.
+setTruncateBefore :: Int32 -> StreamMetadataBuilder
+setTruncateBefore i = Endo $ \s -> s { streamMetadataTruncateBefore = Just i }
+
+--------------------------------------------------------------------------------
+-- | Sets the amount of time for which the stream head is cachable.
+setCacheControl :: TimeSpan -> StreamMetadataBuilder
+setCacheControl d = Endo $ \s -> s { streamMetadataCacheControl = Just d }
+
+--------------------------------------------------------------------------------
+setACL :: StreamACL -> StreamMetadataBuilder
+setACL a = Endo $ \s -> s { streamMetadataACL = a }
+
+--------------------------------------------------------------------------------
+modifyACL :: StreamACLBuilder -> StreamMetadataBuilder
+modifyACL b = Endo $ \s ->
+    let old = streamMetadataACL s
+    in s { streamMetadataACL = modifyStreamACL b old }
+
+--------------------------------------------------------------------------------
+-- | Sets a custom metadata property.
+setCustomProperty :: ToJSON a => Text -> a -> StreamMetadataBuilder
+setCustomProperty k v = Endo $ \s ->
+    let m  = streamMetadataCustom s
+        m' = H.insert k (toJSON v) m in
+     s { streamMetadataCustom = m' }
+
+--------------------------------------------------------------------------------
+-- | Builds a 'StreamMetadata' from a 'StreamMetadataBuilder'.
+buildStreamMetadata :: StreamMetadataBuilder -> StreamMetadata
+buildStreamMetadata b = modifyStreamMetadata b emptyStreamMetadata
+
+--------------------------------------------------------------------------------
+-- | Modifies a 'StreamMetadata' using a 'StreamMetadataBuilder'
+modifyStreamMetadata :: StreamMetadataBuilder
+                     -> StreamMetadata
+                     -> StreamMetadata
+modifyStreamMetadata b meta = build meta b
+
+--------------------------------------------------------------------------------
+-- | Represents stream metadata as a series of properties for system data and a
+--   'StreamMetadata' object for user metadata.
+data StreamMetadataResult
+    = StreamMetadataResult
+      { streamMetaResultStream :: !Text
+        -- ^ The name of the stream.
+      , streamMetaResultDeleted :: !Bool
+        -- ^ True if the stream is soft-deleted.
+      , streamMetaResultVersion :: !Int32
+        -- ^ The version of the metadata format.
+      , streamMetaResultData :: !StreamMetadata
+        -- ^ A 'StreamMetadata' containing user-specified metadata.
+      }
+    | NotFoundStreamMetadataResult { streamMetaResultStream :: !Text }
+      -- ^ When the stream is either not found or 'no stream'.
+    | DeletedStreamMetadataResult { streamMetaResultStream :: !Text }
+      -- ^ When the stream is deleted.
+    deriving Show
