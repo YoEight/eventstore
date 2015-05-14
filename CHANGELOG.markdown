@@ -1,3 +1,8 @@
+0.7.2.0
+-------
+* Add `setStreamMetadata`
+* Add `getStreamMetadata`
+
 0.7.1.0
 -------
 * Internal connection changes

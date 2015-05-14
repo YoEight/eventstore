@@ -31,15 +31,61 @@ module Database.EventStore
     , connect
     , shutdown
      -- * Read Operations
+    , StreamMetadataResult(..)
     , readEvent
     , readAllEventsBackward
     , readAllEventsForward
     , readStreamEventsBackward
     , readStreamEventsForward
+    , getStreamMetadata
       -- * Write Operations
+    , StreamACL(..)
+    , StreamMetadata(..)
+    , emptyStreamACL
+    , emptyStreamMetadata
     , deleteStream
     , sendEvent
     , sendEvents
+    , setStreamMetadata
+      -- * Builder
+    , Builder
+      -- * Stream ACL Builder
+    , StreamACLBuilder
+    , buildStreamACL
+    , modifyStreamACL
+    , setReadRoles
+    , setReadRole
+    , setWriteRoles
+    , setWriteRole
+    , setDeleteRoles
+    , setDeleteRole
+    , setMetaReadRoles
+    , setMetaReadRole
+    , setMetaWriteRoles
+    , setMetaWriteRole
+      -- * Stream Metadata Builder
+    , StreamMetadataBuilder
+    , buildStreamMetadata
+    , modifyStreamMetadata
+    , setMaxCount
+    , setMaxAge
+    , setTruncateBefore
+    , setCacheControl
+    , setACL
+    , modifyACL
+    , setCustomProperty
+      -- * TimeSpan
+    , TimeSpan
+    , timeSpanTicks
+    , timeSpanHoursMinsSecs
+    , timeSpanDaysHoursMinsSecs
+    , timeSpanDaysHoursMinsSecsMillis
+    , timeSpanGetTicks
+    , timeSpanGetDays
+    , timeSpanGetHours
+    , timeSpanGetMinutes
+    , timeSpanGetSeconds
+    , timeSpanGetMillis
       -- * Transaction
     , Transaction
     , transactionStart
@@ -95,20 +141,26 @@ module Database.EventStore
     , exactStream
       -- * Re-export
     , module Control.Concurrent.Async
+    , (<>)
     ) where
 
 --------------------------------------------------------------------------------
 import Control.Concurrent
+import Control.Concurrent.STM (atomically)
 import Control.Exception
+import Data.ByteString.Lazy (fromStrict)
 import Data.Int
+import Data.Monoid ((<>))
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
+import Data.Aeson (decode)
 import Data.Text
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Catchup
 import Database.EventStore.Internal.Processor
+import Database.EventStore.Internal.TimeSpan
 import Database.EventStore.Internal.Types
 import Database.EventStore.Internal.Operation.DeleteStreamOperation
 import Database.EventStore.Internal.Operation.ReadAllEventsOperation
@@ -377,6 +429,54 @@ subscribeToAllFrom conn res_lnk_tos last_chk_pt batch_m = do
     get_sub = subscribeToAll conn res_lnk_tos
 
 --------------------------------------------------------------------------------
+-- | Asynchronously sets the metadata for a stream.
+setStreamMetadata :: Connection
+                  -> Text
+                  -> ExpectedVersion
+                  -> StreamMetadata
+                  -> IO (Async WriteResult)
+setStreamMetadata conn evt_stream exp_ver metadata =
+    let dat = withJson $ streamMetadataJSON metadata
+        evt = createEvent "$metadata" Nothing dat in
+    sendEvent conn (metaStreamOf evt_stream) exp_ver evt
+
+--------------------------------------------------------------------------------
+getStreamMetadata :: Connection -> Text -> IO (Async StreamMetadataResult)
+getStreamMetadata conn evt_stream = do
+    as <- readEvent conn (metaStreamOf evt_stream) (-1) False
+    async $ atomically $ waitSTM as >>= extractStreamMetadataResult evt_stream
+
+--------------------------------------------------------------------------------
+extractStreamMetadataResult :: Monad m
+                            => Text
+                            -> ReadResult
+                            -> m StreamMetadataResult
+extractStreamMetadataResult stream rres =
+    case readResultStatus rres of
+        RE_SUCCESS ->
+            case action of
+                Just orig ->
+                    case decode $ fromStrict $ recordedEventData orig of
+                        Just s ->
+                            let res = StreamMetadataResult
+                                      { streamMetaResultStream  = stream
+                                      , streamMetaResultDeleted = False
+                                      , streamMetaResultVersion = evt_number
+                                      , streamMetaResultData    = s
+                                      } in
+                            return res
+                        Nothing -> fail "StreamMetadata: wrong format."
+                Nothing -> fail "impossible: extractStreamMetadataResult"
+        RE_STREAM_DELETED -> return $ DeletedStreamMetadataResult stream
+        RE_NOT_FOUND      -> return $ NotFoundStreamMetadataResult stream
+        RE_NO_STREAM      -> return $ NotFoundStreamMetadataResult stream
+        _                 -> fail "unexpected ReadEventResult"
+
+  where
+    action     = readResultResolvedEvent rres >>= resolvedEventOriginal
+    evt_number = readResultEventNumber rres
+
+--------------------------------------------------------------------------------
 createAsync :: IO (Async a, MVar (OperationExceptional a))
 createAsync = do
     mvar <- newEmptyMVar
@@ -385,3 +485,7 @@ createAsync = do
         either throwIO return res
 
     return (as, mvar)
+
+--------------------------------------------------------------------------------
+metaStreamOf :: Text -> Text
+metaStreamOf s = "$$" <> s
