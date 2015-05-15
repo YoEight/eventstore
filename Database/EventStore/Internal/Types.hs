@@ -951,8 +951,6 @@ data StreamMetadataResult
     = StreamMetadataResult
       { streamMetaResultStream :: !Text
         -- ^ The name of the stream.
-      , streamMetaResultDeleted :: !Bool
-        -- ^ True if the stream is soft-deleted.
       , streamMetaResultVersion :: !Int32
         -- ^ The version of the metadata format.
       , streamMetaResultData :: !StreamMetadata
@@ -961,5 +959,5 @@ data StreamMetadataResult
     | NotFoundStreamMetadataResult { streamMetaResultStream :: !Text }
       -- ^ When the stream is either not found or 'no stream'.
     | DeletedStreamMetadataResult { streamMetaResultStream :: !Text }
-      -- ^ When the stream is deleted.
+      -- ^ When the stream is soft-deleted.
     deriving Show

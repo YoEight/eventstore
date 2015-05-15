@@ -23,7 +23,7 @@ module Database.EventStore.Internal.TimeSpan
     , timeSpanGetMinutes
     , timeSpanGetSeconds
     , timeSpanGetMillis
-    , ) where
+    ) where
 
 --------------------------------------------------------------------------------
 import Control.Applicative
@@ -151,8 +151,8 @@ timeSpanDaysHoursMinsSecsMillis dd hh mm ss ms =
     TimeSpan $ totalMillis * ticksPerMillisecond
     where
       totalMillis = ((dd * 3600 * 24) +
-                    (hh * 3600)      +
-                    (mm * 60)        +
+                    (hh * 3600)       +
+                    (mm * 60)         +
                     ss) * 1000 + ms
 
 --------------------------------------------------------------------------------
@@ -202,8 +202,8 @@ padded n p xs = replicate diff p ++ xs
 --------------------------------------------------------------------------------
 timeSpanBuilder :: TimeSpan -> Builder
 timeSpanBuilder (TimeSpan ticks) =
-    start  <>
-    genDay <>
+    start    <>
+    genDay   <>
     genHours <>
     genMins  <>
     genSecs  <>

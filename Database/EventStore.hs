@@ -460,7 +460,6 @@ extractStreamMetadataResult stream rres =
                         Just s ->
                             let res = StreamMetadataResult
                                       { streamMetaResultStream  = stream
-                                      , streamMetaResultDeleted = False
                                       , streamMetaResultVersion = evt_number
                                       , streamMetaResultData    = s
                                       } in
