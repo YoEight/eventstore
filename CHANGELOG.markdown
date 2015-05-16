@@ -1,3 +1,7 @@
+0.7.2.1
+-------
+* Fix compilation issue
+
 0.7.2.0
 -------
 * Add `setStreamMetadata`
