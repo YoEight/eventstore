@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE TypeFamilies       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Catchup
@@ -11,17 +12,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Catchup
-    ( Catchup
-    , CatchupError(..)
-    , catchupAwait
-    , catchupStart
-    , catchupAllStart
-    , catchupStream
-    , catchupUnsubscribe
-    , waitTillCatchup
-    , hasCaughtUp
-    ) where
+module Database.EventStore.Catchup where
 
 --------------------------------------------------------------------------------
 import Control.Concurrent
@@ -30,7 +21,6 @@ import Control.Monad
 import Data.Foldable (traverse_)
 import Data.Int
 import Data.Maybe
-import Data.Typeable
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
@@ -43,45 +33,16 @@ import Database.EventStore.Internal.Operation.ReadAllEventsOperation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
--- | Errors that could arise during a catch-up subscription. 'Text' value
---   represents the stream name.
-data CatchupError
-    = CatchupStreamDeleted Text
-    | CatchupUnexpectedStreamStatus Text ReadStreamResult
-    | CatchupSubscriptionDropReason Text DropReason
-    deriving (Show, Typeable)
-
---------------------------------------------------------------------------------
-instance Exception CatchupError
-
---------------------------------------------------------------------------------
--- | Representing catch-up subscriptions.
-data Catchup
-    = Catchup
-      { catchupStream :: Text
-        -- ^ The name of the stream to which the subscription is subscribed.
-      , catchupChan :: Chan (Either CatchupError ResolvedEvent)
-      , catchupSubMVar :: MVar Subscription
-      , catchupUnsubscribe :: IO ()
-        -- ^ Asynchronously unsubscribes from the stream.
-      }
-
---------------------------------------------------------------------------------
--- | Awaits for the next 'ResolvedEvent'.
-catchupAwait :: Catchup -> IO (Either CatchupError ResolvedEvent)
-catchupAwait c = readChan $ catchupChan c
-
---------------------------------------------------------------------------------
 defaultBatchSize :: Int32
 defaultBatchSize = 500
 
 --------------------------------------------------------------------------------
 catchupStart :: (Int32 -> Int32 -> IO (Async StreamEventsSlice))
-             -> IO (Async Subscription)
+             -> IO (Async (Subscription Regular))
              -> Text
              -> Maybe Int32
              -> Maybe Int32
-             -> IO Catchup
+             -> IO (Subscription Catchup)
 catchupStart evt_fwd get_sub stream_id batch_size_m last_m = do
     chan <- newChan
     var  <- newEmptyMVar
@@ -101,24 +62,26 @@ catchupStart evt_fwd get_sub stream_id batch_size_m last_m = do
         putMVar var sub
         keepAwaitingSubEvent stream_id chan sub
 
-    let catchup = Catchup
-                  { catchupStream      = stream_id
-                  , catchupChan        = chan
-                  , catchupSubMVar     = var
-                  , catchupUnsubscribe = do
+    let catchup = Catchup var
+        sub     = Subscription
+                  { subStreamId = stream_id
+                  , subNextEvent = readChan chan
+                  , subIsSubscribedToAll = stream_id == ""
+                  , subUnsubscribe = do
                       cancel as
                       sub_m <- tryTakeMVar var
                       traverse_ subUnsubscribe sub_m
+                  , _subInternal = catchup
                   }
 
-    return catchup
+    return sub
 
 --------------------------------------------------------------------------------
 catchupAllStart :: ( Position -> Int32 -> IO (Async AllEventsSlice))
-                -> IO (Async Subscription)
+                -> IO (Async (Subscription Regular))
                 -> Maybe Position
                 -> Maybe Int32
-                -> IO Catchup
+                -> IO (Subscription Catchup)
 catchupAllStart evt_fwd get_sub last_chk_pt_m batch_size_m = do
     chan <- newChan
     var  <- newEmptyMVar
@@ -137,17 +100,19 @@ catchupAllStart evt_fwd get_sub last_chk_pt_m batch_size_m = do
         putMVar var sub
         keepAwaitingSubEvent "" chan sub
 
-    let catchup = Catchup
-                  { catchupStream      = ""
-                  , catchupChan        = chan
-                  , catchupSubMVar     = var
-                  , catchupUnsubscribe = do
-                      cancel as
-                      sub_m <- tryTakeMVar var
-                      traverse_ subUnsubscribe sub_m
-                  }
+    let catchup = Catchup var
+        sub = Subscription
+              { subStreamId = ""
+              , subNextEvent = readChan chan
+              , subIsSubscribedToAll = True
+              , subUnsubscribe = do
+                  cancel as
+                  sub_m <- tryTakeMVar var
+                  traverse_ subUnsubscribe sub_m
+              , _subInternal = catchup
+              }
 
-    return catchup
+    return sub
 
 --------------------------------------------------------------------------------
 readEventsTill :: (Int32 -> Int32 -> IO (Async StreamEventsSlice))
@@ -208,10 +173,10 @@ readAllTill evts_fwd proc_evt start batch_size =
 --------------------------------------------------------------------------------
 keepAwaitingSubEvent :: Text
                      -> Chan (Either CatchupError ResolvedEvent)
-                     -> Subscription
+                     -> Subscription Regular
                      -> IO ()
 keepAwaitingSubEvent stream_id chan sub = forever $ do
-    evt_e <- subAwait sub
+    evt_e <- subNextEvent sub
     case evt_e of
         Right evt -> writeChan chan (Right evt)
         Left r    -> do
@@ -219,17 +184,3 @@ keepAwaitingSubEvent stream_id chan sub = forever $ do
 
             writeChan chan (Left e)
             throwIO e
-
---------------------------------------------------------------------------------
--- | Waits until 'Catchup' subscription catch-up its stream.
-waitTillCatchup :: Catchup -> IO ()
-waitTillCatchup c = do
-    _ <- readMVar $ catchupSubMVar c
-    return ()
-
---------------------------------------------------------------------------------
--- | Non blocking version of `waitTillCatchup`.
-hasCaughtUp :: Catchup -> IO Bool
-hasCaughtUp c = do
-    res <- tryReadMVar $ catchupSubMVar c
-    return $ isJust res
