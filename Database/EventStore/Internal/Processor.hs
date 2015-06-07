@@ -15,16 +15,6 @@ module Database.EventStore.Internal.Processor
     ( ConnectionException(..)
     , InternalException(..)
     , Processor(..)
-    , DropReason(..)
-    , NewSubscriptionCB
-    , Subscription
-    , subAwait
-    , subId
-    , subStream
-    , subResolveLinkTos
-    , subLastCommitPos
-    , subLastEventNumber
-    , subUnsubscribe
     , newProcessor
     ) where
 
@@ -32,11 +22,13 @@ module Database.EventStore.Internal.Processor
 import Control.Concurrent
 import Control.Exception
 import Data.Functor (void)
+import Data.Int
 import Data.Monoid ((<>))
 import Data.Word
 import Text.Printf
 
 --------------------------------------------------------------------------------
+import Data.Text (Text)
 import Data.UUID
 import FRP.Sodium
 import Network
@@ -59,7 +51,29 @@ data Processor
       { processorConnect        :: HostName -> Int -> IO ()
       , processorShutdown       :: IO ()
       , processorNewOperation   :: OperationParams -> IO ()
-      , processorNewSubcription :: NewSubscriptionCB
+      , processorNewSubcription :: (Subscription Regular -> IO ())
+                                -> Text
+                                -> Bool
+                                -> IO ()
+      , processorCreatePersistent :: (Either OperationException () -> IO ())
+                                  -> Text
+                                  -> Text
+                                  -> PersistentSubscriptionSettings
+                                  -> IO ()
+      , processorUpdatePersistent :: (Either OperationException () -> IO ())
+                                  -> Text
+                                  -> Text
+                                  -> PersistentSubscriptionSettings
+                                  -> IO ()
+      , processorDeletePersistent :: (Either OperationException () -> IO ())
+                                  -> Text
+                                  -> Text
+                                  -> IO ()
+      , processorConnectPersist :: (Subscription Persistent -> IO ())
+                                -> Text
+                                -> Text
+                                -> Int32
+                                -> IO ()
       }
 
 --------------------------------------------------------------------------------
@@ -108,7 +122,7 @@ network sett chan = do
                                     (pushReconnect Reconnect)
                                     onReceived
 
-    push_sub <- subscriptionNetwork sett pushSend onReceived
+    runSubCmd <- subscriptionNetwork sett pushSend onReceived
 
     let stateE = fmap connected  onConnected    <>
                  fmap reconnected onReconnected <>
@@ -159,13 +173,28 @@ network sett chan = do
 
     let processor =
             Processor
-            { processorConnect        = \h p -> void $ forkIO $
-                                                sync $ pushConnect $ Connect h p
-            , processorShutdown       = void $ forkIO $ sync $
+            { processorConnect = \h p -> void $ forkIO $
+                                         sync $ pushConnect $ Connect h p
+            , processorShutdown = void $ forkIO $ sync $
                                         pushCleanup Cleanup
-            , processorNewOperation   = \o -> void $ forkIO $
-                                              sync $ push_new_op o
-            , processorNewSubcription = push_sub
+            , processorNewOperation = \o -> void $ forkIO $
+                                            sync $ push_new_op o
+            , processorNewSubcription = \cb stream tos ->
+                runSubCmd (SubscribeTo (RegularSub stream tos) cb)
+            , processorCreatePersistent = \cb group stream stgs ->
+                runSubCmd $ SubmitPersistAction group
+                                                stream
+                                                (PersistCreate stgs)
+                                                cb
+            , processorUpdatePersistent = \cb group stream stgs ->
+                runSubCmd $ SubmitPersistAction group
+                                                stream
+                                                (PersistUpdate stgs)
+                                                cb
+            , processorDeletePersistent = \cb group stream ->
+                runSubCmd $ SubmitPersistAction group stream PersistDelete cb
+            , processorConnectPersist = \cb group stream buf ->
+                runSubCmd (SubscribeTo (PersistentSub group stream buf) cb)
             }
 
     _ <- listen onSend (writeChan chan)

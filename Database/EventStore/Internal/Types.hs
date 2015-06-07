@@ -68,6 +68,7 @@ data OperationException
     | InvalidServerResponse Word8 Word8         -- ^ Expected, Found
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason
+    | InvalidOperation Text
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
@@ -86,7 +87,7 @@ data Event
       { eventType :: !Text
       , eventId   :: !(Maybe UUID)
       , eventData :: !EventData
-      }
+      } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 createEvent :: Text       -- ^ Event type
@@ -99,6 +100,7 @@ createEvent = Event
 -- | Holds event data.
 data EventData
     = Json A.Value (Maybe A.Value)
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 eventDataType :: EventData -> Int32
@@ -143,7 +145,7 @@ data ExpectedVersion
     | NoStream
     | EmptyStream
     | Exact Int32
-    deriving Show
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 expVersionInt32 :: ExpectedVersion -> Int32
@@ -385,7 +387,7 @@ data Position
       { positionCommit  :: !Int64 -- ^ Commit position of the record
       , positionPrepare :: !Int64 -- ^ Prepare position of the record
       }
-    deriving Show
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- | Representing the start of the transaction file.
@@ -406,13 +408,13 @@ data WriteResult
       , writePosition :: !Position
         -- ^ 'Position' of the write.
       }
-    deriving Show
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- | Returned after deleting a stream. 'Position' of the write.
 newtype DeleteResult
     = DeleteResult { deleteStreamPosition :: Position }
-    deriving Show
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- | Represents a previously written event.
@@ -517,12 +519,17 @@ resolvedEventOriginalStreamId =
     fmap recordedEventStreamId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
+-- | The ID of the original event.
+resolvedEventOriginalId :: ResolvedEvent -> Maybe UUID
+resolvedEventOriginalId = fmap recordedEventId . resolvedEventOriginal
+
+--------------------------------------------------------------------------------
 -- | Represents the direction of read operation (both from $all an usual
 --   streams).
 data ReadDirection
     = Forward  -- ^ From beginning to end
     | Backward -- ^ From end to beginning
-    deriving Show
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- Transaction
@@ -567,7 +574,7 @@ data Credentials
       { credLogin    :: !ByteString
       , credPassword :: !ByteString
       }
-    deriving Show
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 credentials :: ByteString -- ^ Login
@@ -961,3 +968,80 @@ data StreamMetadataResult
     | DeletedStreamMetadataResult { streamMetaResultStream :: !Text }
       -- ^ When the stream is soft-deleted.
     deriving Show
+
+--------------------------------------------------------------------------------
+-- | System supported consumer strategies for use with persistent subscriptions.
+data SystemConsumerStrategy
+    = DispatchToSingle
+      -- ^ Distributes events to a single client until it is full. Then round
+      --   robin to the next client.
+    | RoundRobin
+      -- ^ Distribute events to each client in a round robin fashion.
+    deriving (Show, Eq)
+
+--------------------------------------------------------------------------------
+strategyText :: SystemConsumerStrategy -> Text
+strategyText DispatchToSingle = "DispatchToSingle"
+strategyText RoundRobin       = "RoundRobin"
+
+--------------------------------------------------------------------------------
+strategyFromText :: Text -> Maybe SystemConsumerStrategy
+strategyFromText "DispatchToSingle" = Just DispatchToSingle
+strategyFromText "RoundRobin"       = Just RoundRobin
+strategyFromText _                  = Nothing
+
+--------------------------------------------------------------------------------
+data PersistentSubscriptionSettings =
+    PersistentSubscriptionSettings
+    { psSettingsResolveLinkTos :: !Bool
+      -- ^ Whether or not the persistent subscription should resolve linkTo
+      --   events to their linked events.
+    , psSettingsStartFrom :: !Int32
+      -- ^ Where the subscription should start from (position).
+    , psSettingsExtraStats :: !Bool
+      -- ^ Whether or not in depth latency statistics should be tracked on this
+      --   subscription.
+    , psSettingsMsgTimeout :: !TimeSpan
+      -- ^ The amount of time after which a message should be considered to be
+      --   timeout and retried.
+    , psSettingsMaxRetryCount :: !Int32
+      -- ^ The maximum number of retries (due to timeout) before a message get
+      --   considered to be parked.
+    , psSettingsLiveBufSize :: !Int32
+      -- ^ The size of the buffer listening to live messages as they happen.
+    , psSettingsReadBatchSize :: !Int32
+      -- ^ The number of events read at a time when paging in history.
+    , psSettingsHistoryBufSize :: !Int32
+      -- ^ The number  of events to cache when paging through history.
+    , psSettingsCheckPointAfter :: !TimeSpan
+      -- ^ The amount of time to try checkpoint after.
+    , psSettingsMinCheckPointCount :: !Int32
+      -- ^ The minimum number of messages to checkpoint.
+    , psSettingsMaxCheckPointCount :: !Int32
+      -- ^ The maximum number of message to checkpoint. If this number is
+      --   reached, a checkpoint will be forced.
+    , psSettingsMaxSubsCount :: !Int32
+      -- ^ The maximum number of subscribers allowed.
+    , psSettingsNamedConsumerStrategy :: !SystemConsumerStrategy
+      -- ^ The strategy to use for distributing events to client consumers.
+    } deriving (Show, Eq)
+
+--------------------------------------------------------------------------------
+-- | System default persistent subscription settings.
+defaultPersistentSubscriptionSettings :: PersistentSubscriptionSettings
+defaultPersistentSubscriptionSettings =
+    PersistentSubscriptionSettings
+    { psSettingsResolveLinkTos        = False
+    , psSettingsStartFrom             = (-1)
+    , psSettingsExtraStats            = False
+    , psSettingsMsgTimeout            = timeSpanFromSeconds 30
+    , psSettingsMaxRetryCount         = 500
+    , psSettingsLiveBufSize           = 500
+    , psSettingsReadBatchSize         = 10
+    , psSettingsHistoryBufSize        = 20
+    , psSettingsCheckPointAfter       = timeSpanFromSeconds 2
+    , psSettingsMinCheckPointCount    = 10
+    , psSettingsMaxCheckPointCount    = 1000
+    , psSettingsMaxSubsCount          = 0
+    , psSettingsNamedConsumerStrategy = RoundRobin
+    }

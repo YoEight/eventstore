@@ -86,6 +86,11 @@ module Database.EventStore
     , timeSpanGetMinutes
     , timeSpanGetSeconds
     , timeSpanGetMillis
+    , timeSpanFromSeconds
+    , timeSpanFromMinutes
+    , timeSpanFromHours
+    , timeSpanFromDays
+    , timeSpanTotalMillis
       -- * Transaction
     , Transaction
     , transactionStart
@@ -94,26 +99,39 @@ module Database.EventStore
     , transactionSendEvents
       -- * Volatile Subscription
     , DropReason(..)
+    , Identifiable
     , Subscription
+    , NextEvent
+    , Regular
+    , Catchup
+    , Persistent
     , subscribe
     , subscribeToAll
-    , subAwait
+    , subNextEvent
     , subId
-    , subStream
+    , subStreamId
+    , subIsSubscribedToAll
     , subResolveLinkTos
     , subLastCommitPos
     , subLastEventNumber
     , subUnsubscribe
       -- * Catch-up Subscription
-    , Catchup
     , CatchupError(..)
     , subscribeFrom
     , subscribeToAllFrom
-    , catchupAwait
-    , catchupStream
-    , catchupUnsubscribe
     , waitTillCatchup
     , hasCaughtUp
+     -- * Persistent Subscription
+    , PersistentSubscriptionSettings(..)
+    , SystemConsumerStrategy(..)
+    , NakAction(..)
+    , notifyEventsProcessed
+    , notifyEventsFailed
+    , defaultPersistentSubscriptionSettings
+    , createPersistentSubscription
+    , updatePersistentSubscription
+    , deletePersistentSubscription
+    , connectToPersistentSubscription
      -- * Results
     , AllEventsSlice(..)
     , DeleteResult(..)
@@ -131,6 +149,7 @@ module Database.EventStore
     , eventResolved
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
+    , resolvedEventOriginalId
     , positionStart
     , positionEnd
       -- * Misc
@@ -155,19 +174,20 @@ import Data.Monoid ((<>))
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
 import Data.Aeson (decode)
-import Data.Text
+import Data.Text hiding (group)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Catchup
-import Database.EventStore.Internal.Processor
-import Database.EventStore.Internal.TimeSpan
-import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Manager.Subscription
 import Database.EventStore.Internal.Operation.DeleteStreamOperation
 import Database.EventStore.Internal.Operation.ReadAllEventsOperation
 import Database.EventStore.Internal.Operation.ReadEventOperation
 import Database.EventStore.Internal.Operation.ReadStreamEventsOperation
 import Database.EventStore.Internal.Operation.TransactionStartOperation
 import Database.EventStore.Internal.Operation.WriteEventsOperation
+import Database.EventStore.Internal.Processor
+import Database.EventStore.Internal.TimeSpan
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- Connection
@@ -372,7 +392,7 @@ readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
 subscribe :: Connection
           -> Text       -- ^ Stream name
           -> Bool       -- ^ Resolve Link Tos
-          -> IO (Async Subscription)
+          -> IO (Async (Subscription Regular))
 subscribe Connection{..} stream_id res_lnk_tos = do
     tmp <- newEmptyMVar
     processorNewSubcription conProcessor
@@ -385,7 +405,7 @@ subscribe Connection{..} stream_id res_lnk_tos = do
 -- | Subcribes to $all stream.
 subscribeToAll :: Connection
                -> Bool       -- ^ Resolve Link Tos
-               -> IO (Async Subscription)
+               -> IO (Async (Subscription Regular))
 subscribeToAll Connection{..} res_lnk_tos = do
     tmp <- newEmptyMVar
     processorNewSubcription conProcessor
@@ -404,7 +424,7 @@ subscribeFrom :: Connection
               -> Bool        -- ^ Resolve Link Tos
               -> Maybe Int32 -- ^ Last checkpoint
               -> Maybe Int32 -- ^ Batch size
-              -> IO Catchup
+              -> IO (Subscription Catchup)
 subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m = do
     catchupStart evts_fwd get_sub stream_id batch_m last_chk_pt
   where
@@ -419,7 +439,7 @@ subscribeToAllFrom :: Connection
                    -> Bool           -- ^ Resolve Link Tos
                    -> Maybe Position -- ^ Last checkpoint
                    -> Maybe Int32    -- ^ Batch size
-                   -> IO Catchup
+                   -> IO (Subscription Catchup)
 subscribeToAllFrom conn res_lnk_tos last_chk_pt batch_m = do
     catchupAllStart evts_fwd get_sub last_chk_pt batch_m
   where
@@ -441,6 +461,7 @@ setStreamMetadata conn evt_stream exp_ver metadata =
     sendEvent conn (metaStreamOf evt_stream) exp_ver evt
 
 --------------------------------------------------------------------------------
+-- | Asynchronously gets the metadata of a stream.
 getStreamMetadata :: Connection -> Text -> IO (Async StreamMetadataResult)
 getStreamMetadata conn evt_stream = do
     as <- readEvent conn (metaStreamOf evt_stream) (-1) False
@@ -474,6 +495,54 @@ extractStreamMetadataResult stream rres =
   where
     action     = readResultResolvedEvent rres >>= resolvedEventOriginal
     evt_number = readResultEventNumber rres
+
+--------------------------------------------------------------------------------
+-- | Asynchronously create a persistent subscription group on a stream.
+createPersistentSubscription :: Connection
+                             -> Text
+                             -> Text
+                             -> PersistentSubscriptionSettings
+                             -> IO (Async ())
+createPersistentSubscription Connection{..} group stream sett = do
+    (as, mvar) <- createAsync
+    processorCreatePersistent conProcessor (putMVar mvar) group stream sett
+    return as
+
+--------------------------------------------------------------------------------
+-- | Asynchronously update a persistent subscription group on a stream.
+updatePersistentSubscription :: Connection
+                             -> Text
+                             -> Text
+                             -> PersistentSubscriptionSettings
+                             -> IO (Async ())
+updatePersistentSubscription Connection{..} group stream sett = do
+    (as, mvar) <- createAsync
+    processorUpdatePersistent conProcessor (putMVar mvar) group stream sett
+    return as
+
+--------------------------------------------------------------------------------
+-- | Asynchronously delete a persistent subscription group on a stream.
+deletePersistentSubscription :: Connection
+                             -> Text
+                             -> Text
+                             -> IO (Async ())
+deletePersistentSubscription Connection{..} group stream = do
+    (as, mvar) <- createAsync
+    processorDeletePersistent conProcessor (putMVar mvar) group stream
+    return as
+
+--------------------------------------------------------------------------------
+-- | Asynchronously connect to a persistent subscription given a group on a
+--   stream.
+connectToPersistentSubscription :: Connection
+                                -> Text
+                                -> Text
+                                -> Int32
+                                -> IO (Async (Subscription Persistent))
+connectToPersistentSubscription Connection{..} group stream bufSize = do
+    mvar <- newEmptyMVar
+    processorConnectPersist conProcessor (putMVar mvar) group stream bufSize
+    async $ readMVar mvar
 
 --------------------------------------------------------------------------------
 createAsync :: IO (Async a, MVar (OperationExceptional a))

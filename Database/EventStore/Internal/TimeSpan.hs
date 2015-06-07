@@ -23,6 +23,11 @@ module Database.EventStore.Internal.TimeSpan
     , timeSpanGetMinutes
     , timeSpanGetSeconds
     , timeSpanGetMillis
+    , timeSpanFromSeconds
+    , timeSpanFromMinutes
+    , timeSpanFromHours
+    , timeSpanFromDays
+    , timeSpanTotalMillis
     ) where
 
 --------------------------------------------------------------------------------
@@ -106,6 +111,22 @@ parseTimeSpan = do
         Positive -> return ts
 
 --------------------------------------------------------------------------------
+millisPerSecond :: Int64
+millisPerSecond = 1000
+
+--------------------------------------------------------------------------------
+millisPerMinute :: Int64
+millisPerMinute = millisPerSecond * 60
+
+--------------------------------------------------------------------------------
+millisPerHour :: Int64
+millisPerHour = millisPerMinute * 60
+
+--------------------------------------------------------------------------------
+millisPerDay :: Int64
+millisPerDay = millisPerHour * 24
+
+--------------------------------------------------------------------------------
 ticksPerMillisecond :: Int64
 ticksPerMillisecond = 10000
 
@@ -124,6 +145,24 @@ ticksPerHour = ticksPerMinute * 60
 --------------------------------------------------------------------------------
 ticksPerDay :: Int64
 ticksPerDay = ticksPerHour * 24
+
+--------------------------------------------------------------------------------
+millisPerTick :: Double
+millisPerTick = 1 / (realToFrac ticksPerMillisecond)
+
+--------------------------------------------------------------------------------
+maxMillis :: Int64
+maxMillis =
+    truncate
+    (((realToFrac (maxBound :: Int64) :: Double)
+      / realToFrac ticksPerMillisecond) :: Double)
+
+--------------------------------------------------------------------------------
+minMillis :: Int64
+minMillis =
+    truncate
+    (((realToFrac (minBound :: Int64) :: Double)
+      / realToFrac ticksPerMillisecond) :: Double)
 
 --------------------------------------------------------------------------------
 timeSpanTicks :: Int64 -> TimeSpan
@@ -188,6 +227,30 @@ timeSpanGetMillis :: TimeSpan -> Int64
 timeSpanGetMillis (TimeSpan i) = mod (truncate $
                                  (realToFrac i :: Double) /
                                  (realToFrac ticksPerMillisecond)) 1000
+
+--------------------------------------------------------------------------------
+timeSpanFromSeconds :: Double -> TimeSpan
+timeSpanFromSeconds i = interval i millisPerSecond
+
+--------------------------------------------------------------------------------
+timeSpanFromMinutes :: Double -> TimeSpan
+timeSpanFromMinutes i = interval i millisPerMinute
+
+--------------------------------------------------------------------------------
+timeSpanFromHours :: Double -> TimeSpan
+timeSpanFromHours i = interval i millisPerHour
+
+--------------------------------------------------------------------------------
+timeSpanFromDays :: Double -> TimeSpan
+timeSpanFromDays i = interval i millisPerDay
+
+--------------------------------------------------------------------------------
+timeSpanTotalMillis :: TimeSpan -> Int64
+timeSpanTotalMillis (TimeSpan i) =
+    let tmp = (realToFrac i) * millisPerTick in
+    if tmp > (realToFrac maxMillis) then maxMillis
+    else if tmp < (realToFrac minMillis) then minMillis
+         else truncate tmp
 
 --------------------------------------------------------------------------------
 data FormatLiteral = Positive | Negative
@@ -255,3 +318,11 @@ timeSpanBuilder (TimeSpan ticks) =
         if fraction /= 0
         then fromText "." <> fromString (padded 7 '0' $ show fraction)
         else mempty
+
+--------------------------------------------------------------------------------
+interval :: Double -> Int64 -> TimeSpan
+interval value scale =
+    let tmp    = value * (realToFrac scale)
+        millis = tmp * (if value >= 0 then 0.5 else (-0.5))
+        res    = truncate (millis * (realToFrac ticksPerMillisecond)) in
+    TimeSpan res

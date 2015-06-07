@@ -1,3 +1,10 @@
+0.8.0.0
+-------
+* Implement competing consumers.
+* Expose an uniform API among all kind of subscriptions.
+* Rewrite internal subscription management.
+* Add missing `Eq` or `Show` instances for exposed datatypes.
+
 0.7.2.1
 -------
 * Fix compilation issue
