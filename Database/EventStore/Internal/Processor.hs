@@ -14,7 +14,7 @@
 module Database.EventStore.Internal.Processor
     ( ConnectionException(..)
     , InternalException(..)
-    , Processor(..)
+    , Cmd(..)
     , newProcessor
     ) where
 
@@ -46,35 +46,22 @@ import Database.EventStore.Internal.Writer
 --------------------------------------------------------------------------------
 -- Processor
 --------------------------------------------------------------------------------
-data Processor
-    = Processor
-      { processorConnect        :: HostName -> Int -> IO ()
-      , processorShutdown       :: IO ()
-      , processorNewOperation   :: OperationParams -> IO ()
-      , processorNewSubcription :: (Subscription Regular -> IO ())
-                                -> Text
-                                -> Bool
-                                -> IO ()
-      , processorCreatePersistent :: (Either OperationException () -> IO ())
-                                  -> Text
-                                  -> Text
-                                  -> PersistentSubscriptionSettings
-                                  -> IO ()
-      , processorUpdatePersistent :: (Either OperationException () -> IO ())
-                                  -> Text
-                                  -> Text
-                                  -> PersistentSubscriptionSettings
-                                  -> IO ()
-      , processorDeletePersistent :: (Either OperationException () -> IO ())
-                                  -> Text
-                                  -> Text
-                                  -> IO ()
-      , processorConnectPersist :: (Subscription Persistent -> IO ())
-                                -> Text
-                                -> Text
-                                -> Int32
-                                -> IO ()
-      }
+type Result a  = a -> IO ()
+type EResult a = Result (Either OperationException a)
+
+--------------------------------------------------------------------------------
+data Cmd
+    = DoConnect HostName Int
+    | DoShutdown
+    | NewOperation OperationParams
+    | NewSub Text Bool (Result (Subscription Regular))
+    | CreatePersist Text Text PersistentSubscriptionSettings (EResult ())
+    | UpdatePersist Text Text PersistentSubscriptionSettings (EResult ())
+    | DeletePersist Text Text (EResult ())
+    | ConnectPersist Text Text Int32 (Result (Subscription Persistent))
+
+--------------------------------------------------------------------------------
+type Processor = Cmd -> IO ()
 
 --------------------------------------------------------------------------------
 newProcessor :: Settings -> IO Processor
@@ -171,35 +158,26 @@ network sett chan = do
     _ <- listen onlyHeartbeats $ \pkg ->
              push_send_io $ heartbeatResponsePackage (packageCorrelation pkg)
 
-    let processor =
-            Processor
-            { processorConnect = \h p -> void $ forkIO $
-                                         sync $ pushConnect $ Connect h p
-            , processorShutdown = void $ forkIO $ sync $
-                                        pushCleanup Cleanup
-            , processorNewOperation = \o -> void $ forkIO $
-                                            sync $ push_new_op o
-            , processorNewSubcription = \cb stream tos ->
-                runSubCmd (SubscribeTo (RegularSub stream tos) cb)
-            , processorCreatePersistent = \cb group stream stgs ->
-                runSubCmd $ SubmitPersistAction group
-                                                stream
-                                                (PersistCreate stgs)
-                                                cb
-            , processorUpdatePersistent = \cb group stream stgs ->
-                runSubCmd $ SubmitPersistAction group
-                                                stream
-                                                (PersistUpdate stgs)
-                                                cb
-            , processorDeletePersistent = \cb group stream ->
-                runSubCmd $ SubmitPersistAction group stream PersistDelete cb
-            , processorConnectPersist = \cb group stream buf ->
-                runSubCmd (SubscribeTo (PersistentSub group stream buf) cb)
-            }
+    let runCmd (DoConnect h p) =
+            void $ forkIO $ sync $ pushConnect $ Connect h p
+        runCmd DoShutdown =
+            void $ forkIO $ sync $ pushCleanup Cleanup
+        runCmd (NewOperation o) =
+            void $ forkIO $ sync $ push_new_op o
+        runCmd (NewSub stream tos cb) =
+            runSubCmd (SubscribeTo (RegularSub stream tos) cb)
+        runCmd (CreatePersist g s stgs cb) =
+            runSubCmd (SubmitPersistAction g s (PersistCreate stgs) cb)
+        runCmd (UpdatePersist g s stgs cb) =
+            runSubCmd (SubmitPersistAction g s (PersistUpdate stgs) cb)
+        runCmd (DeletePersist g s cb) =
+            runSubCmd (SubmitPersistAction g s PersistDelete cb)
+        runCmd (ConnectPersist g s b cb) =
+            runSubCmd (SubscribeTo (PersistentSub g s b) cb)
 
     _ <- listen onSend (writeChan chan)
 
-    return processor
+    return runCmd
 
 --------------------------------------------------------------------------------
 -- Observer

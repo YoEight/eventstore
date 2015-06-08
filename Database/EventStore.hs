@@ -197,8 +197,8 @@ import Database.EventStore.Internal.Types
 -- | Represents a connection to a single EventStore node.
 data Connection
     = Connection
-      { conProcessor :: Processor
-      , conSettings  :: Settings
+      { _runCmd   :: Cmd -> IO ()
+      , _settings :: Settings
       }
 
 --------------------------------------------------------------------------------
@@ -220,14 +220,14 @@ connect :: Settings
         -> IO Connection
 connect settings host port = do
     processor <- newProcessor settings
-    processorConnect processor host port
+    processor (DoConnect host port)
 
     return $ Connection processor settings
 
 --------------------------------------------------------------------------------
 -- | Asynchronously closes the 'Connection'.
 shutdown :: Connection -> IO ()
-shutdown Connection{..} = processorShutdown conProcessor
+shutdown Connection{..} = _runCmd DoShutdown
 
 --------------------------------------------------------------------------------
 -- | Sends a single 'Event' to given stream.
@@ -249,9 +249,9 @@ sendEvents :: Connection
 sendEvents Connection{..} evt_stream exp_ver evts = do
     (as, mvar) <- createAsync
 
-    let op = writeEventsOperation conSettings mvar evt_stream exp_ver evts
+    let op = writeEventsOperation _settings mvar evt_stream exp_ver evts
 
-    processorNewOperation conProcessor op
+    _runCmd (NewOperation op)
     return as
 
 --------------------------------------------------------------------------------
@@ -264,9 +264,9 @@ deleteStream :: Connection
 deleteStream Connection{..} evt_stream exp_ver hard_del = do
     (as, mvar) <- createAsync
 
-    let op = deleteStreamOperation conSettings mvar evt_stream exp_ver hard_del
+    let op = deleteStreamOperation _settings mvar evt_stream exp_ver hard_del
 
-    processorNewOperation conProcessor op
+    _runCmd (NewOperation op)
     return as
 
 --------------------------------------------------------------------------------
@@ -278,13 +278,13 @@ transactionStart :: Connection
 transactionStart Connection{..} evt_stream exp_ver = do
     (as, mvar) <- createAsync
 
-    let op = transactionStartOperation conSettings
-                                       conProcessor
+    let op = transactionStartOperation _settings
+                                       _runCmd
                                        mvar
                                        evt_stream
                                        exp_ver
 
-    processorNewOperation conProcessor op
+    _runCmd (NewOperation op)
     return as
 
 --------------------------------------------------------------------------------
@@ -297,9 +297,9 @@ readEvent :: Connection
 readEvent Connection{..} stream_id evt_num res_link_tos = do
     (as, mvar) <- createAsync
 
-    let op = readEventOperation conSettings mvar stream_id evt_num res_link_tos
+    let op = readEventOperation _settings mvar stream_id evt_num res_link_tos
 
-    processorNewOperation conProcessor op
+    _runCmd (NewOperation op)
     return as
 
 --------------------------------------------------------------------------------
@@ -335,7 +335,7 @@ readStreamEventsCommon :: Connection
 readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
     (as, mvar) <- createAsync
 
-    let op = readStreamEventsOperation conSettings
+    let op = readStreamEventsOperation _settings
                                        dir
                                        mvar
                                        stream_id
@@ -343,7 +343,7 @@ readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
                                        cnt
                                        res_link_tos
 
-    processorNewOperation conProcessor op
+    _runCmd (NewOperation op)
     return as
 
 --------------------------------------------------------------------------------
@@ -376,7 +376,7 @@ readAllEventsCommon :: Connection
 readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
     (as, mvar) <- createAsync
 
-    let op = readAllEventsOperation conSettings
+    let op = readAllEventsOperation _settings
                                     dir
                                     mvar
                                     c_pos
@@ -384,7 +384,7 @@ readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
                                     max_c
                                     res_link_tos
 
-    processorNewOperation conProcessor op
+    _runCmd (NewOperation op)
     return as
   where
     Position c_pos p_pos = pos
@@ -397,10 +397,7 @@ subscribe :: Connection
           -> IO (Async (Subscription Regular))
 subscribe Connection{..} stream_id res_lnk_tos = do
     tmp <- newEmptyMVar
-    processorNewSubcription conProcessor
-                            (putMVar tmp)
-                            stream_id
-                            res_lnk_tos
+    _runCmd (NewSub stream_id res_lnk_tos (putMVar tmp))
     async $ readMVar tmp
 
 --------------------------------------------------------------------------------
@@ -410,10 +407,7 @@ subscribeToAll :: Connection
                -> IO (Async (Subscription Regular))
 subscribeToAll Connection{..} res_lnk_tos = do
     tmp <- newEmptyMVar
-    processorNewSubcription conProcessor
-                            (putMVar tmp)
-                            ""
-                            res_lnk_tos
+    _runCmd (NewSub "" res_lnk_tos (putMVar tmp))
     async $ readMVar tmp
 
 --------------------------------------------------------------------------------
@@ -507,7 +501,7 @@ createPersistentSubscription :: Connection
                              -> IO (Async ())
 createPersistentSubscription Connection{..} group stream sett = do
     (as, mvar) <- createAsync
-    processorCreatePersistent conProcessor (putMVar mvar) group stream sett
+    _runCmd (CreatePersist group stream sett (putMVar mvar))
     return as
 
 --------------------------------------------------------------------------------
@@ -519,7 +513,7 @@ updatePersistentSubscription :: Connection
                              -> IO (Async ())
 updatePersistentSubscription Connection{..} group stream sett = do
     (as, mvar) <- createAsync
-    processorUpdatePersistent conProcessor (putMVar mvar) group stream sett
+    _runCmd (UpdatePersist group stream sett (putMVar mvar))
     return as
 
 --------------------------------------------------------------------------------
@@ -530,7 +524,7 @@ deletePersistentSubscription :: Connection
                              -> IO (Async ())
 deletePersistentSubscription Connection{..} group stream = do
     (as, mvar) <- createAsync
-    processorDeletePersistent conProcessor (putMVar mvar) group stream
+    _runCmd (DeletePersist group stream (putMVar mvar))
     return as
 
 --------------------------------------------------------------------------------
@@ -543,7 +537,7 @@ connectToPersistentSubscription :: Connection
                                 -> IO (Async (Subscription Persistent))
 connectToPersistentSubscription Connection{..} group stream bufSize = do
     mvar <- newEmptyMVar
-    processorConnectPersist conProcessor (putMVar mvar) group stream bufSize
+    _runCmd (ConnectPersist group stream bufSize (putMVar mvar))
     async $ readMVar mvar
 
 --------------------------------------------------------------------------------

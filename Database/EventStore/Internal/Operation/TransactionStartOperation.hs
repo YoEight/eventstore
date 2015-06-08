@@ -35,14 +35,14 @@ import Database.EventStore.Internal.Types
 data TransactionEnv
     = TransactionEnv
       { _transSettings        :: Settings
-      , _transProcessor       :: Processor
+      , _transProcessor       :: Cmd -> IO ()
       , _transStreamId        :: Text
       , _transExpectedVersion :: ExpectedVersion
       }
 
 --------------------------------------------------------------------------------
 transactionStartOperation :: Settings
-                          -> Processor
+                          -> (Cmd -> IO ())
                           -> MVar (OperationExceptional Transaction)
                           -> Text
                           -> ExpectedVersion
@@ -126,7 +126,7 @@ createTransaction env@TransactionEnv{..} trans_id = trans
 
                   let op = transactionCommitOperation env trans_id mvar
 
-                  processorNewOperation _transProcessor op
+                  _transProcessor (NewOperation op)
                   return as
 
             , transactionSendEvents = \evts -> do
@@ -134,7 +134,7 @@ createTransaction env@TransactionEnv{..} trans_id = trans
 
                   let op = transactionWriteOperation env trans_id mvar evts
 
-                  processorNewOperation _transProcessor op
+                  _transProcessor (NewOperation op)
                   return as
 
             , transactionRollback = return ()
