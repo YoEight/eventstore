@@ -692,6 +692,25 @@ data StreamMetadata
       } deriving Show
 
 --------------------------------------------------------------------------------
+-- | Gets a custom property value from metadata.
+streamMetadataGetCustomPropertyValue :: StreamMetadata -> Text -> Maybe A.Value
+streamMetadataGetCustomPropertyValue s k = H.lookup k obj
+  where
+    obj = streamMetadataCustom s
+
+---------------------------------------------------------------------------------
+-- | Get a custom property value from metadata.
+streamMetadataGetCustomProperty :: A.FromJSON a
+                                => StreamMetadata
+                                -> Text
+                                -> Maybe a
+streamMetadataGetCustomProperty s k = do
+    v <- streamMetadataGetCustomPropertyValue s k
+    case A.fromJSON v of
+        A.Error _   -> Nothing
+        A.Success a -> return a
+
+-------------------------------------------------------------------------------
 instance A.FromJSON StreamMetadata where
     parseJSON = parseStreamMetadata
 
