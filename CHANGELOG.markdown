@@ -4,7 +4,8 @@
 * Expose an uniform API among all kind of subscriptions.
 * Rewrite internal subscription management.
 * Add missing `Eq` or `Show` instances for exposed datatypes.
-* Add `streamMetadataCustomPropertyValue` and `streamMetadataCustomProperty`
+* Add `streamMetadataCustomPropertyValue` and `streamMetadataCustomProperty`.
+* Add logging capability.
 
 0.7.2.1
 -------
