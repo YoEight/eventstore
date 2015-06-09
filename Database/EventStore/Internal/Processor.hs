@@ -25,7 +25,6 @@ import Data.Functor (void)
 import Data.Int
 import Data.Monoid ((<>))
 import Data.Word
-import Text.Printf
 
 --------------------------------------------------------------------------------
 import Data.Text (Text)
@@ -42,6 +41,7 @@ import Database.EventStore.Internal.Reader
 import Database.EventStore.Internal.Types hiding (Event, newEvent)
 import Database.EventStore.Internal.Util.Sodium
 import Database.EventStore.Internal.Writer
+import Database.EventStore.Logging (Log(..), InfoMessage (Disconnected))
 
 --------------------------------------------------------------------------------
 -- Processor
@@ -207,13 +207,13 @@ connection :: Settings
            -> IO ()
 connection sett chan push_pkg push_con push_reco host port = do
     conn <- newConnection sett host port
-    rid  <- forkFinally (readerThread push_pkg conn) (recovering push_reco)
+    rid  <- forkFinally (readerThread sett push_pkg conn) (recovering push_reco)
     wid  <- forkFinally (writerThread chan conn) (recovering push_reco)
     push_con (connUUID conn) $ do
         throwTo rid Stopped
         throwTo wid Stopped
         connClose conn
-        printf "Disconnected %s\n" (toString $ connUUID conn)
+        _settingsLog sett (Info $ Disconnected $ connUUID conn)
 
 --------------------------------------------------------------------------------
 recovering :: IO () -> Either SomeException () -> IO ()

@@ -23,20 +23,19 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Types
+import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
-readerThread :: (Package -> IO ()) -> Connection -> IO ()
-readerThread push_p c = forever $ do
+readerThread :: Settings -> (Package -> IO ()) -> Connection -> IO ()
+readerThread sett push_p c = forever $ do
     header_bs <- connRecv c 4
     case runGet getLengthPrefix header_bs of
-        Left _
-            -> error "Wrong package framing"
-        Right length_prefix
-            -> connRecv c length_prefix >>= parsePackage
+        Left _              -> _settingsLog sett (Error WrongPackageFraming)
+        Right length_prefix -> connRecv c length_prefix >>= parsePackage
   where
     parsePackage bs =
         case runGet getPackage bs of
-            Left e     -> error $ printf "Parsing error [%s]" e
+            Left e     -> _settingsLog sett (Error $ PackageParsingError e)
             Right pack -> push_p pack
 
 --------------------------------------------------------------------------------
