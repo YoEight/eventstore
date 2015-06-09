@@ -55,7 +55,7 @@ source-repository head
 library
   -- Modules exported by the library.
   exposed-modules: Database.EventStore
-
+                   Database.EventStore.Logging
   -- Modules included in this library but not exported.
   other-modules:   Database.EventStore.Catchup
                    Database.EventStore.Internal.Connection

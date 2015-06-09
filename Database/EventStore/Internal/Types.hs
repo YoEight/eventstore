@@ -46,6 +46,7 @@ import           Data.UUID (UUID, fromByteString, toByteString)
 import           System.Random
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Logging
 import Database.EventStore.Internal.TimeSpan
 
 --------------------------------------------------------------------------------
@@ -624,6 +625,7 @@ data Settings
       , s_credentials          :: Maybe Credentials
       , s_retry                :: Retry
       , s_reconnect_delay_secs :: Int -- ^ In seconds
+      , s_logger               :: Maybe (Log -> IO ())
       }
 
 --------------------------------------------------------------------------------
@@ -636,7 +638,15 @@ defaultSettings = Settings
                   , s_credentials          = Nothing
                   , s_retry                = atMost 3
                   , s_reconnect_delay_secs = 3
+                  , s_logger               = Nothing
                   }
+
+--------------------------------------------------------------------------------
+_settingsLog :: Settings -> Log -> IO ()
+_settingsLog Settings{..} l =
+    case s_logger of
+        Just k -> k l
+        _      -> return ()
 
 --------------------------------------------------------------------------------
 -- | Millisecond timespan
