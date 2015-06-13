@@ -204,15 +204,15 @@ data Connection
 --------------------------------------------------------------------------------
 -- | Creates a new 'Connection' to a single node. It maintains a full duplex
 --   connection to the EventStore. An EventStore 'Connection' operates quite
---   differently than say a SQL connection. Normally when you use a SQL
+--   differently than say a SQL connection. Normally when you use an EventStore
 --   connection you want to keep the connection open for a much longer of time
 --   than when you use a SQL connection.
 --
---   Another difference  is that with the EventStore 'Connection' all operation
+--   Another difference  is that with the EventStore 'Connection' all operations
 --   are handled in a full async manner (even if you call the synchronous
 --   behaviors). Many threads can use an EvenStore 'Connection' at the same time
 --   or a single thread can make many asynchronous requests. To get the most
---   performance out of the connection it is generally recommend to use it in
+--   performance out of the connection it is generally recommended to use it in
 --   this way.
 connect :: Settings
         -> String   -- ^ HostName

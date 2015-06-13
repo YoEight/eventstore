@@ -1005,7 +1005,7 @@ data SystemConsumerStrategy
       -- ^ Distributes events to a single client until it is full. Then round
       --   robin to the next client.
     | RoundRobin
-      -- ^ Distribute events to each client in a round robin fashion.
+      -- ^ Distributes events to each client in a round robin fashion.
     deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
