@@ -113,13 +113,14 @@ eventMetadataType _ = 0
 
 --------------------------------------------------------------------------------
 -- | Creates a event using JSON format
-withJson :: A.Value -> EventData
-withJson value = Json value Nothing
+withJson :: ToJSON a => a -> EventData
+withJson value = Json (toJSON value) Nothing
 
 --------------------------------------------------------------------------------
 -- | Create a event with metadata using JSON format
-withJsonAndMetadata :: A.Value -> A.Value -> EventData
-withJsonAndMetadata value metadata = Json value (Just metadata)
+withJsonAndMetadata :: (ToJSON a, ToJSON b) => a -> b -> EventData
+withJsonAndMetadata value metadata =
+    Json (toJSON value) (Just $ toJSON metadata)
 
 --------------------------------------------------------------------------------
 eventDataBytes :: EventData -> ByteString
