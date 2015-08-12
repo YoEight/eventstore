@@ -35,7 +35,7 @@ import Network
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Manager.Operation
-import Database.EventStore.Internal.Manager.Subscription
+import Database.EventStore.Internal.Manager.Subscription hiding (Connect, ConnectPersist)
 import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Reader
 import Database.EventStore.Internal.Types hiding (Event, newEvent)

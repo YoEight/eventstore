@@ -180,7 +180,8 @@ import Data.Text hiding (group)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Catchup
-import Database.EventStore.Internal.Manager.Subscription
+import Database.EventStore.Internal.Manager.Subscription hiding (ConnectPersist)
+import Database.EventStore.Internal.Manager.Subscription.Message
 import Database.EventStore.Internal.Operation.DeleteStreamOperation
 import Database.EventStore.Internal.Operation.ReadAllEventsOperation
 import Database.EventStore.Internal.Operation.ReadEventOperation
