@@ -207,123 +207,123 @@ newtype Model = Model { _unM :: forall a m. Request m a -> a }
 
 --------------------------------------------------------------------------------
 newModel :: Model
-newModel = Model $ _modelHandle emptyState
+newModel = Model $ modelHandle emptyState
 
 --------------------------------------------------------------------------------
 runModel :: Request m a -> Model -> a
 runModel req (Model k) = k req
 
 --------------------------------------------------------------------------------
-_modelHandle :: State -> Request m a -> a
-_modelHandle s (Execute e) =
+modelHandle :: State -> Request m a -> a
+modelHandle s (Execute e) =
     case e of
         ConnectSub c u ->
             case c of
                 ConnectReg n tos ->
-                    _modelConnectReg s n tos u
+                    modelConnectReg s n tos u
                 ConnectPersist g n b ->
-                    _modelConnectPersist s g n b u
+                    modelConnectPersist s g n b u
         Confirm c ->
             case c of
                 ConfirmSub u tpe ->
                     case tpe of
                         RegularMeta lc le ->
-                            _modelConfirmRegSub s u lc le
+                            modelConfirmRegSub s u lc le
                         PersistMeta sb lc le ->
-                            _modelConfirmPersistSub s u sb lc le
+                            modelConfirmPersistSub s u sb lc le
                 ConfirmAction u ->
-                    _modelConfirmPersistAction s u
-        UnSub sid -> _modelUnsub s sid
-        PersistAction g n u a -> _modelPersistAction s g n u a
-_modelHandle s (Query q) =
+                    modelConfirmPersistAction s u
+        UnSub sid -> modelUnsub s sid
+        PersistAction g n u a -> modelPersistAction s g n u a
+modelHandle s (Query q) =
     case q of
-        SelectSub sid  -> _modelLookupSub s sid
-        SelectAction u -> _modelLookupAction s u
+        SelectSub sid  -> modelLookupSub s sid
+        SelectAction u -> modelLookupAction s u
 
 --------------------------------------------------------------------------------
-_modelLookupSub :: State -> Id t -> Maybe (Running t)
-_modelLookupSub State{..} (RegularId u) = regLookup regPrx u _stRunning
-_modelLookupSub State{..} (PersistId u) = regLookup pendPrx u _stRunning
+modelLookupSub :: State -> Id t -> Maybe (Running t)
+modelLookupSub State{..} (RegularId u) = regLookup regPrx u _stRunning
+modelLookupSub State{..} (PersistId u) = regLookup pendPrx u _stRunning
 
 --------------------------------------------------------------------------------
-_modelLookupAction :: State -> UUID -> Maybe PendingAction
-_modelLookupAction State{..} u = H.lookup u _stAction
+modelLookupAction :: State -> UUID -> Maybe PendingAction
+modelLookupAction State{..} u = H.lookup u _stAction
 
 --------------------------------------------------------------------------------
-_modelConnectReg :: State
+modelConnectReg :: State
                  -> Text -- ^ Stream name.
                  -> Bool -- ^ Resolve Link TOS.
                  -> UUID
                  -> Model
-_modelConnectReg s@State{..} stream tos uuid =
+modelConnectReg s@State{..} stream tos uuid =
     let m  = regInsert uuid (PendingReg stream tos) _stPending
         s' = s { _stPending = m } in
-    Model $ _modelHandle s'
+    Model $ modelHandle s'
 
 --------------------------------------------------------------------------------
-_modelConnectPersist :: State
+modelConnectPersist :: State
                      -> Text  -- ^ Group name.
                      -> Text  -- ^ Stream mame.
                      -> Int32 -- ^ Buffer size.
                      -> UUID
                      -> Model
-_modelConnectPersist s@State{..} g n b uuid =
+modelConnectPersist s@State{..} g n b uuid =
     let m  = regInsert uuid (PendPersist g n b) _stPending
         s' = s { _stPending = m } in
-    Model $ _modelHandle s'
+    Model $ modelHandle s'
 
 --------------------------------------------------------------------------------
-_modelConfirmRegSub :: State
+modelConfirmRegSub :: State
                     -> UUID
                     -> Int64       -- ^ Last commit position.
                     -> Maybe Int32 -- ^ Last event number.
                     -> Maybe (Id 'RegularType, Model)
-_modelConfirmRegSub s@State{..} uuid lc le = do
+modelConfirmRegSub s@State{..} uuid lc le = do
     PendingReg n tos <- regLookup regPrx uuid _stPending
     let r  = RunningReg n tos lc le
         m  = regInsert uuid r _stRunning
         s' = s { _stRunning = m  }
-    return (RegularId uuid,  Model $ _modelHandle s')
+    return (RegularId uuid,  Model $ modelHandle s')
 
 --------------------------------------------------------------------------------
-_modelConfirmPersistSub :: State
+modelConfirmPersistSub :: State
                         -> UUID
                         -> Text
                         -> Int64
                         -> Maybe Int32
                         -> Maybe (Id 'PersistType, Model)
-_modelConfirmPersistSub s@State{..} uuid sb lc le = do
+modelConfirmPersistSub s@State{..} uuid sb lc le = do
     PendPersist g n b <- regLookup pendPrx uuid _stPending
     let r  = RunningPersist g n b sb lc le
         m  = regInsert uuid r _stRunning
         s' = s { _stRunning = m }
-    return (PersistId uuid,  Model $ _modelHandle s')
+    return (PersistId uuid,  Model $ modelHandle s')
 
 --------------------------------------------------------------------------------
-_modelUnsub :: State -> Id t -> Model
-_modelUnsub s@State{..} sid =
+modelUnsub :: State -> Id t -> Model
+modelUnsub s@State{..} sid =
     let uuid = toUUID sid
         m    = regDelete uuid _stRunning
         s'   = s { _stRunning = m } in
-    Model $ _modelHandle s'
+    Model $ modelHandle s'
 
 --------------------------------------------------------------------------------
-_modelPersistAction :: State
+modelPersistAction :: State
                     -> Text
                     -> Text
                     -> UUID
                     -> PersistAction
                     -> Model
-_modelPersistAction s@State{..} g n u a =
+modelPersistAction s@State{..} g n u a =
     let pa  = PendingAction g n a
         m   = H.insert u pa _stAction
         s'  = s { _stAction = m } in
-    Model $ _modelHandle s'
+    Model $ modelHandle s'
 
 --------------------------------------------------------------------------------
-_modelConfirmPersistAction :: State -> UUID -> Maybe Model
-_modelConfirmPersistAction s@State{..} u = do
+modelConfirmPersistAction :: State -> UUID -> Maybe Model
+modelConfirmPersistAction s@State{..} u = do
     _ <- H.lookup u _stAction
     let m  = H.delete u _stAction
         s' = s { _stAction = m }
-    return $ Model $ _modelHandle s'
+    return $ Model $ modelHandle s'
