@@ -44,6 +44,15 @@ data PendingAction =
     }
 
 --------------------------------------------------------------------------------
+data ConfirmedAction =
+    ConfirmedAction
+    { caId     :: !UUID
+    , caGroup  :: !Text
+    , caStream :: !Text
+    , caAction :: !PersistAction
+    }
+
+--------------------------------------------------------------------------------
 data Box (f :: Type -> *) = forall a. Typeable a => Box (f a)
 
 --------------------------------------------------------------------------------
@@ -167,7 +176,8 @@ data Confirm :: Type -> * -> * where
     -- | Confirm a subscription (regular or not).
     ConfirmSub :: UUID -> Meta t -> Confirm t (Maybe (Id t, Model))
 
-    ConfirmAction :: UUID -> Confirm 'PersistType (Maybe Model)
+    ConfirmAction :: UUID
+                  -> Confirm 'PersistType (Maybe (ConfirmedAction, Model))
 
 --------------------------------------------------------------------------------
 data Action a where
@@ -321,9 +331,10 @@ modelPersistAction s@State{..} g n u a =
     Model $ modelHandle s'
 
 --------------------------------------------------------------------------------
-modelConfirmPersistAction :: State -> UUID -> Maybe Model
+modelConfirmPersistAction :: State -> UUID -> Maybe (ConfirmedAction, Model)
 modelConfirmPersistAction s@State{..} u = do
-    _ <- H.lookup u _stAction
+    PendingAction g n a  <- H.lookup u _stAction
     let m  = H.delete u _stAction
         s' = s { _stAction = m }
-    return $ Model $ modelHandle s'
+        c  = ConfirmedAction u g n a
+    return (c, Model $ modelHandle s')
