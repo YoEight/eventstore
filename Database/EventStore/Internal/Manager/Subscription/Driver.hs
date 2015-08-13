@@ -63,6 +63,14 @@ runDriver m (PackageArrived Package{..}) =
             let e   = getField $ streamResolvedEvent msg
                 evt = newResolvedEventFromBuf e
             return (EventAppeared sid evt, Driver $ runDriver m)
+        0xC7 -> do
+            let sid   = PersistId packageCorrelation
+                query = Query . SelectSub $ sid
+            _   <- runModel query m
+            msg <- maybeDecodeMessage packageData
+            let e   = getField $ psseaEvt msg
+                evt = newResolvedEvent e
+            return (EventAppeared sid evt, Driver $ runDriver m)
         0xC1 -> do
             msg <- maybeDecodeMessage packageData
             let lcp  = getField $ subscribeLastCommitPos msg
@@ -78,8 +86,8 @@ runDriver m (PackageArrived Package{..}) =
                 len  = getField $ pscLastEvtNumber msg
                 meta = PersistMeta sid lcp len
                 req  = Execute $ Confirm $ ConfirmSub packageCorrelation meta
-            (sid, nxt_m) <- runModel req m
-            return (SubConfirmed sid, Driver $ runDriver nxt_m)
+            (sidt, nxt_m) <- runModel req m
+            return (SubConfirmed sidt, Driver $ runDriver nxt_m)
         _ -> Nothing
 
 --------------------------------------------------------------------------------

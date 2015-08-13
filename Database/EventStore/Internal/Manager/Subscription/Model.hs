@@ -113,18 +113,18 @@ toUUID (PersistId u) = u
 
 --------------------------------------------------------------------------------
 data Running :: Type -> * where
-    RunningReg :: Text  -- ^ Stream name.
-               -> Bool  -- ^ Resolve Link TOS.
-               -> Int64 -- ^ Last commint position.
-               -> Int32 -- ^ Last event number.
+    RunningReg :: Text        -- ^ Stream name.
+               -> Bool        -- ^ Resolve Link TOS.
+               -> Int64       -- ^ Last commint position.
+               -> Maybe Int32 -- ^ Last event number.
                -> Running 'RegularType
 
-    RunningPersist :: Text  -- ^ Group name.
-                   -> Text  -- ^ Stream name.
-                   -> Int32 -- ^ Buffer size.
-                   -> Text  -- ^ Subscription Id.
-                   -> Int64 -- ^ Last commit position.
-                   -> Int32 -- ^ Last event number.
+    RunningPersist :: Text        -- ^ Group name.
+                   -> Text        -- ^ Stream name.
+                   -> Int32       -- ^ Buffer size.
+                   -> Text        -- ^ Subscription Id.
+                   -> Int64       -- ^ Last commit position.
+                   -> Maybe Int32 -- ^ Last event number.
                    -> Running 'PersistType
 
 --------------------------------------------------------------------------------
@@ -133,9 +133,9 @@ data Meta :: Type -> * where
                 -> Maybe Int32 -- ^ Last event number.
                 -> Meta 'RegularType
 
-    PersistMeta :: Text  -- ^ Subscription Id.
-                -> Int64 -- ^ Last commit position.
-                -> Int32 -- ^ Last event number.
+    PersistMeta :: Text        -- ^ Subscription Id.
+                -> Int64       -- ^ Last commit position.
+                -> Maybe Int32 -- ^ Last event number.
                 -> Meta 'PersistType
 
 --------------------------------------------------------------------------------
@@ -275,8 +275,8 @@ _modelConnectPersist s@State{..} g n b uuid =
 --------------------------------------------------------------------------------
 _modelConfirmRegSub :: State
                     -> UUID
-                    -> Int64 -- ^ Last commit position.
-                    -> Int32 -- ^ Last event number.
+                    -> Int64       -- ^ Last commit position.
+                    -> Maybe Int32 -- ^ Last event number.
                     -> Maybe (Id 'RegularType, Model)
 _modelConfirmRegSub s@State{..} uuid lc le = do
     PendingReg n tos <- regLookup regPrx uuid _stPending
@@ -290,7 +290,7 @@ _modelConfirmPersistSub :: State
                         -> UUID
                         -> Text
                         -> Int64
-                        -> Int32
+                        -> Maybe Int32
                         -> Maybe (Id 'PersistType, Model)
 _modelConfirmPersistSub s@State{..} uuid sb lc le = do
     PendPersist g n b <- regLookup pendPrx uuid _stPending
