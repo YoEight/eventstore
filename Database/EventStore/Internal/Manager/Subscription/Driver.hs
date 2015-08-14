@@ -146,20 +146,20 @@ runDriver m (PackageArrived Package{..}) =
             (sidt, nxt_m) <- runModel req m
             return (SubConfirmed sidt, Driver $ runDriver nxt_m)
 
-        0xC9 -> handlePersistActionConfirmation (getField . cpscResult)
-                                                createRException
-                                                packageCorrelation
-                                                packageData m
+        0xC9 -> confirmPersistAction (getField . cpscResult)
+                                     createRException
+                                     packageCorrelation
+                                     packageData m
 
-        0xCF -> handlePersistActionConfirmation (getField . upscResult)
-                                                updateRException
-                                                packageCorrelation
-                                                packageData m
+        0xCF -> confirmPersistAction (getField . upscResult)
+                                     updateRException
+                                     packageCorrelation
+                                     packageData m
 
-        0xCB -> handlePersistActionConfirmation (getField . dpscResult)
-                                                deleteRException
-                                                packageCorrelation
-                                                packageData m
+        0xCB -> confirmPersistAction (getField . dpscResult)
+                                     deleteRException
+                                     packageCorrelation
+                                     packageData m
 
         0xC4 -> do
             Box r <- runModel (Query $ SelectSome packageCorrelation) m
@@ -174,14 +174,14 @@ runDriver m (PackageArrived Package{..}) =
         _ -> Nothing
 
 --------------------------------------------------------------------------------
-handlePersistActionConfirmation :: Decode msg
-                                => (msg -> r)
-                                -> (r -> Maybe PersistActionException)
-                                -> UUID
-                                -> ByteString
-                                -> Model
-                                -> Maybe (SubEvent, Driver)
-handlePersistActionConfirmation fd em u bytes m = do
+confirmPersistAction :: Decode msg
+                     => (msg -> r)
+                     -> (r -> Maybe PersistActionException)
+                     -> UUID
+                     -> ByteString
+                     -> Model
+                     -> Maybe (SubEvent, Driver)
+confirmPersistAction fd em u bytes m = do
     msg <- maybeDecodeMessage bytes
     case em $ fd msg of
         Just e -> do
