@@ -15,7 +15,28 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Manager.Subscription.Model where
+module Database.EventStore.Internal.Manager.Subscription.Model
+    ( PersistAction(..)
+    , ConfirmedAction(..)
+    , PendingAction(..)
+    , Running(..)
+    , Meta(..)
+    , Id(..)
+    , Box(..)
+    , Model
+    , runningId
+    , queryRegSub
+    , queryPersistSub
+    , querySomeSub
+    , queryAction
+    , confirmConnect
+    , confirmAction
+    , newModel
+    , runModel
+    , unsub
+    , connectReg
+    , connectPersist
+    ) where
 
 --------------------------------------------------------------------------------
 import Data.Int
@@ -81,21 +102,12 @@ regDelete :: UUID -> Register f -> Register f
 regDelete u (Register m) = Register $ H.delete u m
 
 --------------------------------------------------------------------------------
-regGet :: Typeable a => proxy a -> UUID -> Register f -> f a
-regGet p uuid r = let Just v = regLookup p uuid r in v
-
---------------------------------------------------------------------------------
 regPrx :: Proxy 'RegularType
 regPrx = Proxy
 
 --------------------------------------------------------------------------------
 pendPrx :: Proxy 'PersistType
 pendPrx = Proxy
-
---------------------------------------------------------------------------------
-data PendingSub
-    = PendingSub Text Bool
-    | PendingPersist Text Text Int32
 
 --------------------------------------------------------------------------------
 type Table a = H.HashMap UUID a
@@ -126,13 +138,15 @@ toUUID (PersistId u) = u
 
 --------------------------------------------------------------------------------
 data Running :: Type -> * where
-    RunningReg :: Text        -- ^ Stream name.
+    RunningReg :: Id 'RegularType
+               -> Text        -- ^ Stream name.
                -> Bool        -- ^ Resolve Link TOS.
                -> Int64       -- ^ Last commint position.
                -> Maybe Int32 -- ^ Last event number.
                -> Running 'RegularType
 
-    RunningPersist :: Text        -- ^ Group name.
+    RunningPersist :: Id 'PersistType
+                   -> Text        -- ^ Group name.
                    -> Text        -- ^ Stream name.
                    -> Int32       -- ^ Buffer size.
                    -> Text        -- ^ Subscription Id.
@@ -141,9 +155,9 @@ data Running :: Type -> * where
                    -> Running 'PersistType
 
 --------------------------------------------------------------------------------
-runningId :: Running t -> UUID -> Id t
-runningId RunningReg{} u     = RegularId u
-runningId RunningPersist{} u = PersistId u
+runningId :: Running t -> Id t
+runningId (RunningReg i _ _ _ _)         = i
+runningId (RunningPersist i _ _ _ _ _ _) = i
 
 --------------------------------------------------------------------------------
 data Meta :: Type -> * where
@@ -166,6 +180,22 @@ data Select a where
     SelectAction :: UUID -> Select (Maybe PendingAction)
 
 --------------------------------------------------------------------------------
+queryRegSub :: UUID -> Request 'Read (Maybe (Running 'RegularType))
+queryRegSub = Query . SelectSub . RegularId
+
+--------------------------------------------------------------------------------
+queryPersistSub :: UUID -> Request 'Read (Maybe (Running 'PersistType))
+queryPersistSub = Query . SelectSub . PersistId
+
+--------------------------------------------------------------------------------
+querySomeSub :: UUID -> Request 'Read (Maybe (Box Running))
+querySomeSub = Query . SelectSome
+
+--------------------------------------------------------------------------------
+queryAction :: UUID -> Request 'Read (Maybe PendingAction)
+queryAction = Query . SelectAction
+
+--------------------------------------------------------------------------------
 data Request :: Mode -> * -> * where
     Query   :: Select a -> Request 'Read a
     Execute :: Action a -> Request 'Write a
@@ -182,12 +212,28 @@ data Connect :: Type -> * where
                    -> Connect 'PersistType
 
 --------------------------------------------------------------------------------
+connectReg :: Text -> Bool -> UUID -> Request 'Write Model
+connectReg n t u = Execute $ ConnectSub (ConnectReg n t) u
+
+--------------------------------------------------------------------------------
+connectPersist :: Text -> Text -> Int32 -> UUID -> Request 'Write Model
+connectPersist g n b u = Execute $ ConnectSub (ConnectPersist g n b) u
+
+--------------------------------------------------------------------------------
 data Confirm :: Type -> * -> * where
     -- | Confirm a subscription (regular or not).
-    ConfirmSub :: UUID -> Meta t -> Confirm t (Maybe (Id t, Model))
+    ConfirmSub :: UUID -> Meta t -> Confirm t (Maybe (Running t, Model))
 
     ConfirmAction :: UUID
                   -> Confirm 'PersistType (Maybe (ConfirmedAction, Model))
+
+--------------------------------------------------------------------------------
+confirmConnect :: UUID -> Meta t -> Request 'Write (Maybe (Running t, Model))
+confirmConnect u m = Execute $ Confirm $ ConfirmSub u m
+
+--------------------------------------------------------------------------------
+confirmAction :: UUID -> Request 'Write (Maybe (ConfirmedAction, Model))
+confirmAction = Execute . Confirm . ConfirmAction
 
 --------------------------------------------------------------------------------
 data Action a where
@@ -202,8 +248,9 @@ data Action a where
 
     PersistAction :: Text -> Text -> UUID -> PersistAction -> Action Model
 
-    -- | Update a persistent subscription.
-    -- UpdatePersist :: PersistentSubscriptionSettings -> Action Package
+--------------------------------------------------------------------------------
+unsub :: Id t -> Request 'Write Model
+unsub = Execute . UnSub
 
 --------------------------------------------------------------------------------
 data State =
@@ -294,16 +341,17 @@ modelConnectPersist s@State{..} g n b uuid =
 
 --------------------------------------------------------------------------------
 modelConfirmRegSub :: State
-                    -> UUID
-                    -> Int64       -- ^ Last commit position.
-                    -> Maybe Int32 -- ^ Last event number.
-                    -> Maybe (Id 'RegularType, Model)
+                   -> UUID
+                   -> Int64       -- ^ Last commit position.
+                   -> Maybe Int32 -- ^ Last event number.
+                   -> Maybe (Running 'RegularType, Model)
 modelConfirmRegSub s@State{..} uuid lc le = do
     PendingReg n tos <- regLookup regPrx uuid _stPending
-    let r  = RunningReg n tos lc le
+    let si = RegularId uuid
+        r  = RunningReg si n tos lc le
         m  = regInsert uuid r _stRunning
         s' = s { _stRunning = m  }
-    return (RegularId uuid,  Model $ modelHandle s')
+    return (r, Model $ modelHandle s')
 
 --------------------------------------------------------------------------------
 modelConfirmPersistSub :: State
@@ -311,13 +359,14 @@ modelConfirmPersistSub :: State
                         -> Text
                         -> Int64
                         -> Maybe Int32
-                        -> Maybe (Id 'PersistType, Model)
+                        -> Maybe (Running 'PersistType, Model)
 modelConfirmPersistSub s@State{..} uuid sb lc le = do
     PendPersist g n b <- regLookup pendPrx uuid _stPending
-    let r  = RunningPersist g n b sb lc le
+    let si = PersistId uuid
+        r  = RunningPersist si g n b sb lc le
         m  = regInsert uuid r _stRunning
         s' = s { _stRunning = m }
-    return (PersistId uuid,  Model $ modelHandle s')
+    return (r,  Model $ modelHandle s')
 
 --------------------------------------------------------------------------------
 modelUnsub :: State -> Id t -> Model

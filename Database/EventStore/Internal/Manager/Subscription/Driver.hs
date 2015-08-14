@@ -23,12 +23,14 @@ module Database.EventStore.Internal.Manager.Subscription.Driver
     ) where
 
 --------------------------------------------------------------------------------
+import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
 import Data.ByteString
 import Data.Serialize
 import Data.ProtocolBuffers
+import Data.Text
 import Data.UUID
 
 --------------------------------------------------------------------------------
@@ -40,7 +42,7 @@ import Database.EventStore.Internal.Types
 data SubEvent
     = forall t. EventAppeared (Id t) ResolvedEvent
     | forall t. SubDropped UUID (Running t) SubDropReason
-    | forall t. SubConfirmed (Id t)
+    | forall t. SubConfirmed (Running t)
     | PersistActionConfirmed ConfirmedAction
     | PersistActionFailed UUID PendingAction PersistActionException
 
@@ -93,105 +95,104 @@ toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
 --------------------------------------------------------------------------------
 data Input a where
     PackageArrived :: Package -> Input (Maybe (SubEvent, Driver))
+    ExecuteCommand :: Command -> Input (Package, Driver)
+
+--------------------------------------------------------------------------------
+data Command
+    = ConnectReg Text Bool UUID
+    | ConnectPersist Text Text Int32 UUID
 
 --------------------------------------------------------------------------------
 newtype Driver = Driver (forall a. Input a -> a)
 
 --------------------------------------------------------------------------------
-newDriver :: Driver
-newDriver = Driver $ runDriver newModel
+newDriver :: Settings -> Driver
+newDriver setts = Driver $ runDriver setts newModel
 
 --------------------------------------------------------------------------------
 handlePackage :: Package -> Driver -> Maybe (SubEvent, Driver)
 handlePackage pkg (Driver k) = k (PackageArrived pkg)
 
 --------------------------------------------------------------------------------
-runDriver :: Model -> Input a -> a
-runDriver m (PackageArrived Package{..}) =
-    case packageCmd of
-        0xC2 -> do
-            let sid   = RegularId packageCorrelation
-                query = Query . SelectSub $ sid
-            _   <- runModel query m
+runDriver :: Settings -> Model -> Input a -> a
+runDriver setts = go
+  where
+    go :: forall a. Model -> Input a -> a
+    go m (PackageArrived Package{..}) =
+        case packageCmd of
+            0xC2 -> do
+                r   <- runModel (queryRegSub packageCorrelation) m
+                msg <- maybeDecodeMessage packageData
+                let e   = getField $ streamResolvedEvent msg
+                    evt = newResolvedEventFromBuf e
+                return (EventAppeared (runningId r) evt, Driver $ go m)
+
+            0xC7 -> do
+                r   <- runModel (queryPersistSub packageCorrelation) m
+                msg <- maybeDecodeMessage packageData
+                let e   = getField $ psseaEvt msg
+                    evt = newResolvedEvent e
+                return (EventAppeared (runningId r) evt, Driver $ go m)
+
+            0xC1 -> do
+                msg <- maybeDecodeMessage packageData
+                let lcp  = getField $ subscribeLastCommitPos msg
+                    len  = getField $ subscribeLastEventNumber msg
+                    meta = RegularMeta lcp len
+                    cmd  = confirmConnect packageCorrelation meta
+                (r, nxt_m) <- runModel cmd m
+                return (SubConfirmed r, Driver $ go nxt_m)
+
+            0xC6 -> do
+                msg <- maybeDecodeMessage packageData
+                let lcp  = getField $ pscLastCommitPos msg
+                    sid  = getField $ pscId msg
+                    len  = getField $ pscLastEvtNumber msg
+                    meta = PersistMeta sid lcp len
+                    cmd  = confirmConnect packageCorrelation meta
+                (r, nxt_m) <- runModel cmd m
+                return (SubConfirmed r, Driver $ go nxt_m)
+
+            0xC9 -> confirmPAction (getField . cpscResult) createRException
+            0xCF -> confirmPAction (getField . upscResult) updateRException
+            0xCB -> confirmPAction (getField . dpscResult) deleteRException
+
+            0xC4 -> do
+                Box r <- runModel (querySomeSub packageCorrelation) m
+                msg   <- maybeDecodeMessage packageData
+                let reason  = fromMaybe D_Unsubscribed $ getField $ dropReason msg
+                    nxt_m   = runModel (unsub $ runningId r) m
+                    dreason = toSubDropReason reason
+                    evt     = SubDropped packageCorrelation r dreason
+                return (evt, Driver $ go nxt_m)
+            _ -> Nothing
+      where
+        confirmPAction :: Decode m
+                      => (m -> r)
+                      -> (r -> Maybe PersistActionException)
+                      -> Maybe (SubEvent, Driver)
+        confirmPAction fd em = do
             msg <- maybeDecodeMessage packageData
-            let e   = getField $ streamResolvedEvent msg
-                evt = newResolvedEventFromBuf e
-            return (EventAppeared sid evt, Driver $ runDriver m)
+            case em $ fd msg of
+                Just e -> do
+                    p <- runModel (queryAction packageCorrelation) m
+                    let evt = PersistActionFailed packageCorrelation p e
+                    return (evt, Driver $ go m)
+                Nothing -> do
+                    let cmd = confirmAction packageCorrelation
+                    (c, nxt_m) <- runModel cmd m
+                    return (PersistActionConfirmed c, Driver $ go nxt_m)
 
-        0xC7 -> do
-            let sid   = PersistId packageCorrelation
-                query = Query . SelectSub $ sid
-            _   <- runModel query m
-            msg <- maybeDecodeMessage packageData
-            let e   = getField $ psseaEvt msg
-                evt = newResolvedEvent e
-            return (EventAppeared sid evt, Driver $ runDriver m)
-
-        0xC1 -> do
-            msg <- maybeDecodeMessage packageData
-            let lcp  = getField $ subscribeLastCommitPos msg
-                len  = getField $ subscribeLastEventNumber msg
-                meta = RegularMeta lcp len
-                req  = Execute $ Confirm $ ConfirmSub packageCorrelation meta
-            (sid, nxt_m) <- runModel req m
-            return (SubConfirmed sid, Driver $ runDriver nxt_m)
-
-        0xC6 -> do
-            msg <- maybeDecodeMessage packageData
-            let lcp  = getField $ pscLastCommitPos msg
-                sid  = getField $ pscId msg
-                len  = getField $ pscLastEvtNumber msg
-                meta = PersistMeta sid lcp len
-                req  = Execute $ Confirm $ ConfirmSub packageCorrelation meta
-            (sidt, nxt_m) <- runModel req m
-            return (SubConfirmed sidt, Driver $ runDriver nxt_m)
-
-        0xC9 -> confirmPersistAction (getField . cpscResult)
-                                     createRException
-                                     packageCorrelation
-                                     packageData m
-
-        0xCF -> confirmPersistAction (getField . upscResult)
-                                     updateRException
-                                     packageCorrelation
-                                     packageData m
-
-        0xCB -> confirmPersistAction (getField . dpscResult)
-                                     deleteRException
-                                     packageCorrelation
-                                     packageData m
-
-        0xC4 -> do
-            Box r <- runModel (Query $ SelectSome packageCorrelation) m
-            msg   <- maybeDecodeMessage packageData
-            let reason  = fromMaybe D_Unsubscribed $ getField $ dropReason msg
-                sid     = runningId r packageCorrelation
-                cmd     = Execute $ UnSub sid
-                nxt_m   = runModel cmd m
-                dreason = toSubDropReason reason
-                evt     = SubDropped packageCorrelation r dreason
-            return (evt, Driver $ runDriver nxt_m)
-        _ -> Nothing
-
---------------------------------------------------------------------------------
-confirmPersistAction :: Decode msg
-                     => (msg -> r)
-                     -> (r -> Maybe PersistActionException)
-                     -> UUID
-                     -> ByteString
-                     -> Model
-                     -> Maybe (SubEvent, Driver)
-confirmPersistAction fd em u bytes m = do
-    msg <- maybeDecodeMessage bytes
-    case em $ fd msg of
-        Just e -> do
-            let query = Query . SelectAction $ u
-            p <- runModel query m
-            return (PersistActionFailed u p e, Driver $ runDriver m)
-        Nothing -> do
-            let cmd = Execute . Confirm . ConfirmAction $ u
-            (c, nxt_m) <- runModel cmd m
-            return (PersistActionConfirmed c, Driver $ runDriver nxt_m)
+    go m (ExecuteCommand c) =
+        case c of
+            ConnectReg s tos u ->
+                let pkg   = createConnectRegularPackage setts u s tos
+                    nxt_m = runModel (connectReg s tos u) m in
+                (pkg, Driver $ go nxt_m)
+            ConnectPersist g n b u ->
+                let pkg   = createConnectPersistPackage setts u g n b
+                    nxt_m = runModel (connectPersist g n b u) m in
+                (pkg, Driver $ go nxt_m)
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a
@@ -199,3 +200,32 @@ maybeDecodeMessage bytes =
     case runGet decodeMessage bytes of
         Right a -> Just a
         _       -> Nothing
+
+--------------------------------------------------------------------------------
+createConnectRegularPackage :: Settings -> UUID -> Text -> Bool -> Package
+createConnectRegularPackage Settings{..} uuid stream tos =
+    Package
+    { packageCmd         = 0xC0
+    , packageCorrelation = uuid
+    , packageData        = runPut $ encodeMessage msg
+    , packageCred        = s_credentials
+    }
+  where
+    msg = subscribeToStream stream tos
+
+--------------------------------------------------------------------------------
+createConnectPersistPackage :: Settings
+                            -> UUID
+                            -> Text
+                            -> Text
+                            -> Int32
+                            -> Package
+createConnectPersistPackage Settings{..} uuid grp stream bufSize =
+    Package
+    { packageCmd         = 0xC5
+    , packageCorrelation = uuid
+    , packageData        = runPut $ encodeMessage msg
+    , packageCred        = s_credentials
+    }
+  where
+    msg = _connectToPersistentSubscription grp stream bufSize
