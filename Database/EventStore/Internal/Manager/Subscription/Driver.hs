@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE Rank2Types                #-}
 {-# LANGUAGE RecordWildCards           #-}
@@ -15,10 +16,14 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Subscription.Driver
     ( SubEvent(..)
+    , SubDropReason(..)
     , Driver
     , newDriver
     , handlePackage
     ) where
+
+--------------------------------------------------------------------------------
+import Data.Maybe
 
 --------------------------------------------------------------------------------
 import Data.ByteString
@@ -34,10 +39,18 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 data SubEvent
     = forall t. EventAppeared (Id t) ResolvedEvent
-    | forall t. SubDropped (Id t)
+    | forall t. SubDropped UUID (Running t) SubDropReason
     | forall t. SubConfirmed (Id t)
     | PersistActionConfirmed ConfirmedAction
     | PersistActionFailed UUID PendingAction PersistActionException
+
+--------------------------------------------------------------------------------
+data SubDropReason
+    = SubUnsubscribed
+    | SubAccessDenied
+    | SubNotFound
+    | SubPersistDeleted
+    deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
 data PersistActionException
@@ -69,6 +82,13 @@ updateRException UPS_Success      = Nothing
 updateRException UPS_DoesNotExist = Just PersistActionDoesNotExist
 updateRException UPS_Fail         = Just PersistActionFail
 updateRException UPS_AccessDenied = Just PersistActionAccessDenied
+
+--------------------------------------------------------------------------------
+toSubDropReason :: DropReason -> SubDropReason
+toSubDropReason D_Unsubscribed                  = SubUnsubscribed
+toSubDropReason D_NotFound                      = SubNotFound
+toSubDropReason D_AccessDenied                  = SubAccessDenied
+toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
 
 --------------------------------------------------------------------------------
 data Input a where
@@ -141,6 +161,16 @@ runDriver m (PackageArrived Package{..}) =
                                                 packageCorrelation
                                                 packageData m
 
+        0xC4 -> do
+            Box r <- runModel (Query $ SelectSome packageCorrelation) m
+            msg   <- maybeDecodeMessage packageData
+            let reason  = fromMaybe D_Unsubscribed $ getField $ dropReason msg
+                sid     = runningId r packageCorrelation
+                cmd     = Execute $ UnSub sid
+                nxt_m   = runModel cmd m
+                dreason = toSubDropReason reason
+                evt     = SubDropped packageCorrelation r dreason
+            return (evt, Driver $ runDriver nxt_m)
         _ -> Nothing
 
 --------------------------------------------------------------------------------

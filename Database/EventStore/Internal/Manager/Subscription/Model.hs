@@ -63,9 +63,13 @@ emptyReg :: Register f
 emptyReg = Register H.empty
 
 --------------------------------------------------------------------------------
+regLookupBox :: UUID -> Register f -> Maybe (Box f)
+regLookupBox u (Register m) = H.lookup u m
+
+--------------------------------------------------------------------------------
 regLookup :: Typeable a => proxy a -> UUID -> Register f -> Maybe (f a)
-regLookup _ uuid (Register m) = do
-    Box b <- H.lookup uuid m
+regLookup _ uuid reg = do
+    Box b <- regLookupBox uuid reg
     gcast b
 
 --------------------------------------------------------------------------------
@@ -137,6 +141,11 @@ data Running :: Type -> * where
                    -> Running 'PersistType
 
 --------------------------------------------------------------------------------
+runningId :: Running t -> UUID -> Id t
+runningId RunningReg{} u     = RegularId u
+runningId RunningPersist{} u = PersistId u
+
+--------------------------------------------------------------------------------
 data Meta :: Type -> * where
     RegularMeta :: Int64       -- ^ Last commit position.
                 -> Maybe Int32 -- ^ Last event number.
@@ -153,6 +162,7 @@ data Mode = Read | Write
 --------------------------------------------------------------------------------
 data Select a where
     SelectSub    :: Id t -> Select (Maybe (Running t))
+    SelectSome   :: UUID -> Select (Maybe (Box Running))
     SelectAction :: UUID -> Select (Maybe PendingAction)
 
 --------------------------------------------------------------------------------
@@ -183,11 +193,6 @@ data Confirm :: Type -> * -> * where
 data Action a where
       -- | Connnect to a subscription.
     ConnectSub :: Connect t -> UUID -> Action Model
-    -- | Create a regular subscription.
-    -- CreateSub :: Text -- ^ Stream  name.
-    --           -> Bool -- ^ Resolve TOS link.
-    --           -> UUID -- ^ Reference.
-    --           -> Action Package
 
     -- | Confirm a subscription (regular or not).
     Confirm :: Confirm t a -> Action a
@@ -249,6 +254,7 @@ modelHandle s (Query q) =
     case q of
         SelectSub sid  -> modelLookupSub s sid
         SelectAction u -> modelLookupAction s u
+        SelectSome u   -> modelLookupSome s u
 
 --------------------------------------------------------------------------------
 modelLookupSub :: State -> Id t -> Maybe (Running t)
@@ -258,6 +264,10 @@ modelLookupSub State{..} (PersistId u) = regLookup pendPrx u _stRunning
 --------------------------------------------------------------------------------
 modelLookupAction :: State -> UUID -> Maybe PendingAction
 modelLookupAction State{..} u = H.lookup u _stAction
+
+--------------------------------------------------------------------------------
+modelLookupSome :: State -> UUID -> Maybe (Box Running)
+modelLookupSome State{..} u = regLookupBox u _stRunning
 
 --------------------------------------------------------------------------------
 modelConnectReg :: State
