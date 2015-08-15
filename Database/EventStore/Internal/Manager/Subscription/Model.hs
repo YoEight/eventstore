@@ -36,6 +36,7 @@ module Database.EventStore.Internal.Manager.Subscription.Model
     , unsub
     , connectReg
     , connectPersist
+    , persistAction
     ) where
 
 --------------------------------------------------------------------------------
@@ -218,6 +219,10 @@ connectReg n t u = Execute $ ConnectSub (ConnectReg n t) u
 --------------------------------------------------------------------------------
 connectPersist :: Text -> Text -> Int32 -> UUID -> Request 'Write Model
 connectPersist g n b u = Execute $ ConnectSub (ConnectPersist g n b) u
+
+--------------------------------------------------------------------------------
+persistAction :: Text -> Text -> UUID -> PersistAction -> Request 'Write Model
+persistAction g n u a = Execute $ PersistAction g n u a
 
 --------------------------------------------------------------------------------
 data Confirm :: Type -> * -> * where

@@ -101,6 +101,7 @@ data Input a where
 data Command
     = ConnectReg Text Bool UUID
     | ConnectPersist Text Text Int32 UUID
+    | ApplyPersistAction Text Text UUID PersistAction
 
 --------------------------------------------------------------------------------
 newtype Driver = Driver (forall a. Input a -> a)
@@ -193,6 +194,11 @@ runDriver setts = go
                 let pkg   = createConnectPersistPackage setts u g n b
                     nxt_m = runModel (connectPersist g n b u) m in
                 (pkg, Driver $ go nxt_m)
+            ApplyPersistAction g n u a ->
+                let pkg   = createPersistActionPackage setts u g n a
+                    nxt_m = runModel (persistAction g n u a) m in
+                (pkg, Driver $ go nxt_m)
+
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a
@@ -229,3 +235,32 @@ createConnectPersistPackage Settings{..} uuid grp stream bufSize =
     }
   where
     msg = _connectToPersistentSubscription grp stream bufSize
+
+--------------------------------------------------------------------------------
+createPersistActionPackage :: Settings
+                           -> UUID
+                           -> Text
+                           -> Text
+                           -> PersistAction
+                           -> Package
+createPersistActionPackage Settings{..} u grp strm tpe =
+    Package
+    { packageCmd         = cmd
+    , packageCorrelation = u
+    , packageData        = runPut msg
+    , packageCred        = s_credentials
+    }
+  where
+    msg =
+        case tpe of
+            PersistCreate sett ->
+                encodeMessage $ _createPersistentSubscription grp strm sett
+            PersistUpdate sett ->
+                encodeMessage $ _updatePersistentSubscription grp strm sett
+            PersistDelete ->
+                encodeMessage $ _deletePersistentSubscription grp strm
+    cmd =
+        case tpe of
+            PersistCreate _  -> 0xC8
+            PersistUpdate _  -> 0xCE
+            PersistDelete    -> 0xCA
