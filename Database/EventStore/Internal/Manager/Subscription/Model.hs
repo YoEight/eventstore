@@ -23,6 +23,7 @@ module Database.EventStore.Internal.Manager.Subscription.Model
     , Meta(..)
     , Id(..)
     , Box(..)
+    , Type(..)
     , Model
     , runningId
     , queryRegSub

@@ -28,6 +28,7 @@ import Data.Maybe
 
 --------------------------------------------------------------------------------
 import Data.ByteString
+import Data.ByteString.Lazy (toStrict)
 import Data.Serialize
 import Data.ProtocolBuffers
 import Data.Text
@@ -102,6 +103,8 @@ data Command
     = ConnectReg Text Bool UUID
     | ConnectPersist Text Text Int32 UUID
     | ApplyPersistAction Text Text UUID PersistAction
+    | PersistAck (Id 'PersistType) Text [UUID]
+    | PersistNak (Id 'PersistType) Text NakAction (Maybe Text) [UUID]
 
 --------------------------------------------------------------------------------
 newtype Driver = Driver (forall a. Input a -> a)
@@ -198,7 +201,12 @@ runDriver setts = go
                 let pkg   = createPersistActionPackage setts u g n a
                     nxt_m = runModel (persistAction g n u a) m in
                 (pkg, Driver $ go nxt_m)
-
+            PersistAck (PersistId u) sid evts ->
+                let pkg = createAckPackage setts u sid evts in
+                (pkg, Driver $ go m)
+            PersistNak (PersistId u) sid na r evts ->
+                let pkg = createNakPackage setts u sid na r evts in
+                (pkg, Driver $ go m)
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a
@@ -264,3 +272,35 @@ createPersistActionPackage Settings{..} u grp strm tpe =
             PersistCreate _  -> 0xC8
             PersistUpdate _  -> 0xCE
             PersistDelete    -> 0xCA
+
+--------------------------------------------------------------------------------
+createAckPackage :: Settings -> UUID -> Text -> [UUID] -> Package
+createAckPackage Settings{..} corr sid eids =
+    Package
+    { packageCmd         = 0xCC
+    , packageCorrelation = corr
+    , packageData        = runPut $ encodeMessage msg
+    , packageCred        = s_credentials
+    }
+  where
+    bytes = toStrict $ foldMap toByteString eids
+    msg   = persistentSubscriptionAckEvents sid bytes
+
+--------------------------------------------------------------------------------
+createNakPackage :: Settings
+                 -> UUID
+                 -> Text
+                 -> NakAction
+                 -> Maybe Text
+                 -> [UUID]
+                 -> Package
+createNakPackage Settings{..} corr sid act txt eids =
+    Package
+    { packageCmd         = 0xCD
+    , packageCorrelation = corr
+    , packageData        = runPut $ encodeMessage msg
+    , packageCred        = s_credentials
+    }
+  where
+    bytes = toStrict $ foldMap toByteString eids
+    msg   = persistentSubscriptionNakEvents sid bytes txt act
