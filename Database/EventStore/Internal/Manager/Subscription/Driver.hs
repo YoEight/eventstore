@@ -6,7 +6,7 @@
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Manager.Subscription.Driver
--- Copyright : (C) 2014 Yorick Laupa
+-- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --
 -- Maintainer : Yorick Laupa <yo.eight@gmail.com>
@@ -19,7 +19,14 @@ module Database.EventStore.Internal.Manager.Subscription.Driver
     , SubDropReason(..)
     , Driver
     , newDriver
-    , handlePackage
+    , packageArrived
+    , connectToStream
+    , connectToPersist
+    , createPersist
+    , updatePersist
+    , deletePersist
+    , ackPersist
+    , nakPersist
     ) where
 
 --------------------------------------------------------------------------------
@@ -28,7 +35,6 @@ import Data.Maybe
 
 --------------------------------------------------------------------------------
 import Data.ByteString
-import Data.ByteString.Lazy (toStrict)
 import Data.Serialize
 import Data.ProtocolBuffers
 import Data.Text
@@ -37,6 +43,7 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription.Message
 import Database.EventStore.Internal.Manager.Subscription.Model
+import Database.EventStore.Internal.Manager.Subscription.Packages
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -61,6 +68,58 @@ data PersistActionException
     | PersistActionAlreadyExist
     | PersistActionDoesNotExist
     | PersistActionAccessDenied
+
+--------------------------------------------------------------------------------
+packageArrived :: Package -> Driver -> Maybe (SubEvent, Driver)
+packageArrived pkg (Driver k) = k (PackageArrived pkg)
+
+--------------------------------------------------------------------------------
+connectToStream :: Text -> Bool -> UUID -> Driver -> (Package, Driver)
+connectToStream s t u (Driver k) = k (ExecuteCmd $ ConnectReg s t u)
+
+--------------------------------------------------------------------------------
+connectToPersist :: Text -> Text -> Int32 -> UUID -> Driver -> (Package, Driver)
+connectToPersist g s b u (Driver k) = k (ExecuteCmd $ ConnectPersist g s b u)
+
+--------------------------------------------------------------------------------
+createPersist :: Text
+              -> Text
+              -> PersistentSubscriptionSettings
+              -> UUID 
+              -> Driver
+              -> (Package, Driver)
+createPersist g s ss u (Driver k) =
+    k (ExecuteCmd $ ApplyPersistAction g s u (PersistCreate ss))
+
+--------------------------------------------------------------------------------
+updatePersist :: Text
+              -> Text
+              -> PersistentSubscriptionSettings
+              -> UUID 
+              -> Driver
+              -> (Package, Driver)
+updatePersist g s ss u (Driver k) =
+    k (ExecuteCmd $ ApplyPersistAction g s u (PersistUpdate ss))
+
+--------------------------------------------------------------------------------
+deletePersist :: Text -> Text -> UUID -> Driver -> (Package, Driver)
+deletePersist g s u (Driver k) =
+    k (ExecuteCmd $ ApplyPersistAction g s u PersistDelete)
+
+--------------------------------------------------------------------------------
+ackPersist :: Id 'PersistType -> Text -> [UUID] -> Driver -> (Package, Driver)
+ackPersist i sid evts (Driver k) = k (ExecuteCmd $ PersistAck i sid evts)
+
+--------------------------------------------------------------------------------
+nakPersist :: Id 'PersistType
+           -> Text
+           -> NakAction
+           -> Maybe Text
+           -> [UUID]
+           -> Driver
+           -> (Package, Driver)
+nakPersist i sid na mt evts (Driver k) =
+    k (ExecuteCmd $ PersistNak i sid na mt evts)
 
 --------------------------------------------------------------------------------
 createRException :: CreatePersistentSubscriptionResult
@@ -96,7 +155,7 @@ toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
 --------------------------------------------------------------------------------
 data Input a where
     PackageArrived :: Package -> Input (Maybe (SubEvent, Driver))
-    ExecuteCommand :: Command -> Input (Package, Driver)
+    ExecuteCmd     :: Command -> Input (Package, Driver)
 
 --------------------------------------------------------------------------------
 data Command
@@ -112,10 +171,6 @@ newtype Driver = Driver (forall a. Input a -> a)
 --------------------------------------------------------------------------------
 newDriver :: Settings -> Driver
 newDriver setts = Driver $ runDriver setts newModel
-
---------------------------------------------------------------------------------
-handlePackage :: Package -> Driver -> Maybe (SubEvent, Driver)
-handlePackage pkg (Driver k) = k (PackageArrived pkg)
 
 --------------------------------------------------------------------------------
 runDriver :: Settings -> Model -> Input a -> a
@@ -187,7 +242,7 @@ runDriver setts = go
                     (c, nxt_m) <- runModel cmd m
                     return (PersistActionConfirmed c, Driver $ go nxt_m)
 
-    go m (ExecuteCommand c) =
+    go m (ExecuteCmd c) =
         case c of
             ConnectReg s tos u ->
                 let pkg   = createConnectRegularPackage setts u s tos
@@ -214,93 +269,3 @@ maybeDecodeMessage bytes =
     case runGet decodeMessage bytes of
         Right a -> Just a
         _       -> Nothing
-
---------------------------------------------------------------------------------
-createConnectRegularPackage :: Settings -> UUID -> Text -> Bool -> Package
-createConnectRegularPackage Settings{..} uuid stream tos =
-    Package
-    { packageCmd         = 0xC0
-    , packageCorrelation = uuid
-    , packageData        = runPut $ encodeMessage msg
-    , packageCred        = s_credentials
-    }
-  where
-    msg = subscribeToStream stream tos
-
---------------------------------------------------------------------------------
-createConnectPersistPackage :: Settings
-                            -> UUID
-                            -> Text
-                            -> Text
-                            -> Int32
-                            -> Package
-createConnectPersistPackage Settings{..} uuid grp stream bufSize =
-    Package
-    { packageCmd         = 0xC5
-    , packageCorrelation = uuid
-    , packageData        = runPut $ encodeMessage msg
-    , packageCred        = s_credentials
-    }
-  where
-    msg = _connectToPersistentSubscription grp stream bufSize
-
---------------------------------------------------------------------------------
-createPersistActionPackage :: Settings
-                           -> UUID
-                           -> Text
-                           -> Text
-                           -> PersistAction
-                           -> Package
-createPersistActionPackage Settings{..} u grp strm tpe =
-    Package
-    { packageCmd         = cmd
-    , packageCorrelation = u
-    , packageData        = runPut msg
-    , packageCred        = s_credentials
-    }
-  where
-    msg =
-        case tpe of
-            PersistCreate sett ->
-                encodeMessage $ _createPersistentSubscription grp strm sett
-            PersistUpdate sett ->
-                encodeMessage $ _updatePersistentSubscription grp strm sett
-            PersistDelete ->
-                encodeMessage $ _deletePersistentSubscription grp strm
-    cmd =
-        case tpe of
-            PersistCreate _  -> 0xC8
-            PersistUpdate _  -> 0xCE
-            PersistDelete    -> 0xCA
-
---------------------------------------------------------------------------------
-createAckPackage :: Settings -> UUID -> Text -> [UUID] -> Package
-createAckPackage Settings{..} corr sid eids =
-    Package
-    { packageCmd         = 0xCC
-    , packageCorrelation = corr
-    , packageData        = runPut $ encodeMessage msg
-    , packageCred        = s_credentials
-    }
-  where
-    bytes = toStrict $ foldMap toByteString eids
-    msg   = persistentSubscriptionAckEvents sid bytes
-
---------------------------------------------------------------------------------
-createNakPackage :: Settings
-                 -> UUID
-                 -> Text
-                 -> NakAction
-                 -> Maybe Text
-                 -> [UUID]
-                 -> Package
-createNakPackage Settings{..} corr sid act txt eids =
-    Package
-    { packageCmd         = 0xCD
-    , packageCorrelation = corr
-    , packageData        = runPut $ encodeMessage msg
-    , packageCred        = s_credentials
-    }
-  where
-    bytes = toStrict $ foldMap toByteString eids
-    msg   = persistentSubscriptionNakEvents sid bytes txt act
