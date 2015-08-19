@@ -1,19 +1,10 @@
-{-# LANGUAGE BangPatterns              #-}
-{-# LANGUAGE DataKinds                 #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE DeriveDataTypeable        #-}
-{-# LANGUAGE GADTs                     #-}
-{-# LANGUAGE MultiWayIf                #-}
-{-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE Rank2Types                #-}
-{-# LANGUAGE RecordWildCards           #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
-{-# LANGUAGE TypeFamilies              #-}
-{-# OPTIONS_GHC -fcontext-stack=26     #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE Rank2Types          #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Manager.Subscription
--- Copyright : (C) 2014 Yorick Laupa
+-- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --
 -- Maintainer : Yorick Laupa <yo.eight@gmail.com>

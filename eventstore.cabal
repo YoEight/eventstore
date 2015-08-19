@@ -59,6 +59,7 @@ library
   -- Modules included in this library but not exported.
   other-modules:   Database.EventStore.Catchup
                    Database.EventStore.Internal.Connection
+                   Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Packages
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Reader
@@ -70,6 +71,8 @@ library
                    Database.EventStore.Internal.Manager.Subscription.Message
                    Database.EventStore.Internal.Manager.Subscription.Model
                    Database.EventStore.Internal.Manager.Subscription.Packages
+                   Database.EventStore.Internal.Operation.DeleteStream
+                   Database.EventStore.Internal.Operation.DeleteStream.Message
                    Database.EventStore.Internal.Operation.DeleteStreamOperation
                    Database.EventStore.Internal.Operation.ReadAllEventsOperation
                    Database.EventStore.Internal.Operation.ReadEventOperation

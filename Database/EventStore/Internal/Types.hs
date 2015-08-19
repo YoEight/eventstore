@@ -61,24 +61,6 @@ data InternalException
 instance Exception InternalException
 
 --------------------------------------------------------------------------------
-data OperationException
-    = WrongExpectedVersion Text ExpectedVersion -- ^ Stream and Expected Version
-    | StreamDeleted Text                        -- ^ Stream
-    | InvalidTransaction
-    | AccessDenied Text                         -- ^ Stream
-    | InvalidServerResponse Word8 Word8         -- ^ Expected, Found
-    | ProtobufDecodingError String
-    | ServerError (Maybe Text)                  -- ^ Reason
-    | InvalidOperation Text
-    deriving (Show, Typeable)
-
---------------------------------------------------------------------------------
-instance Exception OperationException
-
---------------------------------------------------------------------------------
-type OperationExceptional a = Either OperationException a
-
---------------------------------------------------------------------------------
 -- Event
 --------------------------------------------------------------------------------
 -- | Contains event information like its type and data. Only used for write
@@ -410,12 +392,6 @@ data WriteResult
       , writePosition :: !Position
         -- ^ 'Position' of the write.
       }
-    deriving (Eq, Show)
-
---------------------------------------------------------------------------------
--- | Returned after deleting a stream. 'Position' of the write.
-newtype DeleteResult
-    = DeleteResult { deleteStreamPosition :: Position }
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------

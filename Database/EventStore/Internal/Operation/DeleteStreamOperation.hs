@@ -25,7 +25,7 @@ import Data.ProtocolBuffers
 import Data.Text
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Manager.Operation
+import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
