@@ -22,7 +22,7 @@ import Data.ProtocolBuffers
 import Data.Text
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Operation
 
 --------------------------------------------------------------------------------
 data Request

@@ -73,5 +73,5 @@ deleteStream Settings{..} s v hard = Operation create
                     OP_WRONG_EXPECTED_VERSION -> wrongVersion s v
                     OP_STREAM_DELETED         -> streamDeleted s
                     OP_INVALID_TRANSACTION    -> invalidTransaction
-                    OP_ACCESS_DENIED          -> accessDenied s
+                    OP_ACCESS_DENIED          -> accessDenied (StreamName s)
         | otherwise = Left $ Operation pending

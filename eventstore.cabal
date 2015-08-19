@@ -63,6 +63,7 @@ library
                    Database.EventStore.Internal.Packages
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Reader
+                   Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.TimeSpan
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Manager.Operation
@@ -74,9 +75,11 @@ library
                    Database.EventStore.Internal.Operation.DeleteStream
                    Database.EventStore.Internal.Operation.DeleteStream.Message
                    Database.EventStore.Internal.Operation.DeleteStreamOperation
+                   Database.EventStore.Internal.Operation.ReadAllEvents.Message
                    Database.EventStore.Internal.Operation.ReadAllEventsOperation
                    Database.EventStore.Internal.Operation.ReadEventOperation
                    Database.EventStore.Internal.Operation.ReadStreamEventsOperation
+                   Database.EventStore.Internal.Operation.Read.Common
                    Database.EventStore.Internal.Operation.TransactionStartOperation
                    Database.EventStore.Internal.Operation.WriteEventsOperation
                    Database.EventStore.Internal.Util.Sodium

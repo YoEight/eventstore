@@ -166,18 +166,6 @@ exactStream i
 --------------------------------------------------------------------------------
 -- EventStore Messages
 --------------------------------------------------------------------------------
-data OpResult
-    = OP_SUCCESS
-    | OP_PREPARE_TIMEOUT
-    | OP_COMMIT_TIMEOUT
-    | OP_FORWARD_TIMEOUT
-    | OP_WRONG_EXPECTED_VERSION
-    | OP_STREAM_DELETED
-    | OP_INVALID_TRANSACTION
-    | OP_ACCESS_DENIED
-    deriving (Eq, Enum, Show)
-
---------------------------------------------------------------------------------
 data NewEvent
     = NewEvent
       { newEventId           :: Required 1 (Value ByteString)

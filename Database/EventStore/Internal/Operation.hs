@@ -33,11 +33,23 @@ data Mode
     | Completed
 
 --------------------------------------------------------------------------------
+data OpResult
+    = OP_SUCCESS
+    | OP_PREPARE_TIMEOUT
+    | OP_COMMIT_TIMEOUT
+    | OP_FORWARD_TIMEOUT
+    | OP_WRONG_EXPECTED_VERSION
+    | OP_STREAM_DELETED
+    | OP_INVALID_TRANSACTION
+    | OP_ACCESS_DENIED
+    deriving (Eq, Enum, Show)
+
+--------------------------------------------------------------------------------
 data OperationError
     = WrongExpectedVersion Text ExpectedVersion -- ^ Stream and Expected Version
     | StreamDeleted Text                        -- ^ Stream
     | InvalidTransaction
-    | AccessDenied Text                         -- ^ Stream
+    | AccessDenied StreamName                         -- ^ Stream
     | InvalidServerResponse Word8 Word8         -- ^ Expected, Found
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason
@@ -112,9 +124,13 @@ invalidTransaction :: Operation 'Completed r
 invalidTransaction = errored InvalidTransaction
 
 --------------------------------------------------------------------------------
-accessDenied :: Text -> Operation 'Completed r
-accessDenied stream = errored (AccessDenied stream)
+accessDenied :: StreamName -> Operation 'Completed r
+accessDenied stream = errored . AccessDenied
 
 --------------------------------------------------------------------------------
 protobufDecodingError :: String -> Operation 'Completed r
 protobufDecodingError = errored . ProtobufDecodingError
+
+--------------------------------------------------------------------------------
+serverError :: Maybe Text -> Operation 'Completed r
+serverError = errored . ServerError
