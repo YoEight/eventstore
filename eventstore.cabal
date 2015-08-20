@@ -75,7 +75,10 @@ library
                    Database.EventStore.Internal.Operation.DeleteStream
                    Database.EventStore.Internal.Operation.DeleteStream.Message
                    Database.EventStore.Internal.Operation.DeleteStreamOperation
+                   Database.EventStore.Internal.Operation.ReadAllEvents
                    Database.EventStore.Internal.Operation.ReadAllEvents.Message
+                   Database.EventStore.Internal.Operation.ReadEvent
+                   Database.EventStore.Internal.Operation.ReadEvent.Message
                    Database.EventStore.Internal.Operation.ReadAllEventsOperation
                    Database.EventStore.Internal.Operation.ReadEventOperation
                    Database.EventStore.Internal.Operation.ReadStreamEventsOperation

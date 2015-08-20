@@ -25,13 +25,13 @@ import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- | Enumeration detailing the possible outcomes of reading a slice of stream.
-data ReadResult       :: StreamType -> * -> * where
-    ReadSuccess       :: a -> ReadResult t a
-    ReadNoStream      :: ReadResult 'RegularStream a
-    ReadStreamDeleted :: ReadResult 'RegularStream a
-    ReadNotModified   :: ReadResult t a
-    ReadError         :: ReadResult t a
-    ReadAccessDenied  :: ReadResult t a
+data ReadResult        :: StreamType -> * -> * where
+    ReadSuccess        :: a -> ReadResult t a
+    ReadNoStream       :: ReadResult 'RegularStream a
+    ReadStreamDeleted  :: ReadResult 'RegularStream a
+    ReadNotModified    :: ReadResult t a
+    ReadError          :: Maybe Text -> ReadResult t a
+    ReadAccessDenied   :: ReadResult t a
 
 --------------------------------------------------------------------------------
 data Slice t where
