@@ -27,6 +27,7 @@ import Data.Text
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.ReadEvent.Message
+import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

@@ -79,6 +79,8 @@ library
                    Database.EventStore.Internal.Operation.ReadAllEvents.Message
                    Database.EventStore.Internal.Operation.ReadEvent
                    Database.EventStore.Internal.Operation.ReadEvent.Message
+                   Database.EventStore.Internal.Operation.ReadStreamEvents
+                   Database.EventStore.Internal.Operation.ReadStreamEvents.Message
                    Database.EventStore.Internal.Operation.ReadAllEventsOperation
                    Database.EventStore.Internal.Operation.ReadEventOperation
                    Database.EventStore.Internal.Operation.ReadStreamEventsOperation
