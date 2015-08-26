@@ -24,6 +24,7 @@ import Data.UUID
 import Data.Word
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -125,7 +126,7 @@ invalidTransaction = errored InvalidTransaction
 
 --------------------------------------------------------------------------------
 accessDenied :: StreamName -> Operation 'Completed r
-accessDenied stream = errored . AccessDenied
+accessDenied = errored . AccessDenied
 
 --------------------------------------------------------------------------------
 protobufDecodingError :: String -> Operation 'Completed r

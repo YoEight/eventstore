@@ -1,9 +1,10 @@
-{-# LANGUAGE GADTs          #-}
 {-# LANGUAGE DataKinds      #-}
+{-# LANGUAGE GADTs          #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TypeFamilies   #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Stream
+-- Module : Database.EventStore.Internal.Operation.TransactionStart
 -- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -12,18 +13,25 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Stream where
+module Database.EventStore.Internal.Operation.TransactionStart where
+
+--------------------------------------------------------------------------------
+import Data.Int
 
 --------------------------------------------------------------------------------
 import Data.Text
 
 --------------------------------------------------------------------------------
-data StreamType = All | RegularStream
+import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Operation.Write.Common
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-data StreamName = StreamName Text | AllStream
-
---------------------------------------------------------------------------------
-instance Show StreamName where
-    show (StreamName t) = show t
-    show AllStream      = "$all"
+data Transaction =
+    Transaction
+    { _tId              :: !Int64
+    , _tStream          :: !Text
+    , _tExpectedVersion :: !ExpectedVersion
+    , _tWriteEventsOp   :: [Event] -> Operation 'Init ()
+    , _tCommitOp        :: Operation 'Init WriteResult
+    }

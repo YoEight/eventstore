@@ -34,7 +34,6 @@ import           Foreign.C.Types (CTime(..))
 import           GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
-import           Control.Concurrent.Async hiding (link)
 import qualified Data.Aeson          as A
 import           Data.Aeson.Types (Object, ToJSON(..), Pair, Parser, (.=))
 import qualified Data.HashMap.Strict as H
@@ -203,110 +202,6 @@ newEvent evt_type evt_id data_type meta_type evt_data evt_meta = do
     return new_evt
 
 --------------------------------------------------------------------------------
-data TransactionStart
-    = TransactionStart
-      { transactionStartStreamId        :: Required 1 (Value Text)
-      , transactionStartExpectedVersion :: Required 2 (Value Int32)
-      , transactionStartRequireMaster   :: Required 3 (Value Bool)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-newTransactionStart :: Text
-                    -> Int32
-                    -> Bool
-                    -> TransactionStart
-newTransactionStart stream_id exp_ver req_master =
-    TransactionStart
-    { transactionStartStreamId        = putField stream_id
-    , transactionStartExpectedVersion = putField exp_ver
-    , transactionStartRequireMaster   = putField req_master
-    }
-
---------------------------------------------------------------------------------
-instance Encode TransactionStart
-
---------------------------------------------------------------------------------
-data TransactionStartCompleted
-    = TransactionStartCompleted
-      { transactionSCId      :: Required 1 (Value Int64)
-      , transactionSCResult  :: Required 2 (Enumeration OpResult)
-      , transactionSCMessage :: Optional 3 (Value Text)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Decode TransactionStartCompleted
-
---------------------------------------------------------------------------------
-data TransactionWrite
-    = TransactionWrite
-      { transactionWriteId            :: Required 1 (Value Int64)
-      , transactionWriteEvents        :: Repeated 2 (Message NewEvent)
-      , transactionWriteRequireMaster :: Required 3 (Value Bool)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Encode TransactionWrite
-
---------------------------------------------------------------------------------
-newTransactionWrite :: Int64 -> [NewEvent] -> Bool -> TransactionWrite
-newTransactionWrite trans_id evts req_master =
-    TransactionWrite
-    { transactionWriteId            = putField trans_id
-    , transactionWriteEvents        = putField evts
-    , transactionWriteRequireMaster = putField req_master
-    }
-
---------------------------------------------------------------------------------
-data TransactionWriteCompleted
-    = TransactionWriteCompleted
-      { transactionWCId      :: Required 1 (Value Int64)
-      , transactionWCResult  :: Required 2 (Enumeration OpResult)
-      , transactionWCMessage :: Optional 3 (Value Text)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Decode TransactionWriteCompleted
-
---------------------------------------------------------------------------------
-data TransactionCommit
-    = TransactionCommit
-      { transactionCommitId            :: Required 1 (Value Int64)
-      , transactionCommitRequireMaster :: Required 2 (Value Bool)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Encode TransactionCommit
-
---------------------------------------------------------------------------------
-newTransactionCommit :: Int64 -> Bool -> TransactionCommit
-newTransactionCommit trans_id req_master =
-    TransactionCommit
-    { transactionCommitId = putField trans_id
-    , transactionCommitRequireMaster = putField req_master
-    }
-
---------------------------------------------------------------------------------
-data TransactionCommitCompleted
-    = TransactionCommitCompleted
-      { transactionCCId              :: Required 1 (Value Int64)
-      , transactionCCResult          :: Required 2 (Enumeration OpResult)
-      , transactionCCMessage         :: Optional 3 (Value Text)
-      , transactionCCFirstNumber     :: Required 4 (Value Int32)
-      , transactionCCLastNumber      :: Required 5 (Value Int32)
-      , transactionCCPreparePosition :: Optional 6 (Value Int64)
-      , transactionCCCommitPosition  :: Optional 7 (Value Int64)
-      }
-    deriving (Generic, Show)
-
---------------------------------------------------------------------------------
-instance Decode TransactionCommitCompleted
-
---------------------------------------------------------------------------------
 data EventRecord
     = EventRecord
       { eventRecordStreamId     :: Required 1  (Value Text)
@@ -370,17 +265,6 @@ positionStart = Position 0 0
 -- | Representing the end of the transaction file.
 positionEnd :: Position
 positionEnd = Position (-1) (-1)
-
---------------------------------------------------------------------------------
--- | Returned after writing to a stream.
-data WriteResult
-    = WriteResult
-      { writeNextExpectedVersion :: !Int32
-        -- ^ Next expected version of the stream.
-      , writePosition :: !Position
-        -- ^ 'Position' of the write.
-      }
-    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- | Represents a previously written event.
@@ -496,27 +380,6 @@ data ReadDirection
     = Forward  -- ^ From beginning to end
     | Backward -- ^ From end to beginning
     deriving (Eq, Show)
-
---------------------------------------------------------------------------------
--- Transaction
---------------------------------------------------------------------------------
--- | Represents a multi-request transaction with the EventStore.
-data Transaction
-    = Transaction
-      { transactionId :: Int64
-        -- ^ The ID of the transaction. This can be used to recover a
-        -- transaction later.
-      , transactionStreamId :: Text
-        -- ^ The name of the stream.
-      , transactionExpectedVersion :: ExpectedVersion
-        -- ^ Expected version of the stream.
-      , transactionCommit :: IO (Async WriteResult)
-        -- ^ Asynchronously commits this transaction.
-      , transactionSendEvents :: [Event] -> IO (Async ())
-        -- ^ Asynchronously writes to a transaction in the EventStore.
-      , transactionRollback :: IO ()
-        -- ^ Rollback this transaction.
-      }
 
 --------------------------------------------------------------------------------
 -- Flag

@@ -28,8 +28,6 @@ import Data.Text
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription
-import Database.EventStore.Internal.Operation.ReadStreamEventsOperation
-import Database.EventStore.Internal.Operation.ReadAllEventsOperation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

@@ -40,7 +40,7 @@ instance Encode Request
 --------------------------------------------------------------------------------
 newRequest :: Text -> Int32 -> Bool -> Bool -> Request
 newRequest stream_id evt_num res_link_tos req_master =
-    ReadEvent
+    Request
     { _streamId       = putField stream_id
     , _eventNumber    = putField evt_num
     , _resolveLinkTos = putField res_link_tos

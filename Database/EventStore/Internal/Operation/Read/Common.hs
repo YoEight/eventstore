@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds      #-}
 {-# LANGUAGE GADTs          #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TypeFamilies   #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation.Read.Common
@@ -15,10 +16,11 @@
 module Database.EventStore.Internal.Operation.Read.Common where
 
 --------------------------------------------------------------------------------
+import Data.Int
+
 --------------------------------------------------------------------------------
 import Data.Text
 
---------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
@@ -34,19 +36,53 @@ data ReadResult        :: StreamType -> * -> * where
     ReadAccessDenied   :: ReadResult t a
 
 --------------------------------------------------------------------------------
-data Slice t where
-    Slice { sliceStream          :: !Text
-          , sliceFromEventNumber :: !Int32
-          , sliceNextEventNumber :: !Int32
-          , sliceLastEventNumber :: !Int32
-          , sliceEOS             :: !Bool
-          , sliceEvents          :: ![ResolvedEvent]
-          , sliceDirection       :: !ReadDirection
-          } :: Slice 'RegularType
+class Slice a where
+    type Loc a
 
-    AllSlice { sliceFromPosition :: !Position
-             , sliceNextPosition :: !Position
-             , sliceEOS          :: !Bool
-             , sliceEvents       :: ![ResolvedEvent]
-             , sliceDirection    :: !ReadDirection
-             } :: Slice 'All
+    sliceEvents    :: a -> [ResolvedEvent]
+    sliceDirection :: a -> ReadDirection
+    sliceEOS       :: a -> Bool
+    sliceFrom      :: a -> Loc a
+    sliceNext      :: a -> Loc a
+
+--------------------------------------------------------------------------------
+data StreamSlice =
+    StreamSlice
+    { sliceStream :: !Text
+    , sliceLast   :: !Int32
+    , _ssDir      :: !ReadDirection
+    , _ssFrom     :: !Int32
+    , _ssNext     :: !Int32
+    , _ssEvents   :: ![ResolvedEvent]
+    , _ssEOS      :: !Bool
+    }
+
+--------------------------------------------------------------------------------
+instance Slice StreamSlice where
+    type Loc StreamSlice = Int32
+
+    sliceEvents    = _ssEvents
+    sliceDirection = _ssDir
+    sliceEOS       = _ssEOS
+    sliceFrom      = _ssFrom
+    sliceNext      = _ssNext
+
+--------------------------------------------------------------------------------
+data AllSlice =
+    AllSlice
+    { _saFrom   :: !Position
+    , _saNext   :: !Position
+    , _saDir    :: !ReadDirection
+    , _saEvents :: ![ResolvedEvent]
+    , _saEOS    :: !Bool
+    }
+
+--------------------------------------------------------------------------------
+instance Slice AllSlice where
+    type Loc AllSlice = Position
+
+    sliceEvents    = _saEvents
+    sliceDirection = _saDir
+    sliceEOS       = _saEOS
+    sliceFrom      = _saFrom
+    sliceNext      = _saNext

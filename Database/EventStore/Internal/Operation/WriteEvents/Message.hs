@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds     #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Operation.ReadAllEvents.Message
+-- Module : Database.EventStore.Internal.Operation.TransactionStart.Message
 -- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -11,7 +11,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Operation.ReadAllEvents.Message where
+module Database.EventStore.Internal.Operation.WriteEvents.Message where
 
 --------------------------------------------------------------------------------
 import Data.Int
@@ -22,16 +22,16 @@ import Data.ProtocolBuffers
 import Data.Text
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data Request
     = Request
-      { _commitPosition  :: Required 1 (Value Int64)
-      , _preparePosition :: Required 2 (Value Int64)
-      , _maxCount        :: Required 3 (Value Int32)
-      , _resolveLinkTos  :: Required 4 (Value Bool)
-      , _requireMaster   :: Required 5 (Value Bool)
+      { _streamId        :: Required 1 (Value Text)
+      , _expectedVersion :: Required 2 (Value Int32)
+      , _events          :: Repeated 3 (Message NewEvent)
+      , _requireMaster   :: Required 4 (Value Bool)
       }
     deriving (Generic, Show)
 
@@ -39,41 +39,28 @@ data Request
 instance Encode Request
 
 --------------------------------------------------------------------------------
-newRequest :: Int64
-           -> Int64
-           -> Int32
-           -> Bool
-           -> Bool
+newRequest :: Text        -- ^ Stream
+           -> Int32       -- ^ Expected version
+           -> [NewEvent]  -- ^ Events
+           -> Bool        -- ^ Require master
            -> Request
-newRequest c_pos p_pos max_c res_link_tos req_master =
+newRequest stream_id exp_ver evts req_master =
     Request
-    { _commitPosition  = putField c_pos
-    , _preparePosition = putField p_pos
-    , _maxCount        = putField max_c
-    , _resolveLinkTos  = putField res_link_tos
+    { _streamId        = putField stream_id
+    , _expectedVersion = putField exp_ver
+    , _events          = putField evts
     , _requireMaster   = putField req_master
     }
 
 --------------------------------------------------------------------------------
--- | Enumeration detailing the possible outcomes of reading a slice of $all
---   stream.
-data Result
-    = SUCCESS
-    | NOT_MODIFIED
-    | ERROR
-    | ACCESS_DENIED
-    deriving (Eq, Enum, Show)
-
---------------------------------------------------------------------------------
 data Response
     = Response
-      { _CommitPosition      :: Required 1 (Value Int64)
-      , _PreparePosition     :: Required 2 (Value Int64)
-      , _Events              :: Repeated 3 (Message ResolvedEventBuf)
-      , _NextCommitPosition  :: Required 4 (Value Int64)
-      , _NextPreparePosition :: Required 5 (Value Int64)
-      , _Result              :: Optional 6 (Enumeration Result)
-      , _Error               :: Optional 7 (Value Text)
+      { _result          :: Required 1 (Enumeration OpResult)
+      , _message         :: Optional 2 (Value Text)
+      , _firstNumber     :: Required 3 (Value Int32)
+      , _lastNumber      :: Required 4 (Value Int32)
+      , _preparePosition :: Optional 5 (Value Int64)
+      , _commitPosition  :: Optional 6 (Value Int64)
       }
     deriving (Generic, Show)
 

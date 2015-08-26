@@ -13,11 +13,13 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Operation.ReadEvent (readEvent) where
+module Database.EventStore.Internal.Operation.ReadEvent
+    ( ReadEvent(..)
+    , readEvent
+    ) where
 
 --------------------------------------------------------------------------------
 import Data.Int
-import Data.Maybe
 
 --------------------------------------------------------------------------------
 import Data.ProtocolBuffers
@@ -28,6 +30,7 @@ import Data.Text
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.ReadEvent.Message
 import Database.EventStore.Internal.Operation.Read.Common
+import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
