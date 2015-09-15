@@ -1,9 +1,6 @@
-{-# LANGUAGE DataKinds                 #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE KindSignatures            #-}
-{-# LANGUAGE GADTs                     #-}
-{-# LANGUAGE Rank2Types                #-}
-{-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE GADTs           #-}
+{-# LANGUAGE Rank2Types      #-}
+{-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Manager.Subscription.Model
@@ -46,6 +43,7 @@ import           Data.UUID
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Type of persistent action.
 data PersistAction
     = PersistCreate PersistentSubscriptionSettings
     | PersistUpdate PersistentSubscriptionSettings
@@ -100,9 +98,12 @@ runningUUID (RunningReg i _ _ _ _)         = i
 runningUUID (RunningPersist i _ _ _ _ _ _) = i
 
 --------------------------------------------------------------------------------
+-- | Type of requests handled by the model.
 data Request a where
-    Query   :: Query a -> Request a
+    Query :: Query a -> Request a
+    -- ^ Read request.
     Execute :: Action -> Request Model
+    -- ^ Write request.
 
 --------------------------------------------------------------------------------
 -- | Set of a piece of information we can query from the 'Subscription' model.

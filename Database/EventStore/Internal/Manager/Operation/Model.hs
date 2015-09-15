@@ -12,6 +12,7 @@
 -- Stability : provisional
 -- Portability : non-portable
 --
+-- Main operation bookkeeping structure.
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Operation.Model
     ( Model
@@ -31,19 +32,26 @@ import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Entry of a running 'Operation'.
 data Elem r =
     forall a.
     Elem
     { _eAttempt :: !Int
-    , _eOp      :: !(Operation 'Pending a)
-    , _cb       :: Either OperationError a -> r
+      -- ^ How many time that operation failed.
+    , _eOp :: !(Operation 'Pending a)
+      -- ^ Current operation state-machine.
+    , _cb :: Either OperationError a -> r
+      -- ^ Callback called on operation completion.
     }
 
 --------------------------------------------------------------------------------
+-- | Operation internal state.
 data State r =
     State
-    { _gen     :: Generator
+    { _gen :: Generator
+      -- ^ 'UUID' generator.
     , _pending :: H.HashMap UUID (Elem r)
+      -- ^ Contains all running 'Operation's.
     }
 
 --------------------------------------------------------------------------------
@@ -51,20 +59,29 @@ initState :: Generator -> State r
 initState g = State g H.empty
 
 --------------------------------------------------------------------------------
-data In r
+-- | Type of requests handled by the model.
+data Request r
     = forall a. New (Operation 'Init a) (Either OperationError a -> r)
+      -- ^ Register a new 'Operation'.
     | Pkg Package
+      -- ^ Submit a package.
 
 --------------------------------------------------------------------------------
+-- | Model logic when serving a 'Request'.
 data Step r
     = Done r (Model r)
+      -- ^ The model was able to produce a final value.
     | Send Package (Model r)
+      -- ^ The model wants that 'Package' to be sent to the server.
     | Cont (Model r)
+      -- ^ The model only update its internal state with no intermediary value.
 
 --------------------------------------------------------------------------------
-newtype Model r = Model (In r -> Maybe (Step r))
+newtype Model r = Model (Request r -> Maybe (Step r))
 
 --------------------------------------------------------------------------------
+-- | Pushes a new 'Operation' to model. The given 'Operation' state-machine is
+--   initialized and produces a 'Package'.
 pushOperation :: (Either OperationError a -> r)
               -> Operation 'Init a
               -> Model r
@@ -73,10 +90,14 @@ pushOperation cb op (Model k) =
     let Just (Send pkg nxt) = k (New op cb) in (pkg, nxt)
 
 --------------------------------------------------------------------------------
+-- | Submits a 'Package' to the model. If the model isn't concerned by the
+--   'Package', it will returns 'Nothing'. Because 'Operation' can implement
+--   complex logic (retry for instance), it returns a 'Step'.
 submitPackage :: Package -> Model r -> Maybe (Step r)
 submitPackage pkg (Model k) = k (Pkg pkg)
 
 --------------------------------------------------------------------------------
+-- | Creates a new 'Operation' model state-machine.
 newModel :: Generator -> Model r
 newModel g = Model $ go $ initState g
   where
