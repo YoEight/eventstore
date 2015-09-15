@@ -67,6 +67,7 @@ library
                    Database.EventStore.Internal.TimeSpan
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Manager.Operation
+                   Database.EventStore.Internal.Manager.Operation.Model
                    Database.EventStore.Internal.Manager.Subscription
                    Database.EventStore.Internal.Manager.Subscription.Driver
                    Database.EventStore.Internal.Manager.Subscription.Message
@@ -85,6 +86,7 @@ library
                    Database.EventStore.Internal.Operation.WriteEvents.Message
                    Database.EventStore.Internal.Operation.Write.Common
                    Database.EventStore.Internal.Util.Sodium
+                   Database.EventStore.Internal.Util.Type
                    Database.EventStore.Internal.Writer
 
   -- LANGUAGE extensions used by modules in this package.
