@@ -16,6 +16,12 @@
 module Database.EventStore.Internal.Processor
     ( Processor
     , newProcessor
+    , connectRegularStream
+    , connectPersistent
+    , createPersistent
+    , updatePersistent
+    , deletePersistent
+    , newOperation
     ) where
 
 --------------------------------------------------------------------------------
@@ -76,6 +82,78 @@ data SubscriptionCmd r
                     Text
                     Text
       -- ^ Deletes a persistent subscription.
+
+--------------------------------------------------------------------------------
+-- | Creates a regular subscription connection.
+connectRegularStream :: (SubConnectEvent -> r)
+                     -> Text -- ^ Stream name.
+                     -> Bool -- ^ Resolve Link TOS.
+                     -> Processor r
+                     -> (Package, Processor r)
+connectRegularStream c s tos (Processor k) =
+    let Send pkg nxt =
+            k $ Cmd $ SubscriptionCmd $ ConnectStream c s tos in
+    (pkg, nxt)
+
+--------------------------------------------------------------------------------
+-- | Creates a persistent subscription connection.
+connectPersistent :: (SubConnectEvent -> r)
+                  -> Text  -- ^ Group name.
+                  -> Text  -- ^ Stream name.
+                  -> Int32 -- ^ Buffer size.
+                  -> Processor r
+                  -> (Package, Processor r)
+connectPersistent c g s siz (Processor k) =
+    let Send pkg nxt =
+            k $ Cmd $ SubscriptionCmd $ ConnectPersist c g s siz in
+    (pkg, nxt)
+
+--------------------------------------------------------------------------------
+-- | Creates a persistent subscription.
+createPersistent :: (Either PersistActionException ConfirmedAction -> r)
+                 -> Text -- ^ Group name.
+                 -> Text -- ^ Stream name.
+                 -> PersistentSubscriptionSettings
+                 -> Processor r
+                 -> (Package, Processor r)
+createPersistent c g s sett (Processor k) =
+    let Send pkg nxt =
+            k $ Cmd $ SubscriptionCmd $ CreatePersist c g s sett in
+    (pkg, nxt)
+
+--------------------------------------------------------------------------------
+-- | Updates a persistent subscription.
+updatePersistent :: (Either PersistActionException ConfirmedAction -> r)
+                 -> Text -- ^ Group name.
+                 -> Text -- ^ Stream name.
+                 -> PersistentSubscriptionSettings
+                 -> Processor r
+                 -> (Package, Processor r)
+updatePersistent c g s sett (Processor k) =
+    let Send pkg nxt =
+            k $ Cmd $ SubscriptionCmd $ UpdatePersist c g s sett in
+    (pkg, nxt)
+
+--------------------------------------------------------------------------------
+-- | Deletes a persistent subscription.
+deletePersistent :: (Either PersistActionException ConfirmedAction -> r)
+                 -> Text -- ^ Group name.
+                 -> Text -- ^ Stream name.
+                 -> Processor r
+                 -> (Package, Processor r)
+deletePersistent c g s (Processor k) =
+    let Send pkg nxt =
+            k $ Cmd $ SubscriptionCmd $ DeletePersist c g s in
+    (pkg, nxt)
+
+--------------------------------------------------------------------------------
+-- | Registers a new 'Operation'.
+newOperation :: (Either OperationError a -> r)
+             -> Operation 'Init a
+             -> Processor r
+             -> (Package, Processor r)
+newOperation c op (Processor k) =
+    let Send pkg nxt = k $ Cmd $ NewOp op c in (pkg, nxt)
 
 --------------------------------------------------------------------------------
 -- | 'Processor' internal state.
