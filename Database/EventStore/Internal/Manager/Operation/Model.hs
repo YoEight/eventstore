@@ -16,7 +16,6 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Operation.Model
     ( Model
-    , Step(..)
     , newModel
     , pushOperation
     , submitPackage
@@ -29,6 +28,7 @@ import           Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Step
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -67,17 +67,7 @@ data Request r
       -- ^ Submit a package.
 
 --------------------------------------------------------------------------------
--- | Model logic when serving a 'Request'.
-data Step r
-    = Done r (Model r)
-      -- ^ The model was able to produce a final value.
-    | Send Package (Model r)
-      -- ^ The model wants that 'Package' to be sent to the server.
-    | Cont (Model r)
-      -- ^ The model only update its internal state with no intermediary value.
-
---------------------------------------------------------------------------------
-newtype Model r = Model (Request r -> Maybe (Step r))
+newtype Model r = Model (Request r -> Maybe (Step Model r))
 
 --------------------------------------------------------------------------------
 -- | Pushes a new 'Operation' to model. The given 'Operation' state-machine is
@@ -93,7 +83,7 @@ pushOperation cb op (Model k) =
 -- | Submits a 'Package' to the model. If the model isn't concerned by the
 --   'Package', it will returns 'Nothing'. Because 'Operation' can implement
 --   complex logic (retry for instance), it returns a 'Step'.
-submitPackage :: Package -> Model r -> Maybe (Step r)
+submitPackage :: Package -> Model r -> Maybe (Step Model r)
 submitPackage pkg (Model k) = k (Pkg pkg)
 
 --------------------------------------------------------------------------------

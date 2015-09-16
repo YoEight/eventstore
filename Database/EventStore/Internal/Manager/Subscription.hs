@@ -14,7 +14,6 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Subscription
     ( module Database.EventStore.Internal.Manager.Subscription.Driver
-    , module Database.EventStore.Internal.Manager.Subscription.Model
     , Regular
     , Persistent
     , Catchup
@@ -33,7 +32,6 @@ import Data.Sequence
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription.Driver
-import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
