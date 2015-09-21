@@ -77,8 +77,8 @@ readEvent Settings{..} s evtn tos = Operation create
                 case r of
                     NOT_FOUND      -> success not_found
                     NO_STREAM      -> success ReadNoStream
-                    STREAM_DELETED -> success ReadStreamDeleted
+                    STREAM_DELETED -> success $ ReadStreamDeleted s
                     ERROR          -> success (ReadError err)
-                    ACCESS_DENIED  -> success ReadAccessDenied
+                    ACCESS_DENIED  -> success $ ReadAccessDenied $ StreamName s
                     SUCCESS        -> success found
         | otherwise = Left $ Operation pending

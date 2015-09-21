@@ -531,7 +531,7 @@ data StreamMetadata
 
 --------------------------------------------------------------------------------
 -- | Gets a custom property value from metadata.
-streamMetadataGetCustomPropertyValue :: StreamMetadata -> Text -> Maybe A.Value
+streamMetadataGetCustomPropertyValue :: StreamMetadata -> Text -> Maybe A.Value
 streamMetadataGetCustomPropertyValue s k = H.lookup k obj
   where
     obj = streamMetadataCustom s

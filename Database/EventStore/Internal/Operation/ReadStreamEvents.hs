@@ -79,9 +79,9 @@ readStreamEvents Settings{..} dir s st cnt tos = Operation create
                     found = StreamSlice s lst dir st nxt evts eos in
                 case r of
                     NO_STREAM      -> success ReadNoStream
-                    STREAM_DELETED -> success ReadStreamDeleted
+                    STREAM_DELETED -> success $ ReadStreamDeleted s
                     NOT_MODIFIED   -> success ReadNotModified
                     ERROR          -> success (ReadError err)
-                    ACCESS_DENIED  -> success ReadAccessDenied
+                    ACCESS_DENIED  -> success $ ReadAccessDenied $ StreamName s
                     SUCCESS        -> success (ReadSuccess found)
         | otherwise = Left $ Operation pending

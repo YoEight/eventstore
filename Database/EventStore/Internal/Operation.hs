@@ -50,7 +50,7 @@ data OperationError
     = WrongExpectedVersion Text ExpectedVersion -- ^ Stream and Expected Version
     | StreamDeleted Text                        -- ^ Stream
     | InvalidTransaction
-    | AccessDenied StreamName                         -- ^ Stream
+    | AccessDenied StreamName                   -- ^ Stream
     | InvalidServerResponse Word8 Word8         -- ^ Expected, Found
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason

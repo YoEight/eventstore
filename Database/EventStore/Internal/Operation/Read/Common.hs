@@ -30,10 +30,10 @@ import Database.EventStore.Internal.Types
 data ReadResult        :: StreamType -> * -> * where
     ReadSuccess        :: a -> ReadResult t a
     ReadNoStream       :: ReadResult 'RegularStream a
-    ReadStreamDeleted  :: ReadResult 'RegularStream a
+    ReadStreamDeleted  :: Text -> ReadResult 'RegularStream a
     ReadNotModified    :: ReadResult t a
     ReadError          :: Maybe Text -> ReadResult t a
-    ReadAccessDenied   :: ReadResult t a
+    ReadAccessDenied   :: StreamName -> ReadResult t a
 
 --------------------------------------------------------------------------------
 class Slice a where

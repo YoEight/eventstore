@@ -57,8 +57,7 @@ library
   exposed-modules: Database.EventStore
                    Database.EventStore.Logging
   -- Modules included in this library but not exported.
-  other-modules:   Database.EventStore.Catchup
-                   Database.EventStore.Internal.Connection
+  other-modules:   Database.EventStore.Internal.Connection
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Packages
                    Database.EventStore.Internal.Processor
@@ -83,6 +82,7 @@ library
                    Database.EventStore.Internal.Operation.ReadStreamEvents
                    Database.EventStore.Internal.Operation.ReadStreamEvents.Message
                    Database.EventStore.Internal.Operation.Read.Common
+                   Database.EventStore.Internal.Operation.StreamMetadata
                    Database.EventStore.Internal.Operation.WriteEvents
                    Database.EventStore.Internal.Operation.WriteEvents.Message
                    Database.EventStore.Internal.Operation.Write.Common

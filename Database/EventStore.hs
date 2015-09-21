@@ -179,13 +179,13 @@ import Data.Aeson (decode)
 import Data.Text hiding (group)
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Catchup
 import Database.EventStore.Internal.Manager.Subscription hiding (ConnectPersist)
 import Database.EventStore.Internal.Manager.Subscription.Message
 import Database.EventStore.Internal.Operation.DeleteStream
 import Database.EventStore.Internal.Operation.ReadAllEvents
 import Database.EventStore.Internal.Operation.ReadEvent
 import Database.EventStore.Internal.Operation.ReadStreamEvents
+import Database.EventStore.Internal.Operation.StreamMetadata
 import Database.EventStore.Internal.Operation.TransactionStart
 import Database.EventStore.Internal.Operation.WriteEvents
 import Database.EventStore.Internal.Processor
