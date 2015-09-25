@@ -22,6 +22,7 @@ module Database.EventStore.Internal.Processor
     , updatePersistent
     , deletePersistent
     , newOperation
+    , submitPackage
     ) where
 
 --------------------------------------------------------------------------------
@@ -32,14 +33,12 @@ import Data.Text
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
-import Database.EventStore.Internal.Manager.Subscription
 import Database.EventStore.Internal.Operation
-import Database.EventStore.Internal.Manager.Operation.Model
 import Database.EventStore.Internal.Step
 import Database.EventStore.Internal.Types
 
-import qualified Database.EventStore.Internal.Manager.Operation.Model     as Op
-import qualified Database.EventStore.Internal.Manager.Subscription.Driver as Sub
+import qualified Database.EventStore.Internal.Manager.Operation.Model as Op
+import qualified Database.EventStore.Internal.Manager.Subscription    as Sub
 
 --------------------------------------------------------------------------------
 -- | Type of inputs handled by the 'Processor' driver.
@@ -47,7 +46,6 @@ data In r
     = Cmd (Cmd r)
       -- ^ A command can be an 'Operation' or a 'Subscription' actions.
     | Pkg Package
-      -- ^ A 'Package' has been sent by the server and needs to be processed by
       --   the 'Processor'.
 
 --------------------------------------------------------------------------------
@@ -61,31 +59,31 @@ data Cmd r
 --------------------------------------------------------------------------------
 -- | Supported subscription command.
 data SubscriptionCmd r
-    = ConnectStream (SubConnectEvent -> r) Text Bool
+    = ConnectStream (Sub.SubConnectEvent -> r) Text Bool
       -- ^ Creates a regular subscription connection.
-    | ConnectPersist (SubConnectEvent -> r) Text Text Int32
+    | ConnectPersist (Sub.SubConnectEvent -> r) Text Text Int32
       -- ^ Creates a persistent subscription connection.
 
-    | CreatePersist (Either PersistActionException ConfirmedAction -> r)
+    | CreatePersist (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                     Text
                     Text
                     PersistentSubscriptionSettings
       -- ^ Creates a persistent subscription.
 
-    | UpdatePersist (Either PersistActionException ConfirmedAction -> r)
+    | UpdatePersist (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                     Text
                     Text
                     PersistentSubscriptionSettings
       -- ^ Updates a persistent subscription.
 
-    | DeletePersist (Either PersistActionException ConfirmedAction -> r)
+    | DeletePersist (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                     Text
                     Text
       -- ^ Deletes a persistent subscription.
 
 --------------------------------------------------------------------------------
 -- | Creates a regular subscription connection.
-connectRegularStream :: (SubConnectEvent -> r)
+connectRegularStream :: (Sub.SubConnectEvent -> r)
                      -> Text -- ^ Stream name.
                      -> Bool -- ^ Resolve Link TOS.
                      -> Processor r
@@ -97,7 +95,7 @@ connectRegularStream c s tos (Processor k) =
 
 --------------------------------------------------------------------------------
 -- | Creates a persistent subscription connection.
-connectPersistent :: (SubConnectEvent -> r)
+connectPersistent :: (Sub.SubConnectEvent -> r)
                   -> Text  -- ^ Group name.
                   -> Text  -- ^ Stream name.
                   -> Int32 -- ^ Buffer size.
@@ -110,7 +108,7 @@ connectPersistent c g s siz (Processor k) =
 
 --------------------------------------------------------------------------------
 -- | Creates a persistent subscription.
-createPersistent :: (Either PersistActionException ConfirmedAction -> r)
+createPersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                  -> Text -- ^ Group name.
                  -> Text -- ^ Stream name.
                  -> PersistentSubscriptionSettings
@@ -123,7 +121,7 @@ createPersistent c g s sett (Processor k) =
 
 --------------------------------------------------------------------------------
 -- | Updates a persistent subscription.
-updatePersistent :: (Either PersistActionException ConfirmedAction -> r)
+updatePersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                  -> Text -- ^ Group name.
                  -> Text -- ^ Stream name.
                  -> PersistentSubscriptionSettings
@@ -136,7 +134,7 @@ updatePersistent c g s sett (Processor k) =
 
 --------------------------------------------------------------------------------
 -- | Deletes a persistent subscription.
-deletePersistent :: (Either PersistActionException ConfirmedAction -> r)
+deletePersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                  -> Text -- ^ Group name.
                  -> Text -- ^ Stream name.
                  -> Processor r
@@ -156,18 +154,23 @@ newOperation c op (Processor k) =
     let Send pkg nxt = k $ Cmd $ NewOp op c in (pkg, nxt)
 
 --------------------------------------------------------------------------------
+-- | Submits a 'Package'.
+submitPackage :: Package -> Processor r -> Step Processor r
+submitPackage pkg (Processor k) = k $ Pkg pkg
+
+--------------------------------------------------------------------------------
 -- | 'Processor' internal state.
 data State r =
     State
-    { _subDriver :: Driver r
+    { _subDriver :: Sub.Driver r
       -- ^ Subscription driver.
-    , _opModel :: Model r
+    , _opModel :: Op.Model r
       -- ^ Operation model.
     }
 
 --------------------------------------------------------------------------------
 initState :: Settings -> Generator -> State r
-initState setts g = State (newDriver setts g1) (newModel g2)
+initState setts g = State (Sub.newDriver setts g1) (Op.newModel g2)
   where
     (g1, g2) = splitGenerator g
 
@@ -183,7 +186,7 @@ newProcessor setts gen = Processor $ go $ initState setts gen
     go st (Cmd tpe) =
         case tpe of
             NewOp op cb ->
-                let (pkg, nxt_m) = pushOperation cb op $ _opModel st
+                let (pkg, nxt_m) = Op.pushOperation cb op $ _opModel st
                     nxt_st       = st { _opModel = nxt_m } in
                 Send pkg (Processor $ go nxt_st)
             SubscriptionCmd cmd -> subCmd st cmd
@@ -208,27 +211,27 @@ newProcessor setts gen = Processor $ go $ initState setts gen
     subCmd st@State{..} cmd =
         case cmd of
             ConnectStream k s tos ->
-                let (pkg, nxt_drv) = connectToStream k s tos _subDriver
+                let (pkg, nxt_drv) = Sub.connectToStream k s tos _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Send pkg nxt
             ConnectPersist k g s b ->
-                let (pkg, nxt_drv) = connectToPersist k g s b _subDriver
+                let (pkg, nxt_drv) = Sub.connectToPersist k g s b _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Send pkg nxt
             CreatePersist k g s ss ->
-                let (pkg, nxt_drv) = createPersist k g s ss _subDriver
+                let (pkg, nxt_drv) = Sub.createPersist k g s ss _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Send pkg nxt
             UpdatePersist k g s ss ->
-                let (pkg, nxt_drv) = updatePersist k g s ss _subDriver
+                let (pkg, nxt_drv) = Sub.updatePersist k g s ss _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Send pkg nxt
             DeletePersist k g s ->
-                let (pkg, nxt_drv) = deletePersist k g s _subDriver
+                let (pkg, nxt_drv) = Sub.deletePersist k g s _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Send pkg nxt

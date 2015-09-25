@@ -58,6 +58,7 @@ library
                    Database.EventStore.Logging
   -- Modules included in this library but not exported.
   other-modules:   Database.EventStore.Internal.Connection
+                   Database.EventStore.Internal.Execution.Production
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Packages
                    Database.EventStore.Internal.Processor

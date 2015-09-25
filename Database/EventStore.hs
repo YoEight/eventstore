@@ -191,6 +191,7 @@ import Database.EventStore.Internal.Operation.WriteEvents
 import Database.EventStore.Internal.Processor
 import Database.EventStore.Internal.TimeSpan
 import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Execution.Production
 
 --------------------------------------------------------------------------------
 -- Connection

@@ -15,19 +15,22 @@
 module Database.EventStore.Internal.Connection
     ( Connection
     , ConnectionException(..)
+    , HostName
     , connUUID
     , connClose
     , connFlush
     , connSend
     , connRecv
+    , connIsClosed
     , newConnection
     ) where
 
 --------------------------------------------------------------------------------
 import           Control.Concurrent
+import           Control.Concurrent.STM
 import           Control.Exception
 import qualified Data.ByteString as B
-import           Data.IORef
+import           Data.Foldable
 import           System.IO
 
 --------------------------------------------------------------------------------
@@ -50,17 +53,16 @@ instance Exception ConnectionException
 
 --------------------------------------------------------------------------------
 data In a where
-    Id    :: In UUID
-    Close :: In ()
-    Flush :: In ()
-    Send  :: B.ByteString -> In ()
-    Recv  :: Int -> In B.ByteString
+    Id       :: In UUID
+    Close    :: In ()
+    Flush    :: In ()
+    Send     :: B.ByteString -> In ()
+    Recv     :: Int -> In B.ByteString
 
 --------------------------------------------------------------------------------
 data Connection =
     Connection
-    { _sem   :: QSem
-    , _ref   :: IORef State
+    { _var   :: TMVar State
     , _host  :: HostName
     , _port  :: Int
     , _setts :: Settings
@@ -76,9 +78,8 @@ data State
 -- | Creates a new 'Connection'.
 newConnection :: Settings -> HostName -> Int -> IO Connection
 newConnection setts host port = do
-    sem <- newQSem 1
-    ref <- newIORef Offline
-    return $ Connection sem ref host port setts
+    var <- newTMVarIO Offline
+    return $ Connection var host port setts
 
 --------------------------------------------------------------------------------
 -- | Gets current 'Connection' 'UUID'.
@@ -109,50 +110,63 @@ connRecv :: Connection -> Int -> IO B.ByteString
 connRecv conn i = execute conn (Recv i)
 
 --------------------------------------------------------------------------------
+-- | Returns True if the connection is in closed state.
+connIsClosed :: Connection -> STM Bool
+connIsClosed Connection{..} = do
+    r <- readTMVar _var
+    case r of
+        Closed -> return True
+        _      -> return False
+
+--------------------------------------------------------------------------------
 -- | Get a new 'Handle' and a 'UUID' from the 'Connection'. It handle automatic
 --   connection when the 'Connection' State is 'Offline.'
 getHandle :: Connection -> IO (UUID, Handle)
 getHandle Connection{..} = do
-    waitQSem _sem
-    s <- readIORef _ref
-    r <- case s of
-        Offline -> do
-            ns@(Online u hdl) <- newState _setts _host _port
-            writeIORef _ref ns
+    r <- atomically $ do
+        s <- takeTMVar _var
+        case s of
+            Offline -> return Nothing
+            Online u hdl -> do
+                putTMVar _var s
+                return $ Just (u, hdl)
+            Closed -> throwSTM ClosedConnection
+    case r of
+        Nothing -> do
+            st@(Online u hdl) <- newState _setts _host _port
+            atomically $ putTMVar _var st
             return (u, hdl)
-        Online u hdl -> return (u, hdl)
-        Closed       -> throwIO ClosedConnection
-    signalQSem _sem
-    return r
+        Just t -> return t
 
 --------------------------------------------------------------------------------
 closeHandle :: Connection -> IO ()
 closeHandle Connection{..} = do
-    waitQSem _sem
-    writeIORef _ref Closed
-    signalQSem _sem
+    r <- atomically $ do
+        s <- takeTMVar _var
+        case s of
+            Online _ hdl -> do
+                putTMVar _var Closed
+                return $ Just hdl
+            _ -> putTMVar _var Closed >> return Nothing
+    traverse_ hClose r
 
 --------------------------------------------------------------------------------
 -- | Main connection logic. It will automatically reconnect to the server when
 --   a exception occured while the 'Handle' is accessed.
 execute :: forall a. Connection -> In a -> IO a
 execute conn i = do
+    let catcher e =
+            case fromException e of
+                Just (_ :: ConnectionException) -> throwIO e
+                _                               -> execute conn i
     (u, h) <- getHandle conn
-    go u h
-  where
-    go :: UUID -> Handle -> IO a
-    go u h =
-        let catcher e =
-                case fromException e of
-                    Just (MaxAttempt{}) -> throwIO e
-                    _                   -> execute conn i in
-        handle catcher $
-            case i of
-                Id       -> return u
-                Close    -> closeHandle conn
-                Flush    -> hFlush h
-                Send b   -> B.hPut h b
-                Recv siz -> B.hGet h siz
+    handle catcher $
+        case i of
+            Id       -> return u
+            Close    -> closeHandle conn
+            Flush    -> hFlush h
+            Send b   -> B.hPut h b
+            Recv siz -> B.hGet h siz
 
 --------------------------------------------------------------------------------
 newState :: Settings -> HostName -> Int -> IO State

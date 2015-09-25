@@ -21,7 +21,6 @@ module Database.EventStore.Internal.Operation.StreamMetadata
 import Data.Int
 import Data.Monoid ((<>))
 
---------------------------------------------------------------------------------
 import Data.Aeson (decode)
 import Data.ByteString.Lazy (fromStrict)
 import Data.Text (Text)
@@ -44,8 +43,8 @@ readMetaStream setts s =
            -> Input 'Init StreamMetadataResult a
            -> a
     create op (Create uuid) =
-    	let (pkg, nxt_op) = createPackage uuid op in
-    	(pkg, Operation $ pending nxt_op)
+        let (pkg, nxt_op) = createPackage uuid op in
+        (pkg, Operation $ pending nxt_op)
 
     pending :: forall a. Operation 'Pending (ReadResult 'RegularStream ReadEvent)
             -> Input 'Pending StreamMetadataResult a
@@ -57,13 +56,13 @@ readMetaStream setts s =
               case getReport com_op of
                   Retry n_op  -> retry $ create n_op
                   Error e     -> errored e
-                  Success tmp -> onReadResult tmp $ \s e_num evt ->
+                  Success tmp -> onReadResult tmp $ \n e_num evt ->
                       let action = do
                             orig <- resolvedEventOriginal evt
                             decode $ fromStrict $ recordedEventData orig in
                       case action of
-		          Just pv -> success $ StreamMetadataResult s e_num pv
-		          Nothing -> errored invalidFormat
+                          Just pv -> success $ StreamMetadataResult n e_num pv
+                          Nothing -> errored invalidFormat
 
 --------------------------------------------------------------------------------
 invalidFormat :: OperationError
@@ -81,6 +80,7 @@ onReadResult (ReadSuccess r) k =
     case r of
       ReadEvent s n e -> k s n e
       _               -> errored streamNotFound
+onReadResult ReadNoStream _          = errored streamNotFound
 onReadResult (ReadStreamDeleted s) _ = errored $ StreamDeleted s
 onReadResult ReadNotModified _       = errored $ ServerError Nothing
 onReadResult (ReadError e) _         = errored $ ServerError e
