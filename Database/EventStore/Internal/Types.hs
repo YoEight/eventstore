@@ -180,16 +180,27 @@ data NewEvent
 instance Encode NewEvent
 
 --------------------------------------------------------------------------------
+newEventIO :: Text             -- ^ Event type
+           -> Maybe UUID       -- ^ Event ID
+           -> Int32            -- ^ Data content type
+           -> Int32            -- ^ Metadata content type
+           -> ByteString       -- ^ Event data
+           -> Maybe ByteString -- ^ Metadata
+           -> IO NewEvent
+newEventIO evt_type evt_id data_type meta_type evt_data evt_meta = do
+    new_uuid <- maybe randomIO return evt_id
+    return $ newEvent evt_type new_uuid data_type meta_type evt_data evt_meta
+
+--------------------------------------------------------------------------------
 newEvent :: Text             -- ^ Event type
-         -> Maybe UUID       -- ^ Event ID
+         -> UUID             -- ^ Event ID
          -> Int32            -- ^ Data content type
          -> Int32            -- ^ Metadata content type
          -> ByteString       -- ^ Event data
          -> Maybe ByteString -- ^ Metadata
-         -> IO NewEvent
-newEvent evt_type evt_id data_type meta_type evt_data evt_meta = do
-    new_uuid <- maybe randomIO return evt_id
-    let uuid_bytes = toStrict $ toByteString new_uuid
+         -> NewEvent
+newEvent evt_type evt_id data_type meta_type evt_data evt_meta =
+    let uuid_bytes = toStrict $ toByteString evt_id
         new_evt    = NewEvent
                      { newEventId           = putField uuid_bytes
                      , newEventType         = putField evt_type
@@ -197,9 +208,8 @@ newEvent evt_type evt_id data_type meta_type evt_data evt_meta = do
                      , newEventMetadataType = putField meta_type
                      , newEventData         = putField evt_data
                      , newEventMetadata     = putField evt_meta
-                     }
-
-    return new_evt
+                     } in
+    new_evt
 
 --------------------------------------------------------------------------------
 data EventRecord

@@ -175,6 +175,7 @@ import Data.Monoid ((<>))
 import Control.Concurrent.Async
 import Data.Aeson (decode)
 import Data.Text hiding (group)
+import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Connection hiding (Connection)
@@ -404,8 +405,12 @@ setStreamMetadata :: Connection
                   -> ExpectedVersion
                   -> StreamMetadata
                   -> IO (Async WriteResult)
-setStreamMetadata conn evt_stream exp_ver metadata =
-    error "not implemeted"
+setStreamMetadata Connection{..} evt_stream exp_ver metadata = do
+    uuid    <- nextRandom
+    (k, as) <- createOpAsync
+    let op = Op.setMetaStream _settings evt_stream exp_ver uuid metadata
+    pushOperation _prod k op
+    return as
 
 --------------------------------------------------------------------------------
 -- | Asynchronously gets the metadata of a stream.
@@ -468,7 +473,7 @@ createOpAsync = do
 --------------------------------------------------------------------------------
 eventToNewEvent :: Event -> IO NewEvent
 eventToNewEvent evt =
-    newEvent evt_type
+    newEventIO evt_type
              evt_id
              evt_data_type
              evt_metadata_type

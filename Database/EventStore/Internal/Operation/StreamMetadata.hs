@@ -15,20 +15,25 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.StreamMetadata
-    ( readMetaStream ) where
+    ( readMetaStream
+    , setMetaStream
+    ) where
 
 --------------------------------------------------------------------------------
 import Data.Int
 import Data.Monoid ((<>))
 
-import Data.Aeson (decode)
-import Data.ByteString.Lazy (fromStrict)
+import Data.Aeson (decode, encode)
+import Data.ByteString.Lazy (fromStrict, toStrict)
 import Data.Text (Text)
+import Data.UUID (UUID)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadEvent
+import Database.EventStore.Internal.Operation.Write.Common
+import Database.EventStore.Internal.Operation.WriteEvents
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
@@ -65,6 +70,35 @@ readMetaStream setts s =
                           Nothing -> errored invalidFormat
 
 --------------------------------------------------------------------------------
+setMetaStream :: Settings
+              -> Text
+              -> ExpectedVersion
+              -> UUID
+              -> StreamMetadata
+              -> Operation 'Init WriteResult
+setMetaStream setts s v evt_uuid meta =
+    Operation $ create (writeEvents setts s v [createNewEvent meta evt_uuid])
+  where
+    create :: forall a. Operation 'Init WriteResult
+           -> Input 'Init WriteResult a
+           -> a
+    create op (Create uuid) =
+        let (pkg, nxt_op) = createPackage uuid op in
+        (pkg, Operation $ pending nxt_op)
+
+    pending :: forall a. Operation 'Pending WriteResult
+            -> Input 'Pending WriteResult a
+            -> a
+    pending op (Arrived pkg) =
+        case packageArrived pkg op of
+            Left nxt_op  -> Left $ Operation $ pending nxt_op
+            Right com_op -> Right $
+                case getReport com_op of
+                    Retry n_op -> retry $ create n_op
+                    Error e    -> errored e
+                    Success r  -> success r
+
+--------------------------------------------------------------------------------
 invalidFormat :: OperationError
 invalidFormat = InvalidOperation "Invalid metadata format"
 
@@ -85,3 +119,10 @@ onReadResult (ReadStreamDeleted s) _ = errored $ StreamDeleted s
 onReadResult ReadNotModified _       = errored $ ServerError Nothing
 onReadResult (ReadError e) _         = errored $ ServerError e
 onReadResult (ReadAccessDenied s) _  = errored $ AccessDenied s
+
+--------------------------------------------------------------------------------
+createNewEvent :: StreamMetadata -> UUID -> NewEvent
+createNewEvent meta uuid =
+    newEvent "$metadata" uuid 1 1 bytes Nothing
+  where
+    bytes = toStrict $ encode $ streamMetadataJSON meta
