@@ -74,6 +74,7 @@ library
                    Database.EventStore.Internal.Manager.Subscription.Message
                    Database.EventStore.Internal.Manager.Subscription.Model
                    Database.EventStore.Internal.Manager.Subscription.Packages
+                   Database.EventStore.Internal.Operations
                    Database.EventStore.Internal.Operation.DeleteStream
                    Database.EventStore.Internal.Operation.DeleteStream.Message
                    Database.EventStore.Internal.Operation.ReadAllEvents

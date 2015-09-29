@@ -23,7 +23,7 @@ module Database.EventStore.Internal.Execution.Production
     ( Production
     , newExecutionModel
     , pushOperation
-    , shutdown
+    , shutdownExecutionModel
     ) where
 
 --------------------------------------------------------------------------------
@@ -70,8 +70,8 @@ data Msg
 
 --------------------------------------------------------------------------------
 -- | Asks to shutdown the connection to the server asynchronously.
-shutdown :: Production -> IO ()
-shutdown (Prod mailbox) = atomically $ writeTChan mailbox Shutdown
+shutdownExecutionModel :: Production -> IO ()
+shutdownExecutionModel (Prod mailbox) = atomically $ writeTChan mailbox Shutdown
 
 --------------------------------------------------------------------------------
 -- | Pushes a new 'Operation' asynchronously.

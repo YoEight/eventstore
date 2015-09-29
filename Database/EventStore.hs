@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 --------------------------------------------------------------------------------
@@ -179,19 +180,17 @@ import Data.Aeson (decode)
 import Data.Text hiding (group)
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Manager.Subscription hiding (ConnectPersist)
-import Database.EventStore.Internal.Manager.Subscription.Message
-import Database.EventStore.Internal.Operation.DeleteStream
-import Database.EventStore.Internal.Operation.ReadAllEvents
-import Database.EventStore.Internal.Operation.ReadEvent
-import Database.EventStore.Internal.Operation.ReadStreamEvents
-import Database.EventStore.Internal.Operation.StreamMetadata
-import Database.EventStore.Internal.Operation.TransactionStart
-import Database.EventStore.Internal.Operation.WriteEvents
-import Database.EventStore.Internal.Processor
-import Database.EventStore.Internal.TimeSpan
-import Database.EventStore.Internal.Types
-import Database.EventStore.Internal.Execution.Production
+import           Database.EventStore.Internal.Manager.Subscription
+import           Database.EventStore.Internal.Manager.Subscription.Message
+import           Database.EventStore.Internal.Operation
+import qualified Database.EventStore.Internal.Operations as Op
+import           Database.EventStore.Internal.Operation.TransactionStart
+import           Database.EventStore.Internal.Operation.Read.Common
+import           Database.EventStore.Internal.Operation.Write.Common
+import           Database.EventStore.Internal.Stream
+import           Database.EventStore.Internal.TimeSpan
+import           Database.EventStore.Internal.Types
+import           Database.EventStore.Internal.Execution.Production
 
 --------------------------------------------------------------------------------
 -- Connection
@@ -199,7 +198,7 @@ import Database.EventStore.Internal.Execution.Production
 -- | Represents a connection to a single EventStore node.
 data Connection
     = Connection
-      { _runCmd   :: Cmd -> IO ()
+      { _prod     :: Production
       , _settings :: Settings
       }
 
@@ -221,15 +220,13 @@ connect :: Settings
         -> Int      -- ^ Port
         -> IO Connection
 connect settings host port = do
-    processor <- newProcessor settings
-    processor (DoConnect host port)
-
-    return $ Connection processor settings
+    prod <- newExecutionModel settings host port
+    return $ Connection prod settings
 
 --------------------------------------------------------------------------------
 -- | Asynchronously closes the 'Connection'.
 shutdown :: Connection -> IO ()
-shutdown Connection{..} = _runCmd DoShutdown
+shutdown Connection{..} = shutdownExecutionModel _prod
 
 --------------------------------------------------------------------------------
 -- | Sends a single 'Event' to given stream.
@@ -249,11 +246,10 @@ sendEvents :: Connection
            -> [Event]
            -> IO (Async WriteResult)
 sendEvents Connection{..} evt_stream exp_ver evts = do
-    (as, mvar) <- createAsync
-
-    let op = writeEventsOperation _settings mvar evt_stream exp_ver evts
-
-    _runCmd (NewOperation op)
+    (k, as)  <- createOpAsync
+    fin_evts <- traverse eventToNewEvent evts
+    let op = Op.writeEvents _settings evt_stream exp_ver fin_evts
+    pushOperation _prod k op
     return as
 
 --------------------------------------------------------------------------------
@@ -262,13 +258,11 @@ deleteStream :: Connection
              -> Text             -- ^ Stream name
              -> ExpectedVersion
              -> Maybe Bool       -- ^ Hard delete
-             -> IO (Async DeleteResult)
+             -> IO (Async Op.DeleteResult)
 deleteStream Connection{..} evt_stream exp_ver hard_del = do
-    (as, mvar) <- createAsync
-
-    let op = deleteStreamOperation _settings mvar evt_stream exp_ver hard_del
-
-    _runCmd (NewOperation op)
+    (k, as) <- createOpAsync
+    let op = Op.deleteStream _settings evt_stream exp_ver hard_del
+    pushOperation _prod k op
     return as
 
 --------------------------------------------------------------------------------
@@ -278,16 +272,7 @@ transactionStart :: Connection
                  -> ExpectedVersion
                  -> IO (Async Transaction)
 transactionStart Connection{..} evt_stream exp_ver = do
-    (as, mvar) <- createAsync
-
-    let op = transactionStartOperation _settings
-                                       _runCmd
-                                       mvar
-                                       evt_stream
-                                       exp_ver
-
-    _runCmd (NewOperation op)
-    return as
+    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Reads a single event from given stream.
@@ -295,13 +280,11 @@ readEvent :: Connection
           -> Text       -- ^ Stream name
           -> Int32      -- ^ Event number
           -> Bool       -- ^ Resolve Link Tos
-          -> IO (Async ReadResult)
+          -> IO (Async (ReadResult 'RegularStream Op.ReadEvent))
 readEvent Connection{..} stream_id evt_num res_link_tos = do
-    (as, mvar) <- createAsync
-
-    let op = readEventOperation _settings mvar stream_id evt_num res_link_tos
-
-    _runCmd (NewOperation op)
+    (k, as) <- createOpAsync
+    let op = Op.readEvent _settings stream_id evt_num res_link_tos
+    pushOperation _prod k op
     return as
 
 --------------------------------------------------------------------------------
@@ -311,7 +294,7 @@ readStreamEventsForward :: Connection
                         -> Int32      -- ^ From event number
                         -> Int32      -- ^ Batch size
                         -> Bool       -- ^ Resolve Link Tos
-                        -> IO (Async StreamEventsSlice)
+                        -> IO (Async (ReadResult 'RegularStream StreamSlice))
 readStreamEventsForward mgr =
     readStreamEventsCommon mgr Forward
 
@@ -322,7 +305,7 @@ readStreamEventsBackward :: Connection
                          -> Int32      -- ^ From event number
                          -> Int32      -- ^ Batch size
                          -> Bool       -- ^ Resolve Link Tos
-                         -> IO (Async StreamEventsSlice)
+                         -> IO (Async (ReadResult 'RegularStream StreamSlice))
 readStreamEventsBackward mgr =
     readStreamEventsCommon mgr Backward
 
@@ -333,19 +316,11 @@ readStreamEventsCommon :: Connection
                        -> Int32
                        -> Int32
                        -> Bool
-                       -> IO (Async StreamEventsSlice)
+                       -> IO (Async (ReadResult 'RegularStream StreamSlice))
 readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
-    (as, mvar) <- createAsync
-
-    let op = readStreamEventsOperation _settings
-                                       dir
-                                       mvar
-                                       stream_id
-                                       start
-                                       cnt
-                                       res_link_tos
-
-    _runCmd (NewOperation op)
+    (k, as) <- createOpAsync
+    let op = Op.readStreamEvents _settings dir stream_id start cnt res_link_tos
+    pushOperation _prod k op
     return as
 
 --------------------------------------------------------------------------------
@@ -354,7 +329,7 @@ readAllEventsForward :: Connection
                      -> Position
                      -> Int32      -- ^ Batch size
                      -> Bool       -- ^ Resolve Link Tos
-                     -> IO (Async AllEventsSlice)
+                     -> IO (Async AllSlice)
 readAllEventsForward mgr =
     readAllEventsCommon mgr Forward
 
@@ -364,7 +339,7 @@ readAllEventsBackward :: Connection
                       -> Position
                       -> Int32      -- ^ Batch size
                       -> Bool       -- ^ Resolve Link Tos
-                      -> IO (Async AllEventsSlice)
+                      -> IO (Async AllSlice)
 readAllEventsBackward mgr =
     readAllEventsCommon mgr Backward
 
@@ -374,19 +349,11 @@ readAllEventsCommon :: Connection
                     -> Position
                     -> Int32
                     -> Bool
-                    -> IO (Async AllEventsSlice)
+                    -> IO (Async AllSlice)
 readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
-    (as, mvar) <- createAsync
-
-    let op = readAllEventsOperation _settings
-                                    dir
-                                    mvar
-                                    c_pos
-                                    p_pos
-                                    max_c
-                                    res_link_tos
-
-    _runCmd (NewOperation op)
+    (k, as) <- createOpAsync
+    let op = Op.readAllEvents _settings c_pos p_pos max_c res_link_tos dir
+    pushOperation _prod k op
     return as
   where
     Position c_pos p_pos = pos
@@ -398,9 +365,7 @@ subscribe :: Connection
           -> Bool       -- ^ Resolve Link Tos
           -> IO (Async (Subscription Regular))
 subscribe Connection{..} stream_id res_lnk_tos = do
-    tmp <- newEmptyMVar
-    _runCmd (NewSub stream_id res_lnk_tos (putMVar tmp))
-    async $ readMVar tmp
+    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Subcribes to $all stream.
@@ -408,9 +373,7 @@ subscribeToAll :: Connection
                -> Bool       -- ^ Resolve Link Tos
                -> IO (Async (Subscription Regular))
 subscribeToAll Connection{..} res_lnk_tos = do
-    tmp <- newEmptyMVar
-    _runCmd (NewSub "" res_lnk_tos (putMVar tmp))
-    async $ readMVar tmp
+    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Subscribes to given stream. If last checkpoint is defined, this will
@@ -424,12 +387,7 @@ subscribeFrom :: Connection
               -> Maybe Int32 -- ^ Batch size
               -> IO (Subscription Catchup)
 subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m = do
-    catchupStart evts_fwd get_sub stream_id batch_m last_chk_pt
-  where
-    evts_fwd cur_num batch_size =
-        readStreamEventsForward conn stream_id cur_num batch_size res_lnk_tos
-
-    get_sub = subscribe conn stream_id res_lnk_tos
+    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Same as 'subscribeFrom' but applied to $all stream.
@@ -439,12 +397,7 @@ subscribeToAllFrom :: Connection
                    -> Maybe Int32    -- ^ Batch size
                    -> IO (Subscription Catchup)
 subscribeToAllFrom conn res_lnk_tos last_chk_pt batch_m = do
-    catchupAllStart evts_fwd get_sub last_chk_pt batch_m
-  where
-    evts_fwd pos batch_size =
-        readAllEventsForward conn pos batch_size res_lnk_tos
-
-    get_sub = subscribeToAll conn res_lnk_tos
+    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Asynchronously sets the metadata for a stream.
@@ -454,45 +407,16 @@ setStreamMetadata :: Connection
                   -> StreamMetadata
                   -> IO (Async WriteResult)
 setStreamMetadata conn evt_stream exp_ver metadata =
-    let dat = withJson $ streamMetadataJSON metadata
-        evt = createEvent "$metadata" Nothing dat in
-    sendEvent conn (metaStreamOf evt_stream) exp_ver evt
+    error "not implemeted"
 
 --------------------------------------------------------------------------------
 -- | Asynchronously gets the metadata of a stream.
 getStreamMetadata :: Connection -> Text -> IO (Async StreamMetadataResult)
-getStreamMetadata conn evt_stream = do
-    as <- readEvent conn (metaStreamOf evt_stream) (-1) False
-    async $ atomically $ waitSTM as >>= extractStreamMetadataResult evt_stream
-
---------------------------------------------------------------------------------
-extractStreamMetadataResult :: Monad m
-                            => Text
-                            -> ReadResult
-                            -> m StreamMetadataResult
-extractStreamMetadataResult stream rres =
-    case readResultStatus rres of
-        RE_SUCCESS ->
-            case action of
-                Just orig ->
-                    case decode $ fromStrict $ recordedEventData orig of
-                        Just s ->
-                            let res = StreamMetadataResult
-                                      { streamMetaResultStream  = stream
-                                      , streamMetaResultVersion = evt_number
-                                      , streamMetaResultData    = s
-                                      } in
-                            return res
-                        Nothing -> fail "StreamMetadata: wrong format."
-                Nothing -> fail "impossible: extractStreamMetadataResult"
-        RE_STREAM_DELETED -> return $ DeletedStreamMetadataResult stream
-        RE_NOT_FOUND      -> return $ NotFoundStreamMetadataResult stream
-        RE_NO_STREAM      -> return $ NotFoundStreamMetadataResult stream
-        _                 -> fail "unexpected ReadEventResult"
-
-  where
-    action     = readResultResolvedEvent rres >>= resolvedEventOriginal
-    evt_number = readResultEventNumber rres
+getStreamMetadata Connection{..} evt_stream = do
+    (k, as) <- createOpAsync
+    let op = Op.readMetaStream _settings evt_stream
+    pushOperation _prod k op
+    return as
 
 --------------------------------------------------------------------------------
 -- | Asynchronously create a persistent subscription group on a stream.
@@ -502,9 +426,7 @@ createPersistentSubscription :: Connection
                              -> PersistentSubscriptionSettings
                              -> IO (Async ())
 createPersistentSubscription Connection{..} group stream sett = do
-    (as, mvar) <- createAsync
-    _runCmd (CreatePersist group stream sett (putMVar mvar))
-    return as
+    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Asynchronously update a persistent subscription group on a stream.
@@ -514,9 +436,7 @@ updatePersistentSubscription :: Connection
                              -> PersistentSubscriptionSettings
                              -> IO (Async ())
 updatePersistentSubscription Connection{..} group stream sett = do
-    (as, mvar) <- createAsync
-    _runCmd (UpdatePersist group stream sett (putMVar mvar))
-    return as
+    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Asynchronously delete a persistent subscription group on a stream.
@@ -525,9 +445,7 @@ deletePersistentSubscription :: Connection
                              -> Text
                              -> IO (Async ())
 deletePersistentSubscription Connection{..} group stream = do
-    (as, mvar) <- createAsync
-    _runCmd (DeletePersist group stream (putMVar mvar))
-    return as
+    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Asynchronously connect to a persistent subscription given a group on a
@@ -538,19 +456,33 @@ connectToPersistentSubscription :: Connection
                                 -> Int32
                                 -> IO (Async (Subscription Persistent))
 connectToPersistentSubscription Connection{..} group stream bufSize = do
-    mvar <- newEmptyMVar
-    _runCmd (ConnectPersist group stream bufSize (putMVar mvar))
-    async $ readMVar mvar
+    error "not implemented"
 
 --------------------------------------------------------------------------------
-createAsync :: IO (Async a, MVar (OperationExceptional a))
-createAsync = do
+createOpAsync :: IO (Either OperationError a -> IO (), Async a)
+createOpAsync = do
     mvar <- newEmptyMVar
     as   <- async $ do
         res <- readMVar mvar
         either throwIO return res
+    return (putMVar mvar, as)
 
-    return (as, mvar)
+--------------------------------------------------------------------------------
+eventToNewEvent :: Event -> IO NewEvent
+eventToNewEvent evt =
+    newEvent evt_type
+             evt_id
+             evt_data_type
+             evt_metadata_type
+             evt_data_bytes
+             evt_metadata_bytes
+  where
+    evt_type           = eventType evt
+    evt_id             = eventId evt
+    evt_data_bytes     = eventDataBytes $ eventData evt
+    evt_data_type      = eventDataType $ eventData evt
+    evt_metadata_bytes = eventMetadataBytes $ eventData evt
+    evt_metadata_type  = eventMetadataType $ eventData evt
 
 --------------------------------------------------------------------------------
 metaStreamOf :: Text -> Text

@@ -16,6 +16,9 @@
 module Database.EventStore.Internal.Operation where
 
 --------------------------------------------------------------------------------
+import Control.Exception
+
+--------------------------------------------------------------------------------
 import Data.ByteString
 import Data.ProtocolBuffers
 import Data.Serialize
@@ -56,6 +59,9 @@ data OperationError
     | ServerError (Maybe Text)                  -- ^ Reason
     | InvalidOperation Text
     deriving Show
+
+--------------------------------------------------------------------------------
+instance Exception OperationError
 
 --------------------------------------------------------------------------------
 data Report r
