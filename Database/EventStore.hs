@@ -95,60 +95,57 @@ module Database.EventStore
     , timeSpanFromDays
     , timeSpanTotalMillis
       -- * Transaction
-    , Transaction
-    , transactionStart
-    , transactionCommit
-    , transactionRollback
-    , transactionSendEvents
+    -- , Transaction
+    -- , transactionStart
+    -- , transactionCommit
+    -- , transactionRollback
+    -- , transactionSendEvents
       -- * Volatile Subscription
     , DropReason(..)
-    , Identifiable
+    -- , Identifiable
     , Subscription
-    , NextEvent
+    -- , NextEvent
     , Regular
     , Catchup
     , Persistent
     , subscribe
     , subscribeToAll
-    , subNextEvent
-    , subId
-    , subStreamId
-    , subIsSubscribedToAll
-    , subResolveLinkTos
-    , subLastCommitPos
-    , subLastEventNumber
-    , subUnsubscribe
+    -- , subNextEvent
+    -- , subId
+    -- , subStreamId
+    -- , subIsSubscribedToAll
+    -- , subResolveLinkTos
+    -- , subLastCommitPos
+    -- , subLastEventNumber
+    -- , subUnsubscribe
       -- * Catch-up Subscription
-    , CatchupError(..)
+    -- , CatchupError(..)
     , subscribeFrom
     , subscribeToAllFrom
-    , waitTillCatchup
-    , hasCaughtUp
+    -- , waitTillCatchup
+    -- , hasCaughtUp
      -- * Persistent Subscription
     , PersistentSubscriptionSettings(..)
     , SystemConsumerStrategy(..)
     , NakAction(..)
-    , notifyEventsProcessed
-    , notifyEventsFailed
+    -- , notifyEventsProcessed
+    -- , notifyEventsFailed
     , defaultPersistentSubscriptionSettings
     , createPersistentSubscription
     , updatePersistentSubscription
     , deletePersistentSubscription
     , connectToPersistentSubscription
      -- * Results
-    , AllEventsSlice(..)
-    , DeleteResult(..)
+    -- , AllEventsSlice(..)
+    , Op.DeleteResult(..)
     , WriteResult(..)
     , ReadResult(..)
     , RecordedEvent(..)
-    , StreamEventsSlice(..)
+    , StreamSlice(..)
     , Position(..)
     , ReadDirection(..)
-    , ReadAllResult(..)
-    , ReadEventResult(..)
     , ResolvedEvent(..)
-    , ReadStreamResult(..)
-    , OperationException(..)
+    , OperationError(..)
     , eventResolved
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
@@ -180,6 +177,7 @@ import Data.Aeson (decode)
 import Data.Text hiding (group)
 
 --------------------------------------------------------------------------------
+import           Database.EventStore.Internal.Connection hiding (Connection)
 import           Database.EventStore.Internal.Manager.Subscription
 import           Database.EventStore.Internal.Manager.Subscription.Message
 import           Database.EventStore.Internal.Operation
