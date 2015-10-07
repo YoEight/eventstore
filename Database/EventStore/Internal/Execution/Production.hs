@@ -32,17 +32,20 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Fix
+import Data.Int
 import Data.Foldable
 import Text.Printf
 
 --------------------------------------------------------------------------------
 import Data.Serialize.Get hiding (Done)
 import Data.Serialize.Put
+import Data.Text
 import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Generator
+import Database.EventStore.Internal.Manager.Subscription hiding (submitPackage)
 import Database.EventStore.Internal.Operation hiding
     (Report(..), Input(..), retry)
 import Database.EventStore.Internal.Packages
@@ -67,6 +70,14 @@ data Msg
     | Shutdown
     | forall a.
       NewOperation (Either OperationError a -> IO ()) (Operation 'Init a)
+    | ConnectStream (SubConnectEvent -> IO ()) Text Bool
+    | ConnectPersist (SubConnectEvent -> IO ()) Text Text Int32
+    | CreatePersist (Either PersistActionException ConfirmedAction -> IO ())
+          Text Text PersistentSubscriptionSettings
+    | UpdatePersist (Either PersistActionException ConfirmedAction -> IO ())
+          Text Text PersistentSubscriptionSettings
+    | DeletePersist (Either PersistActionException ConfirmedAction -> IO ())
+          Text Text
 
 --------------------------------------------------------------------------------
 -- | Asks to shutdown the connection to the server asynchronously.
@@ -137,14 +148,14 @@ getPackage = do
     rest <- remaining
     dta  <- getBytes rest
 
-    let pack = Package
-               { packageCmd         = cmd
-               , packageCorrelation = col
-               , packageData        = dta
-               , packageCred        = cred
-               }
+    let pkg = Package
+              { packageCmd         = cmd
+              , packageCorrelation = col
+              , packageData        = dta
+              , packageCred        = cred
+              }
 
-    return pack
+    return pkg
 
 --------------------------------------------------------------------------------
 getFlag :: Get Flag
@@ -252,9 +263,49 @@ manager setts conn var mailbox job_queue = bootstrap
                 Shutdown -> return Closing
                 NewOperation k op ->
                     if closed
-                    then return Loop
+                    then return Closing
                     else do
                         let (pkg, new_proc) = newOperation k op $ _proc s
+                        modifyTVar' var $ updateProc new_proc
+                        return $ WritePkg pkg
+                ConnectStream k n tos ->
+                    if closed
+                    then return Closing
+                    else do
+                        let (pkg, new_proc) =
+                                connectRegularStream k n tos $ _proc s
+                        modifyTVar' var $ updateProc new_proc
+                        return $ WritePkg pkg
+                ConnectPersist k g n b ->
+                    if closed
+                    then return Closing
+                    else do
+                        let (pkg, new_proc) =
+                                connectPersistent k g n b $ _proc s
+                        modifyTVar' var $ updateProc new_proc
+                        return $ WritePkg pkg
+                CreatePersist k g n psetts ->
+                    if closed
+                    then return Closing
+                    else do
+                        let (pkg, new_proc) =
+                                createPersistent k g n psetts $ _proc s
+                        modifyTVar' var $ updateProc new_proc
+                        return $ WritePkg pkg
+                UpdatePersist k g n psetts ->
+                    if closed
+                    then return Closing
+                    else do
+                        let (pkg, new_proc) =
+                                updatePersistent k g n psetts $ _proc s
+                        modifyTVar' var $ updateProc new_proc
+                        return $ WritePkg pkg
+                DeletePersist k g n ->
+                    if closed
+                    then return Closing
+                    else do
+                        let (pkg, new_proc) =
+                                deletePersistent k g n $ _proc s
                         modifyTVar' var $ updateProc new_proc
                         return $ WritePkg pkg
         case resp of
@@ -287,8 +338,8 @@ manager setts conn var mailbox job_queue = bootstrap
                             _ -> loop
         atomically loop
         atomically $ do
-            empty <- isEmptyTChan job_queue
-            when (not empty) retry
+            end <- isEmptyTChan job_queue
+            when (not end) retry
         State _ retid rutid <- readTVarIO var
         traverse_ killThread retid
         traverse_ killThread rutid
@@ -325,5 +376,5 @@ writePkg conn pkg = do
 --------------------------------------------------------------------------------
 lookupTChan :: TChan a -> STM (Maybe a)
 lookupTChan chan = do
-    empty <- isEmptyTChan chan
-    if empty then return Nothing else fmap Just $ readTChan chan
+    end <- isEmptyTChan chan
+    if end then return Nothing else fmap Just $ readTChan chan
