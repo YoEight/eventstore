@@ -89,7 +89,6 @@ library
                    Database.EventStore.Internal.Operation.WriteEvents.Message
                    Database.EventStore.Internal.Operation.Write.Common
                    Database.EventStore.Internal.Util.Sodium
-                   Database.EventStore.Internal.Util.Type
                    Database.EventStore.Internal.Writer
 
   -- LANGUAGE extensions used by modules in this package.
