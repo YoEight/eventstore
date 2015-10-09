@@ -18,6 +18,7 @@ module Database.EventStore.Internal.Manager.Subscription
     , Persistent
     , Catchup
     , Subscription
+    , Running(..)
     , regularSubscription
     , catchupSubscription
     , persistentSubscription
@@ -25,6 +26,7 @@ module Database.EventStore.Internal.Manager.Subscription
     , readNext
     , batchRead
     , hasCaughtUp
+    , runningUUID
     ) where
 
 --------------------------------------------------------------------------------
@@ -32,6 +34,7 @@ import Data.Sequence
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription.Driver
+import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

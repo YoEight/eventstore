@@ -24,6 +24,11 @@ module Database.EventStore.Internal.Execution.Production
     , newExecutionModel
     , pushOperation
     , shutdownExecutionModel
+    , pushConnectStream
+    , pushConnectPersist
+    , pushCreatePersist
+    , pushUpdatePersist
+    , pushDeletePersist
     ) where
 
 --------------------------------------------------------------------------------
@@ -92,6 +97,59 @@ pushOperation :: Production
              -> IO ()
 pushOperation (Prod mailbox) k op =
     atomically $ writeTChan mailbox (NewOperation k op)
+
+--------------------------------------------------------------------------------
+-- | Subscribes to a regular stream.
+pushConnectStream :: Production
+                  -> (SubConnectEvent -> IO ())
+                  -> Text
+                  -> Bool
+                  -> IO ()
+pushConnectStream (Prod mailbox) k n tos =
+    atomically $ writeTChan mailbox (ConnectStream k n tos)
+
+--------------------------------------------------------------------------------
+-- | Subscribes to a persistent subscription.
+pushConnectPersist :: Production
+                   -> (SubConnectEvent -> IO ())
+                   -> Text
+                   -> Text
+                   -> Int32
+                   -> IO ()
+pushConnectPersist (Prod mailbox) k g n buf =
+    atomically $ writeTChan mailbox (ConnectPersist k g n buf)
+
+--------------------------------------------------------------------------------
+-- | Creates a persistent subscription.
+pushCreatePersist :: Production
+                  -> (Either PersistActionException ConfirmedAction -> IO ())
+                  -> Text
+                  -> Text
+                  -> PersistentSubscriptionSettings
+                  -> IO ()
+pushCreatePersist (Prod mailbox) k g n setts =
+    atomically $ writeTChan mailbox (CreatePersist k g n setts)
+
+--------------------------------------------------------------------------------
+-- | Updates a persistent subscription.
+pushUpdatePersist :: Production
+                  -> (Either PersistActionException ConfirmedAction -> IO ())
+                  -> Text
+                  -> Text
+                  -> PersistentSubscriptionSettings
+                  -> IO ()
+pushUpdatePersist (Prod mailbox) k g n setts =
+    atomically $ writeTChan mailbox (UpdatePersist k g n setts)
+
+--------------------------------------------------------------------------------
+-- | Deletes a persistent subscription.
+pushDeletePersist :: Production
+                  -> (Either PersistActionException ConfirmedAction -> IO ())
+                  -> Text
+                  -> Text
+                  -> IO ()
+pushDeletePersist (Prod mailbox) k g n =
+    atomically $ writeTChan mailbox (DeletePersist k g n)
 
 --------------------------------------------------------------------------------
 newtype Job = Job (IO ())

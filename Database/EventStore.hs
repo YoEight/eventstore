@@ -102,12 +102,8 @@ module Database.EventStore
     -- , transactionSendEvents
       -- * Volatile Subscription
     , DropReason(..)
-    -- , Identifiable
-    , Subscription
-    -- , NextEvent
-    , Regular
-    , Catchup
-    , Persistent
+    , Subscription(..)
+    , RegularSubscription
     , subscribe
     , subscribeToAll
     -- , subNextEvent
@@ -165,7 +161,7 @@ module Database.EventStore
 
 --------------------------------------------------------------------------------
 import Control.Concurrent
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM
 import Control.Exception
 import Data.ByteString.Lazy (fromStrict)
 import Data.Int
@@ -175,13 +171,14 @@ import Data.Monoid ((<>))
 import Control.Concurrent.Async
 import Data.Aeson (decode)
 import Data.Text hiding (group)
+import Data.UUID
 import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Connection hiding (Connection)
-import           Database.EventStore.Internal.Manager.Subscription
+import qualified Database.EventStore.Internal.Manager.Subscription as S
 import           Database.EventStore.Internal.Manager.Subscription.Message
-import           Database.EventStore.Internal.Operation
+import           Database.EventStore.Internal.Operation hiding (retry)
 import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.TransactionStart
 import           Database.EventStore.Internal.Operation.Read.Common
@@ -237,6 +234,47 @@ sendEvent :: Connection
 sendEvent mgr evt_stream exp_ver evt =
     sendEvents mgr evt_stream exp_ver [evt]
 
+--------------------------------------------------------------------------------
+class Subscription a where
+    subId :: a -> UUID
+    subStreamId :: a -> Text
+    unsubscribe :: a -> IO ()
+    awaitEvent :: a -> IO ResolvedEvent
+
+--------------------------------------------------------------------------------
+data RegularSubscription =
+    RegSub
+    { _regSubVar    :: TVar (SubState S.Regular)
+    , _regSubRun    :: S.Running
+    , _regSubStream :: Text
+    }
+
+--------------------------------------------------------------------------------
+instance Subscription RegularSubscription where
+    subId = S.runningUUID . _regSubRun
+    subStreamId = _regSubStream
+    unsubscribe _ = return ()
+    awaitEvent RegSub{..} = atomically $ do
+        SubState sub close <- readTVar _regSubVar
+        let (res, nxt) = S.readNext sub
+        case res of
+            Nothing -> do
+                case close of
+                    Nothing  -> retry
+                    Just err -> throwSTM $ SubscriptionClosed _regSubRun err
+            Just e -> do
+                writeTVar _regSubVar $ SubState nxt close
+                return e
+
+--------------------------------------------------------------------------------
+data SubState a = SubState (S.Subscription a) (Maybe S.SubDropReason)
+
+--------------------------------------------------------------------------------
+data SubscriptionClosed =
+    SubscriptionClosed S.Running S.SubDropReason
+    deriving Show
+
+instance Exception SubscriptionClosed
 --------------------------------------------------------------------------------
 -- | Sends a list of 'Event' to given stream.
 sendEvents :: Connection
@@ -362,17 +400,29 @@ readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
 subscribe :: Connection
           -> Text       -- ^ Stream name
           -> Bool       -- ^ Resolve Link Tos
-          -> IO (Async (Subscription Regular))
+          -> IO (Async RegularSubscription)
 subscribe Connection{..} stream_id res_lnk_tos = do
-    error "not implemented"
+    mvar <- newEmptyTMVarIO
+    var  <- newTVarIO $ SubState S.regularSubscription Nothing
+    as   <- async $ atomically $ readTMVar mvar
+    let mk r = do
+            let reg = RegSub var r stream_id
+            putTMVar mvar reg
+        recv = readTVar var
+        send = writeTVar var
+        dropped r = do
+            SubState sm _ <- readTVar var
+            writeTVar var $ SubState sm (Just r)
+        cb = createSubAsync mk recv send dropped
+    pushConnectStream _prod cb stream_id res_lnk_tos
+    return as
 
 --------------------------------------------------------------------------------
 -- | Subcribes to $all stream.
 subscribeToAll :: Connection
                -> Bool       -- ^ Resolve Link Tos
-               -> IO (Async (Subscription Regular))
-subscribeToAll Connection{..} res_lnk_tos = do
-    error "not implemented"
+               -> IO (Async RegularSubscription)
+subscribeToAll conn res_lnk_tos = subscribe conn "" res_lnk_tos
 
 --------------------------------------------------------------------------------
 -- | Subscribes to given stream. If last checkpoint is defined, this will
@@ -384,7 +434,7 @@ subscribeFrom :: Connection
               -> Bool        -- ^ Resolve Link Tos
               -> Maybe Int32 -- ^ Last checkpoint
               -> Maybe Int32 -- ^ Batch size
-              -> IO (Subscription Catchup)
+              -> IO ()
 subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m = do
     error "not implemented"
 
@@ -394,7 +444,7 @@ subscribeToAllFrom :: Connection
                    -> Bool           -- ^ Resolve Link Tos
                    -> Maybe Position -- ^ Last checkpoint
                    -> Maybe Int32    -- ^ Batch size
-                   -> IO (Subscription Catchup)
+                   -> IO ()
 subscribeToAllFrom conn res_lnk_tos last_chk_pt batch_m = do
     error "not implemented"
 
@@ -457,7 +507,7 @@ connectToPersistentSubscription :: Connection
                                 -> Text
                                 -> Text
                                 -> Int32
-                                -> IO (Async (Subscription Persistent))
+                                -> IO (Async ())
 connectToPersistentSubscription Connection{..} group stream bufSize = do
     error "not implemented"
 
@@ -469,6 +519,24 @@ createOpAsync = do
         res <- readMVar mvar
         either throwIO return res
     return (putMVar mvar, as)
+
+--------------------------------------------------------------------------------
+createSubAsync :: (S.Running -> STM ())
+               -> STM (SubState a)
+               -> (SubState a -> STM ())
+               -> (S.SubDropReason -> STM ())
+               -> (S.SubConnectEvent -> IO ())
+createSubAsync mk rcv send quit = go
+  where
+    go (S.SubConfirmed run) = atomically $ mk run
+    go (S.EventAppeared e) = atomically $ do
+        SubState sm close <- rcv
+        let nxt = S.eventArrived e sm
+        send $ SubState nxt close
+    go (S.Dropped _ r) = atomically $ quit r
+
+--------------------------------------------------------------------------------
+-- create
 
 --------------------------------------------------------------------------------
 eventToNewEvent :: Event -> IO NewEvent
@@ -486,7 +554,3 @@ eventToNewEvent evt =
     evt_data_type      = eventDataType $ eventData evt
     evt_metadata_bytes = eventMetadataBytes $ eventData evt
     evt_metadata_type  = eventMetadataType $ eventData evt
-
---------------------------------------------------------------------------------
-metaStreamOf :: Text -> Text
-metaStreamOf s = "$$" <> s
