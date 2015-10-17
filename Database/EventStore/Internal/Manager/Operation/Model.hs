@@ -21,7 +21,12 @@ module Database.EventStore.Internal.Manager.Operation.Model
     ) where
 
 --------------------------------------------------------------------------------
+import Data.Word
+
+--------------------------------------------------------------------------------
 import qualified Data.HashMap.Strict  as H
+import           Data.ProtocolBuffers
+import           Data.Serialize
 import           Data.UUID
 
 --------------------------------------------------------------------------------
@@ -32,11 +37,11 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 -- | Entry of a running 'Operation'.
 data Elem r =
-    forall a.
+    forall a resp. Decode resp =>
     Elem
-    { _opId   :: UUID
-    , _opOp   :: Operation a
-    , _opCont :: Package -> SM a ()
+    { _opOp   :: Operation a
+    , _opCmd  :: Word8
+    , _opCont :: resp -> SM a ()
     , _opCb   :: Either OperationError a -> r
     }
 
@@ -88,60 +93,62 @@ submitPackage :: Package -> Model r -> Maybe (Transition r)
 submitPackage pkg (Model k) = k (Pkg pkg)
 
 --------------------------------------------------------------------------------
-runOperation :: (Either OperationError a -> r)
-             -> UUID
-             -> SM a ()
+runOperation :: Settings
+             -> (Either OperationError a -> r)
              -> Operation a
+             -> SM a ()
              -> State r
              -> Transition r
-runOperation cb op_id start op init_st = go init_st start
+runOperation setts cb op start init_st = go init_st start
   where
-    go st (Return _) =
-        let nxt_ps = H.delete op_id $ _pending st
-            nxt_st = st { _pending = nxt_ps } in
-        Await $ Model $ handle nxt_st
+    go st (Return _) = Await $ Model $ handle setts st
     go st (Yield a n) = Produce (cb $ Right a) (go st n)
     go st (FreshId k) =
         let (new_id, nxt_gen) = nextUUID $ _gen st
             nxt_st            = st { _gen = nxt_gen } in
         go nxt_st $ k new_id
-    go st (SendPkg pkg k) =
-        let elm    = Elem op_id op k cb
-            ps     = H.insert op_id elm $ _pending st
-            nxt_st = st { _pending = ps } in
-        Transmit pkg (Await $ Model $ handle nxt_st)
+    go st (SendPkg ci co rq k) =
+        let (new_uuid, nxt_gen) = nextUUID $ _gen st
+            pkg = Package
+                  { packageCmd         = ci
+                  , packageCorrelation = new_uuid
+                  , packageData        = runPut $ encodeMessage rq
+                  , packageCred        = s_credentials setts
+                  }
+            elm    = Elem op co k cb
+            ps     = H.insert new_uuid elm $ _pending st
+            nxt_st = st { _pending = ps
+                        , _gen     = nxt_gen
+                        } in
+        Transmit pkg (Await $ Model $ handle setts nxt_st)
     go st (Failure m) =
-        let nxt_ps = H.delete op_id $ _pending st
-            nxt_st = st { _pending = nxt_ps } in
         case m of
-            Just e -> Produce (cb $ Left e) (Await $ Model $ handle nxt_st)
-            _      ->
-                let (new_id, nxt_gen) = nextUUID $ _gen nxt_st
-                    fin_st            = nxt_st { _gen = nxt_gen } in
-                runOperation cb new_id (applyOp op new_id) op fin_st
-    go st (NewOp n_cb k) =
-        let (new_id, nxt_gen) = nextUUID $ _gen nxt_st
-            op     = operation k
-            nxt_ps = H.delete op_id $ _pending st
-            nxt_st = st { _pending = nxt_ps
-                        , _gen     = nxt_gen } in
-        runOperation n_cb new_id (k new_id) op nxt_st
+            Just e -> Produce (cb $ Left e) (Await $ Model $ handle setts st)
+            _      -> runOperation setts cb op op st
 
 --------------------------------------------------------------------------------
-runPackage :: Package -> State r -> Maybe (Transition r)
-runPackage pkg st = do
-    Elem op_id op cont cb <- H.lookup (packageCorrelation pkg) $ _pending st
-    return $ runOperation cb op_id (cont pkg) op st
+runPackage :: Settings -> State r -> Package -> Maybe (Transition r)
+runPackage setts st Package{..} = do
+    Elem op resp_cmd cont cb <- H.lookup packageCorrelation $ _pending st
+    let nxt_ps = H.delete packageCorrelation $ _pending st
+        nxt_st = st { _pending = nxt_ps }
+    if resp_cmd /= packageCmd
+        then
+            let r = cb $ Left $ InvalidServerResponse resp_cmd packageCmd in
+            return $ Produce r (Await $ Model $ handle setts nxt_st)
+        else
+            case runGet decodeMessage packageData of
+                Left e  ->
+                    let r = cb $ Left $ ProtobufDecodingError e in
+                    return $ Produce r (Await $ Model $ handle setts nxt_st)
+                Right m -> return $ runOperation setts cb op (cont m) nxt_st
 
 --------------------------------------------------------------------------------
 -- | Creates a new 'Operation' model state-machine.
-newModel :: Generator -> Model r
-newModel g = Model $ handle $ initState g
+newModel :: Settings -> Generator -> Model r
+newModel setts g = Model $ handle setts $ initState g
 
 --------------------------------------------------------------------------------
-handle :: State r -> Request r -> Maybe (Transition r)
-handle st (New op cb) =
-    let (op_id, nxt_gen) = nextUUID $ _gen st
-        nxt_st           = st { _gen = nxt_gen } in
-    Just $ runOperation cb op_id (applyOp op op_id) op nxt_st
-handle st (Pkg pkg) = runPackage pkg st
+handle :: Settings -> State r -> Request r -> Maybe (Transition r)
+handle setts st (New op cb) = Just $ runOperation setts cb op op st
+handle setts st (Pkg pkg)   = runPackage setts st pkg

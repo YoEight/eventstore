@@ -160,7 +160,7 @@ data State r =
 
 --------------------------------------------------------------------------------
 initState :: Settings -> Generator -> State r
-initState setts g = State (Sub.newDriver setts g1) (Op.newModel g2)
+initState setts g = State (Sub.newDriver setts g1) (Op.newModel setts g2)
   where
     (g1, g2) = splitGenerator g
 

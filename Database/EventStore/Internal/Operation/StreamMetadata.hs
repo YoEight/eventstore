@@ -42,9 +42,9 @@ metaStream :: Text -> Text
 metaStream s = "$$" <> s
 
 --------------------------------------------------------------------------------
-readMetaStreamSM :: Settings -> Text -> UUID -> SM StreamMetadataResult ()
-readMetaStreamSM setts s op_id =
-    foreach (readEventSM setts (metaStream s) (-1) False op_id) $ \tmp -> do
+readMetaStream :: Settings -> Text -> Operation StreamMetadataResult
+readMetaStream setts s =
+    foreach (readEvent setts (metaStream s) (-1) False) $ \tmp -> do
         onReadResult tmp $ \n e_num evt -> do
             let action = do
                     orig <- resolvedEventOriginal evt
@@ -54,29 +54,16 @@ readMetaStreamSM setts s op_id =
                 Nothing -> failure invalidFormat
 
 --------------------------------------------------------------------------------
-readMetaStream :: Settings -> Text -> Operation StreamMetadataResult
-readMetaStream setts s = operation $ readMetaStreamSM setts s
-
---------------------------------------------------------------------------------
-setMetaStreamSM :: Settings
-                -> Text
-                -> ExpectedVersion
-                -> StreamMetadata
-                -> UUID
-                -> SM WriteResult ()
-setMetaStreamSM setts s v meta op_id = do
-    evt_id <- freshId
-    let stream = metaStream s
-        inner  = writeEventsSM setts stream v [createNewEvent meta evt_id] op_id
-    foreach inner yield
-
---------------------------------------------------------------------------------
 setMetaStream :: Settings
               -> Text
               -> ExpectedVersion
               -> StreamMetadata
               -> Operation WriteResult
-setMetaStream setts s v meta = operation $ setMetaStreamSM setts s v meta
+setMetaStream setts s v meta = do
+    evt_id <- freshId
+    let stream = metaStream s
+        inner  = writeEvents setts stream v [createNewEvent meta evt_id]
+    foreach inner yield
 
 --------------------------------------------------------------------------------
 invalidFormat :: OperationError

@@ -64,18 +64,17 @@ data SM o a
     = Return a
     | Yield o (SM o a)
     | FreshId (UUID -> SM o a)
-    | SendPkg Package (Package -> SM o a)
+    | forall rq rp. (Encode rq, Decode rp) =>
+      SendPkg Word8 Word8 rq (rp -> SM o a)
     | Failure (Maybe OperationError)
-    | forall b. NewOp (forall r. Either OperationError b -> r) (UUID -> SM b ())
 
 --------------------------------------------------------------------------------
 instance Functor (SM o) where
-    fmap f (Return a)    = Return (f a)
-    fmap f (Yield o n)   = Yield o (fmap f n)
-    fmap f (FreshId k)   = FreshId (fmap f . k)
-    fmap f (SendPkg p k) = SendPkg p (fmap f . k)
-    fmap _ (Failure e)   = Failure e
-    fmap _ (NewOp cb op) = NewOp cb op
+    fmap f (Return a)          = Return (f a)
+    fmap f (Yield o n)         = Yield o (fmap f n)
+    fmap f (FreshId k)         = FreshId (fmap f . k)
+    fmap f (SendPkg ci co p k) = SendPkg ci co p (fmap f . k)
+    fmap _ (Failure e)         = Failure e
 
 --------------------------------------------------------------------------------
 instance Applicative (SM o) where
@@ -86,12 +85,11 @@ instance Applicative (SM o) where
 instance Monad (SM o) where
     return = Return
 
-    Return a    >>= f = f a
-    Yield o n   >>= f = Yield o (n >>= f)
-    FreshId k   >>= f = FreshId ((f =<<) . k)
-    SendPkg p k >>= f = SendPkg p ((f =<<) . k)
-    Failure e   >>= _ = Failure e
-    NewOp cb op >>= _ = NewOp cb op
+    Return a          >>= f = f a
+    Yield o n         >>= f = Yield o (n >>= f)
+    FreshId k         >>= f = FreshId ((f =<<) . k)
+    SendPkg ci co p k >>= f = SendPkg ci co p ((f =<<) . k)
+    Failure e         >>= _ = Failure e
 
 --------------------------------------------------------------------------------
 freshId :: SM o UUID
@@ -106,34 +104,25 @@ retry :: SM o a
 retry = Failure Nothing
 
 --------------------------------------------------------------------------------
-send :: Package -> SM o Package
-send pkg = SendPkg pkg Return
+send :: (Encode rq, Decode rp) => Word8 -> Word8 -> rq -> SM o rp
+send ci co rq = SendPkg ci co rq Return
 
 --------------------------------------------------------------------------------
 yield :: o -> SM o ()
 yield o = Yield o (Return ())
 
 --------------------------------------------------------------------------------
-newOp :: (forall r. Either OperationError b -> r) -> (UUID -> SM b ()) -> SM o a
-newOp cb k = NewOp cb k
-
---------------------------------------------------------------------------------
 foreach :: SM a x -> (a -> SM b x) -> SM b x
 foreach start k = go start
   where
-    go (Return x)     = Return x
-    go (Yield a n)    = k a >> go n
-    go (FreshId ki)   = FreshId (go . ki)
-    go (SendPkg p kp) = SendPkg p (go . kp)
-    go (Failure e)    = Failure e
-    go (NewOp cb op)  = NewOp cb op
+    go (Return x)           = Return x
+    go (Yield a n)          = k a >> go n
+    go (FreshId ki)         = FreshId (go . ki)
+    go (SendPkg ci co p kp) = SendPkg ci co p (go . kp)
+    go (Failure e)          = Failure e
 
 --------------------------------------------------------------------------------
-newtype Operation a = Operation { applyOp :: UUID -> SM a () }
-
---------------------------------------------------------------------------------
-operation :: (UUID -> SM a ()) -> Operation a
-operation = Operation
+type Operation a = SM a ()
 
 --------------------------------------------------------------------------------
 decodeResp :: Decode a => ByteString -> SM o a

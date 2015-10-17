@@ -11,9 +11,7 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.ReadAllEvents
-    ( readAllEventsSM
-    , readAllEvents
-    ) where
+    ( readAllEvents ) where
 
 --------------------------------------------------------------------------------
 import Data.Int
@@ -32,15 +30,14 @@ import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-readAllEventsSM :: Settings
-                -> Int64
-                -> Int64
-                -> Int32
-                -> Bool
-                -> ReadDirection
-                -> UUID
-                -> SM AllSlice ()
-readAllEventsSM Settings{..} c_pos p_pos max_c tos dir uuid = do
+readAllEvents :: Settings
+              -> Int64
+              -> Int64
+              -> Int32
+              -> Bool
+              -> ReadDirection
+              -> Operation AllSlice
+readAllEvents Settings{..} c_pos p_pos max_c tos dir = do
     let msg = newRequest c_pos p_pos max_c tos s_requireMaster
         cmd = case dir of
             Forward  -> 0xB6
@@ -49,40 +46,18 @@ readAllEventsSM Settings{..} c_pos p_pos max_c tos dir uuid = do
         resp_cmd = case dir of
             Forward  -> 0xB7
             Backward -> 0xB9
-
-        pkg = Package
-              { packageCmd         = cmd
-              , packageCorrelation = uuid
-              , packageData        = runPut $ encodeMessage msg
-              , packageCred        = s_credentials
-              }
-    Package{..} <- send pkg
-    if packageCmd == resp_cmd
-        then do
-            resp <- decodeResp packageData
-            let r      = getField $ _Result resp
-                err    = getField $ _Error resp
-                nc_pos = getField $ _NextCommitPosition resp
-                np_pos = getField $ _NextPreparePosition resp
-                es     = getField $ _Events resp
-                evts   = fmap newResolvedEventFromBuf es
-                eos    = null evts
-                f_pos  = Position c_pos p_pos
-                n_pos  = Position nc_pos np_pos
-                slice  = AllSlice f_pos n_pos dir evts eos
-            case fromMaybe SUCCESS r of
-                    ERROR         -> serverError err
-                    ACCESS_DENIED -> accessDenied AllStream
-                    _             -> yield slice
-        else invalidServerResponse resp_cmd packageCmd
-
---------------------------------------------------------------------------------
-readAllEvents :: Settings
-              -> Int64
-              -> Int64
-              -> Int32
-              -> Bool
-              -> ReadDirection
-              -> Operation AllSlice
-readAllEvents setts c_pos p_pos max_c tos dir =
-    operation $ readAllEventsSM setts c_pos p_pos max_c tos dir
+    resp <- send cmd resp_cmd msg
+    let r      = getField $ _Result resp
+        err    = getField $ _Error resp
+        nc_pos = getField $ _NextCommitPosition resp
+        np_pos = getField $ _NextPreparePosition resp
+        es     = getField $ _Events resp
+        evts   = fmap newResolvedEventFromBuf es
+        eos    = null evts
+        f_pos  = Position c_pos p_pos
+        n_pos  = Position nc_pos np_pos
+        slice  = AllSlice f_pos n_pos dir evts eos
+    case fromMaybe SUCCESS r of
+        ERROR         -> serverError err
+        ACCESS_DENIED -> accessDenied AllStream
+        _             -> yield slice
