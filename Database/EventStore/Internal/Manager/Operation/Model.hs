@@ -119,6 +119,13 @@ runOperation cb op_id start op init_st = go init_st start
                 let (new_id, nxt_gen) = nextUUID $ _gen nxt_st
                     fin_st            = nxt_st { _gen = nxt_gen } in
                 runOperation cb new_id (applyOp op new_id) op fin_st
+    go st (NewOp n_cb k) =
+        let (new_id, nxt_gen) = nextUUID $ _gen nxt_st
+            op     = operation k
+            nxt_ps = H.delete op_id $ _pending st
+            nxt_st = st { _pending = nxt_ps
+                        , _gen     = nxt_gen } in
+        runOperation n_cb new_id (k new_id) op nxt_st
 
 --------------------------------------------------------------------------------
 runPackage :: Package -> State r -> Maybe (Transition r)

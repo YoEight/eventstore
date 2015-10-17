@@ -34,7 +34,7 @@ import Data.Text
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
-import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Operation hiding (SM(..))
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

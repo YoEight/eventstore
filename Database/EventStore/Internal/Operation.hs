@@ -66,6 +66,7 @@ data SM o a
     | FreshId (UUID -> SM o a)
     | SendPkg Package (Package -> SM o a)
     | Failure (Maybe OperationError)
+    | forall b. NewOp (forall r. Either OperationError b -> r) (UUID -> SM b ())
 
 --------------------------------------------------------------------------------
 instance Functor (SM o) where
@@ -74,6 +75,7 @@ instance Functor (SM o) where
     fmap f (FreshId k)   = FreshId (fmap f . k)
     fmap f (SendPkg p k) = SendPkg p (fmap f . k)
     fmap _ (Failure e)   = Failure e
+    fmap _ (NewOp cb op) = NewOp cb op
 
 --------------------------------------------------------------------------------
 instance Applicative (SM o) where
@@ -89,6 +91,7 @@ instance Monad (SM o) where
     FreshId k   >>= f = FreshId ((f =<<) . k)
     SendPkg p k >>= f = SendPkg p ((f =<<) . k)
     Failure e   >>= _ = Failure e
+    NewOp cb op >>= _ = NewOp cb op
 
 --------------------------------------------------------------------------------
 freshId :: SM o UUID
@@ -111,6 +114,10 @@ yield :: o -> SM o ()
 yield o = Yield o (Return ())
 
 --------------------------------------------------------------------------------
+newOp :: (forall r. Either OperationError b -> r) -> (UUID -> SM b ()) -> SM o a
+newOp cb k = NewOp cb k
+
+--------------------------------------------------------------------------------
 foreach :: SM a x -> (a -> SM b x) -> SM b x
 foreach start k = go start
   where
@@ -119,6 +126,7 @@ foreach start k = go start
     go (FreshId ki)   = FreshId (go . ki)
     go (SendPkg p kp) = SendPkg p (go . kp)
     go (Failure e)    = Failure e
+    go (NewOp cb op)  = NewOp cb op
 
 --------------------------------------------------------------------------------
 newtype Operation a = Operation { applyOp :: UUID -> SM a () }
