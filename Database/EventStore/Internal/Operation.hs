@@ -17,6 +17,7 @@ module Database.EventStore.Internal.Operation where
 
 --------------------------------------------------------------------------------
 import Control.Exception
+import Control.Monad
 
 --------------------------------------------------------------------------------
 import Data.ByteString
@@ -29,12 +30,6 @@ import Data.Word
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
-
---------------------------------------------------------------------------------
-data Mode
-    = Init
-    | Pending
-    | Completed
 
 --------------------------------------------------------------------------------
 data OpResult
@@ -58,86 +53,111 @@ data OperationError
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason
     | InvalidOperation Text
+      -- ^ Invalid operation state. If happens, it's a driver bug.
     deriving Show
 
 --------------------------------------------------------------------------------
 instance Exception OperationError
 
 --------------------------------------------------------------------------------
-data Report r
-    = Retry (Operation 'Init r)
-    | Error OperationError
-    | Success r
+data SM o a
+    = Return a
+    | Yield o (SM o a)
+    | FreshId (UUID -> SM o a)
+    | SendPkg Package (Package -> SM o a)
+    | Failure (Maybe OperationError)
 
 --------------------------------------------------------------------------------
-type PendingOrCompleted r =
-    Either (Operation 'Pending r) (Operation 'Completed r)
+instance Functor (SM o) where
+    fmap f (Return a)    = Return (f a)
+    fmap f (Yield o n)   = Yield o (fmap f n)
+    fmap f (FreshId k)   = FreshId (fmap f . k)
+    fmap f (SendPkg p k) = SendPkg p (fmap f . k)
+    fmap _ (Failure e)   = Failure e
 
 --------------------------------------------------------------------------------
-data Input :: Mode -> * -> * -> * where
-    Create  :: UUID -> Input 'Init r (Package, Operation 'Pending r)
-    Arrived :: Package -> Input 'Pending r (PendingOrCompleted r)
-    Report  :: Input 'Completed r (Report r)
+instance Applicative (SM o) where
+    pure = return
+    (<*>) = ap
 
 --------------------------------------------------------------------------------
-newtype Operation m r = Operation (forall a. Input m r a -> a)
+instance Monad (SM o) where
+    return = Return
+
+    Return a    >>= f = f a
+    Yield o n   >>= f = Yield o (n >>= f)
+    FreshId k   >>= f = FreshId ((f =<<) . k)
+    SendPkg p k >>= f = SendPkg p ((f =<<) . k)
+    Failure e   >>= _ = Failure e
 
 --------------------------------------------------------------------------------
-createPackage :: UUID -> Operation 'Init r -> (Package, Operation 'Pending r)
-createPackage u (Operation k) = k (Create u)
+freshId :: SM o UUID
+freshId = FreshId Return
 
 --------------------------------------------------------------------------------
-packageArrived :: Package
-               -> Operation 'Pending r
-               -> Either (Operation 'Pending r) (Operation 'Completed r)
-packageArrived pkg (Operation k) = k (Arrived pkg)
+failure :: OperationError -> SM o a
+failure e = Failure $ Just e
 
 --------------------------------------------------------------------------------
-getReport :: Operation 'Completed r -> Report r
-getReport (Operation k) = k Report
+retry :: SM o a
+retry = Failure Nothing
 
 --------------------------------------------------------------------------------
-errored :: OperationError -> Operation 'Completed r
-errored e = Operation $ \Report -> Error e
+send :: Package -> SM o Package
+send pkg = SendPkg pkg Return
 
 --------------------------------------------------------------------------------
-success :: r -> Operation 'Completed r
-success r = Operation $ \Report -> Success r
+yield :: o -> SM o ()
+yield o = Yield o (Return ())
 
 --------------------------------------------------------------------------------
-decodeResp :: Decode m
-           => ByteString
-           -> (m -> Operation 'Completed r)
-           -> Operation 'Completed r
-decodeResp bytes k =
+foreach :: SM a x -> (a -> SM b x) -> SM b x
+foreach start k = go start
+  where
+    go (Return x)     = Return x
+    go (Yield a n)    = k a >> go n
+    go (FreshId ki)   = FreshId (go . ki)
+    go (SendPkg p kp) = SendPkg p (go . kp)
+    go (Failure e)    = Failure e
+
+--------------------------------------------------------------------------------
+newtype Operation a = Operation { applyOp :: UUID -> SM a () }
+
+--------------------------------------------------------------------------------
+operation :: (UUID -> SM a ()) -> Operation a
+operation = Operation
+
+--------------------------------------------------------------------------------
+decodeResp :: Decode a => ByteString -> SM o a
+decodeResp bytes =
     case runGet decodeMessage bytes of
-        Left e  -> protobufDecodingError e
-        Right m -> k m
+        Left e  -> failure $ ProtobufDecodingError e
+        Right m -> return m
 
 --------------------------------------------------------------------------------
-retry :: (forall a. Input 'Init r a -> a) -> Operation 'Completed r
-retry k = Operation $ \Report -> Retry $ Operation k
+wrongVersion :: Text -> ExpectedVersion -> SM o a
+wrongVersion stream ver = failure (WrongExpectedVersion stream ver)
 
 --------------------------------------------------------------------------------
-wrongVersion :: Text -> ExpectedVersion -> Operation 'Completed r
-wrongVersion stream ver = errored (WrongExpectedVersion stream ver)
+streamDeleted :: Text -> SM o a
+streamDeleted stream = failure (StreamDeleted stream)
 
 --------------------------------------------------------------------------------
-streamDeleted :: Text -> Operation 'Completed r
-streamDeleted stream = errored (StreamDeleted stream)
+invalidTransaction :: SM o a
+invalidTransaction = failure InvalidTransaction
 
 --------------------------------------------------------------------------------
-invalidTransaction :: Operation 'Completed r
-invalidTransaction = errored InvalidTransaction
+accessDenied :: StreamName -> SM o a
+accessDenied = failure . AccessDenied
 
 --------------------------------------------------------------------------------
-accessDenied :: StreamName -> Operation 'Completed r
-accessDenied = errored . AccessDenied
+protobufDecodingError :: String -> SM o a
+protobufDecodingError = failure . ProtobufDecodingError
 
 --------------------------------------------------------------------------------
-protobufDecodingError :: String -> Operation 'Completed r
-protobufDecodingError = errored . ProtobufDecodingError
+serverError :: Maybe Text -> SM o a
+serverError = failure . ServerError
 
 --------------------------------------------------------------------------------
-serverError :: Maybe Text -> Operation 'Completed r
-serverError = errored . ServerError
+invalidServerResponse :: Word8 -> Word8 -> SM o a
+invalidServerResponse expe got = failure $ InvalidServerResponse expe got

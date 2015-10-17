@@ -1,6 +1,4 @@
-{-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE KindSignatures            #-}
 {-# LANGUAGE RecordWildCards           #-}
 --------------------------------------------------------------------------------
 -- |
@@ -16,6 +14,7 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Operation.Model
     ( Model
+    , Transition(..)
     , newModel
     , pushOperation
     , submitPackage
@@ -28,7 +27,6 @@ import           Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Operation
-import Database.EventStore.Internal.Step
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -36,12 +34,10 @@ import Database.EventStore.Internal.Types
 data Elem r =
     forall a.
     Elem
-    { _eAttempt :: !Int
-      -- ^ How many time that operation failed.
-    , _eOp :: !(Operation 'Pending a)
-      -- ^ Current operation state-machine.
-    , _cb :: Either OperationError a -> r
-      -- ^ Callback called on operation completion.
+    { _opId   :: UUID
+    , _opOp   :: Operation a
+    , _opCont :: Package -> SM a ()
+    , _opCb   :: Either OperationError a -> r
     }
 
 --------------------------------------------------------------------------------
@@ -61,80 +57,84 @@ initState g = State g H.empty
 --------------------------------------------------------------------------------
 -- | Type of requests handled by the model.
 data Request r
-    = forall a. New (Operation 'Init a) (Either OperationError a -> r)
+    = forall a. New (Operation a) (Either OperationError a -> r)
       -- ^ Register a new 'Operation'.
     | Pkg Package
       -- ^ Submit a package.
 
 --------------------------------------------------------------------------------
-newtype Model r = Model (Request r -> Maybe (Step Model r))
+data Transition r
+    = Produce r (Transition r)
+    | Transmit Package (Transition r)
+    | Await (Model r)
+
+--------------------------------------------------------------------------------
+newtype Model r = Model (Request r -> Maybe (Transition r))
 
 --------------------------------------------------------------------------------
 -- | Pushes a new 'Operation' to model. The given 'Operation' state-machine is
 --   initialized and produces a 'Package'.
 pushOperation :: (Either OperationError a -> r)
-              -> Operation 'Init a
+              -> Operation a
               -> Model r
-              -> (Package, Model r)
-pushOperation cb op (Model k) =
-    let Just (Send pkg nxt) = k (New op cb) in (pkg, nxt)
+              -> Transition r
+pushOperation cb op (Model k) = let Just t = k (New op cb) in t
 
 --------------------------------------------------------------------------------
 -- | Submits a 'Package' to the model. If the model isn't concerned by the
 --   'Package', it will returns 'Nothing'. Because 'Operation' can implement
 --   complex logic (retry for instance), it returns a 'Step'.
-submitPackage :: Package -> Model r -> Maybe (Step Model r)
+submitPackage :: Package -> Model r -> Maybe (Transition r)
 submitPackage pkg (Model k) = k (Pkg pkg)
+
+--------------------------------------------------------------------------------
+runOperation :: (Either OperationError a -> r)
+             -> UUID
+             -> SM a ()
+             -> Operation a
+             -> State r
+             -> Transition r
+runOperation cb op_id start op init_st = go init_st start
+  where
+    go st (Return _) =
+        let nxt_ps = H.delete op_id $ _pending st
+            nxt_st = st { _pending = nxt_ps } in
+        Await $ Model $ handle nxt_st
+    go st (Yield a n) = Produce (cb $ Right a) (go st n)
+    go st (FreshId k) =
+        let (new_id, nxt_gen) = nextUUID $ _gen st
+            nxt_st            = st { _gen = nxt_gen } in
+        go nxt_st $ k new_id
+    go st (SendPkg pkg k) =
+        let elm    = Elem op_id op k cb
+            ps     = H.insert op_id elm $ _pending st
+            nxt_st = st { _pending = ps } in
+        Transmit pkg (Await $ Model $ handle nxt_st)
+    go st (Failure m) =
+        let nxt_ps = H.delete op_id $ _pending st
+            nxt_st = st { _pending = nxt_ps } in
+        case m of
+            Just e -> Produce (cb $ Left e) (Await $ Model $ handle nxt_st)
+            _      ->
+                let (new_id, nxt_gen) = nextUUID $ _gen nxt_st
+                    fin_st            = nxt_st { _gen = nxt_gen } in
+                runOperation cb new_id (applyOp op new_id) op fin_st
+
+--------------------------------------------------------------------------------
+runPackage :: Package -> State r -> Maybe (Transition r)
+runPackage pkg st = do
+    Elem op_id op cont cb <- H.lookup (packageCorrelation pkg) $ _pending st
+    return $ runOperation cb op_id (cont pkg) op st
 
 --------------------------------------------------------------------------------
 -- | Creates a new 'Operation' model state-machine.
 newModel :: Generator -> Model r
-newModel g = Model $ go $ initState g
-  where
-    go st i =
-        case i of
-            New op cb ->
-                let (u, nxt_g) = nextUUID $ _gen st
-                    (pkg, p)   = createPackage u op
-                    elm        = Elem 0 p cb
-                    ps         = H.insert u elm $ _pending st
-                    nxt_st     = st { _gen     = nxt_g
-                                    , _pending = ps
-                                    } in
-                Just $ Send pkg (Model $ go nxt_st)
-            Pkg pkg ->
-                case H.lookup (packageCorrelation pkg) $ _pending st of
-                    Nothing              -> Nothing
-                    Just (Elem at op cb) -> Just $
-                        case packageArrived pkg op of
-                            Left op' ->
-                                let elm    = Elem at op' cb
-                                    m      = _pending st
-                                    u      = packageCorrelation pkg
-                                    ps     = H.insert u elm m
-                                    nxt_st = st { _pending = ps } in
-                                Cont $ Model $ go nxt_st
-                            Right c ->
-                                case getReport c of
-                                    Retry op' ->
-                                        let (u, nxt_g) = nextUUID $ _gen st
-                                            (rpkg, p)  = createPackage u op'
-                                            elm        = Elem (at+1) p cb
-                                            m          = _pending st
-                                            ps         = H.insert u elm m
-                                            nxt_st     = st { _pending = ps
-                                                            , _gen     = nxt_g
-                                                            } in
-                                        Send rpkg (Model $ go nxt_st)
-                                    Error e ->
-                                        let r      = cb (Left e)
-                                            u      = packageCorrelation pkg
-                                            ps     = H.delete u $ _pending st
-                                            nxt_st = st { _pending = ps } in
-                                        Done r (Model $ go nxt_st)
-                                    Success a ->
-                                        let r      = cb (Right a)
-                                            u      = packageCorrelation pkg
-                                            ps     = H.delete u $ _pending st
-                                            nxt_st = st { _pending = ps } in
-                                        Done r (Model $ go nxt_st)
+newModel g = Model $ handle $ initState g
+
+--------------------------------------------------------------------------------
+handle :: State r -> Request r -> Maybe (Transition r)
+handle st (New op cb) =
+    let (op_id, nxt_gen) = nextUUID $ _gen st
+        nxt_st           = st { _gen = nxt_gen } in
+    Just $ runOperation cb op_id (applyOp op op_id) op nxt_st
+handle st (Pkg pkg) = runPackage pkg st

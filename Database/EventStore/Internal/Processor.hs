@@ -15,6 +15,7 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Processor
     ( Processor
+    , Transition(..)
     , newProcessor
     , connectRegularStream
     , connectPersistent
@@ -34,9 +35,9 @@ import Data.Text
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Operation
-import Database.EventStore.Internal.Step
 import Database.EventStore.Internal.Types
 
+--------------------------------------------------------------------------------
 import qualified Database.EventStore.Internal.Manager.Operation.Model as Op
 import qualified Database.EventStore.Internal.Manager.Subscription    as Sub
 
@@ -46,14 +47,14 @@ data In r
     = Cmd (Cmd r)
       -- ^ A command can be an 'Operation' or a 'Subscription' actions.
     | Pkg Package
-      --   the 'Processor'.
+      -- ^ Handle a 'Package' coming from the server.
 
 --------------------------------------------------------------------------------
 -- | Type of commmand a 'Processor' can handle.
 data Cmd r
     = SubscriptionCmd (SubscriptionCmd r)
       -- ^ Subcription related commands.
-    | forall a. NewOp (Operation 'Init a) (Either OperationError a -> r)
+    | forall a. NewOp (Operation a) (Either OperationError a -> r)
       -- ^ Register a new 'Operation'.
 
 --------------------------------------------------------------------------------
@@ -87,11 +88,9 @@ connectRegularStream :: (Sub.SubConnectEvent -> r)
                      -> Text -- ^ Stream name.
                      -> Bool -- ^ Resolve Link TOS.
                      -> Processor r
-                     -> (Package, Processor r)
+                     -> Transition r
 connectRegularStream c s tos (Processor k) =
-    let Send pkg nxt =
-            k $ Cmd $ SubscriptionCmd $ ConnectStream c s tos in
-    (pkg, nxt)
+    k $ Cmd $ SubscriptionCmd $ ConnectStream c s tos
 
 --------------------------------------------------------------------------------
 -- | Creates a persistent subscription connection.
@@ -100,11 +99,9 @@ connectPersistent :: (Sub.SubConnectEvent -> r)
                   -> Text  -- ^ Stream name.
                   -> Int32 -- ^ Buffer size.
                   -> Processor r
-                  -> (Package, Processor r)
+                  -> Transition r
 connectPersistent c g s siz (Processor k) =
-    let Send pkg nxt =
-            k $ Cmd $ SubscriptionCmd $ ConnectPersist c g s siz in
-    (pkg, nxt)
+    k $ Cmd $ SubscriptionCmd $ ConnectPersist c g s siz
 
 --------------------------------------------------------------------------------
 -- | Creates a persistent subscription.
@@ -113,11 +110,9 @@ createPersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                  -> Text -- ^ Stream name.
                  -> PersistentSubscriptionSettings
                  -> Processor r
-                 -> (Package, Processor r)
+                 -> Transition r
 createPersistent c g s sett (Processor k) =
-    let Send pkg nxt =
-            k $ Cmd $ SubscriptionCmd $ CreatePersist c g s sett in
-    (pkg, nxt)
+    k $ Cmd $ SubscriptionCmd $ CreatePersist c g s sett
 
 --------------------------------------------------------------------------------
 -- | Updates a persistent subscription.
@@ -126,11 +121,9 @@ updatePersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                  -> Text -- ^ Stream name.
                  -> PersistentSubscriptionSettings
                  -> Processor r
-                 -> (Package, Processor r)
+                 -> Transition r
 updatePersistent c g s sett (Processor k) =
-    let Send pkg nxt =
-            k $ Cmd $ SubscriptionCmd $ UpdatePersist c g s sett in
-    (pkg, nxt)
+    k $ Cmd $ SubscriptionCmd $ UpdatePersist c g s sett
 
 --------------------------------------------------------------------------------
 -- | Deletes a persistent subscription.
@@ -138,24 +131,21 @@ deletePersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                  -> Text -- ^ Group name.
                  -> Text -- ^ Stream name.
                  -> Processor r
-                 -> (Package, Processor r)
+                 -> Transition r
 deletePersistent c g s (Processor k) =
-    let Send pkg nxt =
-            k $ Cmd $ SubscriptionCmd $ DeletePersist c g s in
-    (pkg, nxt)
+    k $ Cmd $ SubscriptionCmd $ DeletePersist c g s
 
 --------------------------------------------------------------------------------
 -- | Registers a new 'Operation'.
 newOperation :: (Either OperationError a -> r)
-             -> Operation 'Init a
+             -> Operation a
              -> Processor r
-             -> (Package, Processor r)
-newOperation c op (Processor k) =
-    let Send pkg nxt = k $ Cmd $ NewOp op c in (pkg, nxt)
+             -> Transition r
+newOperation c op (Processor k) = k $ Cmd $ NewOp op c
 
 --------------------------------------------------------------------------------
 -- | Submits a 'Package'.
-submitPackage :: Package -> Processor r -> Step Processor r
+submitPackage :: Package -> Processor r -> Transition r
 submitPackage pkg (Processor k) = k $ Pkg pkg
 
 --------------------------------------------------------------------------------
@@ -175,38 +165,44 @@ initState setts g = State (Sub.newDriver setts g1) (Op.newModel g2)
     (g1, g2) = splitGenerator g
 
 --------------------------------------------------------------------------------
--- | Processor state-machine.
-newtype Processor r = Processor (In r -> Step Processor r)
+data Transition r
+    = Produce r (Transition r)
+    | Transmit Package (Transition r)
+    | Await (Processor r)
 
 --------------------------------------------------------------------------------
--- | Creates a new 'Processor' state-machine.
-newProcessor :: Settings -> Generator -> Processor r
-newProcessor setts gen = Processor $ go $ initState setts gen
+-- | Processor state-machine.
+newtype Processor r = Processor (In r -> Transition r)
+
+--------------------------------------------------------------------------------
+loopOpTransition :: State r -> Op.Transition r -> Transition r
+loopOpTransition st (Op.Produce r nxt) =
+    Produce r (loopOpTransition st nxt)
+loopOpTransition st (Op.Transmit pkg nxt) =
+    Transmit pkg (loopOpTransition st nxt)
+loopOpTransition st (Op.Await m) =
+    let nxt_st = st { _opModel = m } in Await $ Processor $ handle nxt_st
+
+--------------------------------------------------------------------------------
+handle :: State r -> In r -> Transition r
+handle = go
   where
     go st (Cmd tpe) =
         case tpe of
             NewOp op cb ->
-                let (pkg, nxt_m) = Op.pushOperation cb op $ _opModel st
-                    nxt_st       = st { _opModel = nxt_m } in
-                Send pkg (Processor $ go nxt_st)
+                let sm = Op.pushOperation cb op $ _opModel st in
+                loopOpTransition st sm
             SubscriptionCmd cmd -> subCmd st cmd
     go st (Pkg pkg) =
-        case Op.submitPackage pkg $ _opModel st of
-            Just (Done r nxt_m) ->
-                let nxt_st = st { _opModel = nxt_m } in
-                Done r (Processor $ go nxt_st)
-            Just (Send npkg nxt_m) ->
-                let nxt_st = st { _opModel = nxt_m } in
-                Send npkg (Processor $ go nxt_st)
-            Just (Cont nxt_m) ->
-                let nxt_st = st { _opModel = nxt_m } in
-                Cont $ Processor $ go nxt_st
+        let sm_m = Op.submitPackage pkg $ _opModel st in
+        case fmap (loopOpTransition st) sm_m of
+            Just nxt -> nxt
             Nothing ->
                 case Sub.submitPackage pkg $ _subDriver st of
-                    Nothing           -> Cont $ Processor $ go st
+                    Nothing           -> Await $ Processor $ go st
                     Just (r, nxt_drv) ->
                         let nxt_st = st { _subDriver = nxt_drv } in
-                        Done r (Processor $ go nxt_st)
+                        Produce r $ Await $ Processor $ go nxt_st
 
     subCmd st@State{..} cmd =
         case cmd of
@@ -214,24 +210,28 @@ newProcessor setts gen = Processor $ go $ initState setts gen
                 let (pkg, nxt_drv) = Sub.connectToStream k s tos _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
-                Send pkg nxt
+                Transmit pkg $ Await nxt
             ConnectPersist k g s b ->
                 let (pkg, nxt_drv) = Sub.connectToPersist k g s b _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
-                Send pkg nxt
+                Transmit pkg $ Await nxt
             CreatePersist k g s ss ->
                 let (pkg, nxt_drv) = Sub.createPersist k g s ss _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
-                Send pkg nxt
+                Transmit pkg $ Await nxt
             UpdatePersist k g s ss ->
                 let (pkg, nxt_drv) = Sub.updatePersist k g s ss _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
-                Send pkg nxt
+                Transmit pkg $ Await nxt
             DeletePersist k g s ->
                 let (pkg, nxt_drv) = Sub.deletePersist k g s _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
-                Send pkg nxt
+                Transmit pkg $ Await nxt
+--------------------------------------------------------------------------------
+-- | Creates a new 'Processor' state-machine.
+newProcessor :: Settings -> Generator -> Processor r
+newProcessor setts gen = Processor $ handle $ initState setts gen

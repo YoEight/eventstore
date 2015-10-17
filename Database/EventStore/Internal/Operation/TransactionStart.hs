@@ -32,6 +32,6 @@ data Transaction =
     { _tId              :: !Int64
     , _tStream          :: !Text
     , _tExpectedVersion :: !ExpectedVersion
-    , _tWriteEventsOp   :: [Event] -> Operation 'Init ()
-    , _tCommitOp        :: Operation 'Init WriteResult
+--    , _tWriteEventsOp   :: [Event] -> Operation 'Init ()
+--    , _tCommitOp        :: Operation 'Init WriteResult
     }

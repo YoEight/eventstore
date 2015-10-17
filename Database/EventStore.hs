@@ -250,6 +250,14 @@ data RegularSubscription =
     }
 
 --------------------------------------------------------------------------------
+data CatchupSubscription =
+    CatchUp
+    { _catchVar :: TVar (SubState S.Catchup)
+    , _catchRan :: S.Running
+    , _catchStream :: Text
+    }
+
+--------------------------------------------------------------------------------
 instance Subscription RegularSubscription where
     subId = S.runningUUID . _regSubRun
     subStreamId = _regSubStream
@@ -456,9 +464,8 @@ setStreamMetadata :: Connection
                   -> StreamMetadata
                   -> IO (Async WriteResult)
 setStreamMetadata Connection{..} evt_stream exp_ver metadata = do
-    uuid    <- nextRandom
     (k, as) <- createOpAsync
-    let op = Op.setMetaStream _settings evt_stream exp_ver uuid metadata
+    let op = Op.setMetaStream _settings evt_stream exp_ver metadata
     pushOperation _prod k op
     return as
 
@@ -536,7 +543,8 @@ createSubAsync mk rcv send quit = go
     go (S.Dropped _ r) = atomically $ quit r
 
 --------------------------------------------------------------------------------
--- create
+createCatchAsync :: Production -> IO (S.SubConnectEvent -> IO ())
+createCatchAsync = undefined
 
 --------------------------------------------------------------------------------
 eventToNewEvent :: Event -> IO NewEvent
