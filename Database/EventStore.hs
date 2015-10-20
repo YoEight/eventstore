@@ -244,7 +244,7 @@ class Subscription a where
 data RegularSubscription =
     RegSub
     { _regSubVar    :: TVar (SubState S.Regular)
-    , _regSubRun    :: S.Running
+    , _regSubRun    :: TMVar S.Running
     , _regSubStream :: Text
     , _regProd      :: Production
     }
@@ -252,24 +252,27 @@ data RegularSubscription =
 --------------------------------------------------------------------------------
 data CatchupSubscription =
     Catchup
-    { _catchVar :: TVar (SubState S.Catchup)
-    , _catchRun :: TMVar S.Running
+    { _catchVar    :: TVar (SubState S.Catchup)
+    , _catchRun    :: TMVar S.Running
     , _catchStream :: Text
-    , _catchProd :: Production
+    , _catchProd   :: Production
     }
 
 --------------------------------------------------------------------------------
 instance Subscription RegularSubscription where
     subStreamId = _regSubStream
-    unsubscribe RegSub{..} = pushUnsubscribe _regProd _regSubRun
+    unsubscribe RegSub{..} = do
+        run <- atomically $ readTMVar _regSubRun
+        pushUnsubscribe _regProd run
     awaitEvent RegSub{..} = atomically $ do
         SubState sub close <- readTVar _regSubVar
+        run                <- readTMVar _regSubRun
         let (res, nxt) = S.readNext sub
         case res of
             Nothing -> do
                 case close of
                     Nothing  -> retry
-                    Just err -> throwSTM $ SubscriptionClosed _regSubRun err
+                    Just err -> throwSTM $ SubscriptionClosed run err
             Just e -> do
                 writeTVar _regSubVar $ SubState nxt close
                 return e
@@ -438,14 +441,12 @@ readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
 subscribe :: Connection
           -> Text       -- ^ Stream name
           -> Bool       -- ^ Resolve Link Tos
-          -> IO (Async RegularSubscription)
+          -> IO RegularSubscription
 subscribe Connection{..} stream_id res_lnk_tos = do
     mvar <- newEmptyTMVarIO
     var  <- newTVarIO $ SubState S.regularSubscription Nothing
     as   <- async $ atomically $ readTMVar mvar
-    let mk r = do
-            let reg = RegSub var r stream_id _prod
-            putTMVar mvar reg
+    let mk r = putTMVar mvar r
         recv = readTVar var
         send = writeTVar var
         dropped r = do
@@ -453,13 +454,13 @@ subscribe Connection{..} stream_id res_lnk_tos = do
             writeTVar var $ SubState sm (Just r)
         cb = createSubAsync mk recv send dropped
     pushConnectStream _prod cb stream_id res_lnk_tos
-    return as
+    return $ RegSub var mvar stream_id _prod
 
 --------------------------------------------------------------------------------
 -- | Subcribes to $all stream.
 subscribeToAll :: Connection
                -> Bool       -- ^ Resolve Link Tos
-               -> IO (Async RegularSubscription)
+               -> IO RegularSubscription
 subscribeToAll conn res_lnk_tos = subscribe conn "" res_lnk_tos
 
 --------------------------------------------------------------------------------
@@ -593,10 +594,6 @@ createSubAsync mk rcv send quit = go
         let nxt = S.eventArrived e sm
         send $ SubState nxt close
     go (S.Dropped _ r) = atomically $ quit r
-
---------------------------------------------------------------------------------
-createCatchAsync :: Production -> IO (S.SubConnectEvent -> IO ())
-createCatchAsync = undefined
 
 --------------------------------------------------------------------------------
 eventToNewEvent :: Event -> IO NewEvent
