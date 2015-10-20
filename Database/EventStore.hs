@@ -251,9 +251,9 @@ data RegularSubscription =
 
 --------------------------------------------------------------------------------
 data CatchupSubscription =
-    CatchUp
+    Catchup
     { _catchVar :: TVar (SubState S.Catchup)
-    , _catchRan :: S.Running
+    , _catchRun :: TMVar S.Running
     , _catchStream :: Text
     }
 
@@ -275,7 +275,17 @@ instance Subscription RegularSubscription where
                 return e
 
 --------------------------------------------------------------------------------
+-- | Tracks a 'Subcription' lifecycle. It holds a 'Subscription' state machine
+--   and `SubDropReason` if any.
 data SubState a = SubState (S.Subscription a) (Maybe S.SubDropReason)
+
+--------------------------------------------------------------------------------
+-- | Modifies 'SubState' internal state machine, letting any 'SubDropReason'
+--   untouched.
+modifySubSM :: (S.Subscription a -> S.Subscription a)
+            -> SubState a
+            -> SubState a
+modifySubSM k (SubState sm r) = SubState (k sm) r
 
 --------------------------------------------------------------------------------
 data SubscriptionClosed =
@@ -442,9 +452,31 @@ subscribeFrom :: Connection
               -> Bool        -- ^ Resolve Link Tos
               -> Maybe Int32 -- ^ Last checkpoint
               -> Maybe Int32 -- ^ Batch size
-              -> IO ()
-subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m = do
-    error "not implemented"
+              -> IO CatchupSubscription
+subscribeFrom Connection{..} stream_id res_lnk_tos last_chk_pt batch_m = do
+    mvar <- newEmptyTMVarIO
+    var  <- newTVarIO $ SubState S.catchupSubscription Nothing
+    as   <- async $ atomically $ readTMVar mvar
+    let readFrom res =
+            case res of
+                Left _ -> return ()
+                Right (xs, eos) -> atomically $ do
+                    s <- readTVar var
+                    let nxt_s = modifySubSM (S.batchRead xs eos) s
+                    writeTVar var nxt_s
+        mk   = putTMVar mvar
+        rcv  = readTVar var
+        send = writeTVar var
+        dropped r = do
+            SubState sm _ <- readTVar var
+            writeTVar var $ SubState sm (Just r)
+        op = Op.catchup _settings stream_id res_lnk_tos last_chk_pt batch_m
+        cb = createSubAsync mk rcv send dropped
+
+    pushOperation _prod readFrom op
+    pushConnectStream _prod cb stream_id res_lnk_tos
+    return $ Catchup var mvar stream_id
+
 
 --------------------------------------------------------------------------------
 -- | Same as 'subscribeFrom' but applied to $all stream.
