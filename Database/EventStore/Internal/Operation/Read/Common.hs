@@ -36,6 +36,15 @@ data ReadResult        :: StreamType -> * -> * where
     ReadAccessDenied   :: StreamName -> ReadResult t a
 
 --------------------------------------------------------------------------------
+instance Functor (ReadResult t) where
+    fmap f (ReadSuccess a)       = ReadSuccess (f a)
+    fmap _ ReadNoStream          = ReadNoStream
+    fmap _ (ReadStreamDeleted s) = ReadStreamDeleted s
+    fmap _ ReadNotModified       = ReadNotModified
+    fmap _ (ReadError e)         = ReadError e
+    fmap _ (ReadAccessDenied s)  = ReadAccessDenied s
+
+--------------------------------------------------------------------------------
 class Slice a where
     type Loc a
 

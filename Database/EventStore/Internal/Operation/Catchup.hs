@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
@@ -11,7 +12,10 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Operation.Catchup (catchup) where
+module Database.EventStore.Internal.Operation.Catchup
+    ( CatchupType(..)
+    , catchup
+    ) where
 
 --------------------------------------------------------------------------------
 import Control.Monad
@@ -24,7 +28,9 @@ import Data.Text (Text)
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
+import Database.EventStore.Internal.Operation.ReadAllEvents
 import Database.EventStore.Internal.Operation.ReadStreamEvents
+import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -36,26 +42,53 @@ streamNotFound :: OperationError
 streamNotFound = InvalidOperation "Catchup. inexistant stream"
 
 --------------------------------------------------------------------------------
+data CatchupType
+    = RegularCatchup Text Int32
+    | AllCatchup Int64 Int64
+
+--------------------------------------------------------------------------------
 catchup :: Settings
-        -> Text
+        -> CatchupType
         -> Bool
         -> Maybe Int32
-        -> Maybe Int32
         -> Operation ([ResolvedEvent], Bool)
-catchup setts stream tos lst_chk bat_siz =
-    let nxt_evt = fromMaybe 0 lst_chk in go nxt_evt
+catchup setts init_tpe tos bat_siz = go init_tpe
   where
     batch = fromMaybe defaultBatchSize bat_siz
-    go cur_evt = do
+    go tpe = do
         let action =
-                readStreamEvents setts Forward stream batch cur_evt tos
-        foreach action $ \res ->
-            case res of
-                ReadNoStream        -> failure streamNotFound
-                ReadStreamDeleted s -> failure $ StreamDeleted s
-                ReadNotModified     -> failure $ ServerError Nothing
-                ReadError e         -> failure $ ServerError e
-                ReadAccessDenied s  -> failure $ AccessDenied s
-                ReadSuccess ss -> do
-                    yield (sliceEvents ss, sliceEOS ss)
-                    when (not $ sliceEOS ss) $ go $ sliceNext ss
+                case tpe of
+                    RegularCatchup stream cur_evt ->
+                        let op = readStreamEvents setts Forward stream batch
+                                 cur_evt tos in
+                        mapOp Left op
+                    AllCatchup c_pos p_pos ->
+                        let op = readAllEvents setts c_pos p_pos batch
+                                 tos Forward in
+                        mapOp Right op
+
+        foreach action $ \res -> do
+            (eos, evts, nxt_tpe) <- case res of
+                Right as -> do
+                    let Position nxt_c nxt_p = sliceNext as
+                        tmp_tpe = AllCatchup nxt_c nxt_p
+                    return (sliceEOS as, sliceEvents as, tmp_tpe)
+                Left rr -> fromReadResult rr $ \as ->
+                    let RegularCatchup s _ = tpe
+                        nxt = sliceNext as
+                        tmp_tpe = RegularCatchup s nxt in
+                    return (sliceEOS as, sliceEvents as, tmp_tpe)
+
+            yield (evts, eos)
+            when (not eos) $ go nxt_tpe
+
+--------------------------------------------------------------------------------
+fromReadResult :: ReadResult 'RegularStream a -> (a -> SM b x) -> SM b x
+fromReadResult res k =
+    case res of
+        ReadNoStream        -> failure streamNotFound
+        ReadStreamDeleted s -> failure $ StreamDeleted s
+        ReadNotModified     -> failure $ ServerError Nothing
+        ReadError e         -> failure $ ServerError e
+        ReadAccessDenied s  -> failure $ AccessDenied s
+        ReadSuccess ss      -> k ss

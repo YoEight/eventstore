@@ -19,8 +19,6 @@ import Data.Maybe
 
 --------------------------------------------------------------------------------
 import Data.ProtocolBuffers
-import Data.Serialize
-import Data.UUID (UUID)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation

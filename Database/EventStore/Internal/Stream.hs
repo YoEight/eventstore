@@ -21,6 +21,7 @@ import Data.Text
 data StreamType = All | RegularStream
 
 --------------------------------------------------------------------------------
+-- | Represents a regular stream name or $all stream.
 data StreamName = StreamName Text | AllStream
 
 --------------------------------------------------------------------------------

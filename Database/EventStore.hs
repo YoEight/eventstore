@@ -165,6 +165,7 @@ import Control.Concurrent.STM
 import Control.Exception
 import Data.ByteString.Lazy (fromStrict)
 import Data.Int
+import Data.Maybe
 import Data.Monoid ((<>))
 
 --------------------------------------------------------------------------------
@@ -474,7 +475,32 @@ subscribeFrom :: Connection
               -> Maybe Int32 -- ^ Last checkpoint
               -> Maybe Int32 -- ^ Batch size
               -> IO CatchupSubscription
-subscribeFrom Connection{..} stream_id res_lnk_tos last_chk_pt batch_m = do
+subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m =
+    subscribeFromCommon conn stream_id res_lnk_tos batch_m tpe
+  where
+    tpe = Op.RegularCatchup stream_id (fromMaybe 0 last_chk_pt)
+
+--------------------------------------------------------------------------------
+-- | Same as 'subscribeFrom' but applied to $all stream.
+subscribeToAllFrom :: Connection
+                   -> Bool           -- ^ Resolve Link Tos
+                   -> Maybe Position -- ^ Last checkpoint
+                   -> Maybe Int32    -- ^ Batch size
+                   -> IO CatchupSubscription
+subscribeToAllFrom conn res_lnk_tos last_chk_pt batch_m =
+    subscribeFromCommon conn "" res_lnk_tos batch_m tpe
+  where
+    Position c_pos p_pos = fromMaybe positionStart last_chk_pt
+    tpe = Op.AllCatchup c_pos p_pos
+
+--------------------------------------------------------------------------------
+subscribeFromCommon :: Connection
+                    -> Text
+                    -> Bool
+                    -> Maybe Int32
+                    -> Op.CatchupType
+                    -> IO CatchupSubscription
+subscribeFromCommon Connection{..} stream_id res_lnk_tos batch_m tpe = do
     mvar <- newEmptyTMVarIO
     var  <- newTVarIO $ SubState S.catchupSubscription Nothing
     as   <- async $ atomically $ readTMVar mvar
@@ -491,23 +517,12 @@ subscribeFrom Connection{..} stream_id res_lnk_tos last_chk_pt batch_m = do
         dropped r = do
             SubState sm _ <- readTVar var
             writeTVar var $ SubState sm (Just r)
-        op = Op.catchup _settings stream_id res_lnk_tos last_chk_pt batch_m
-        cb = createSubAsync mk rcv send dropped
+        op  = Op.catchup _settings tpe res_lnk_tos batch_m
+        cb  = createSubAsync mk rcv send dropped
 
     pushOperation _prod readFrom op
     pushConnectStream _prod cb stream_id res_lnk_tos
     return $ Catchup var mvar stream_id _prod
-
-
---------------------------------------------------------------------------------
--- | Same as 'subscribeFrom' but applied to $all stream.
-subscribeToAllFrom :: Connection
-                   -> Bool           -- ^ Resolve Link Tos
-                   -> Maybe Position -- ^ Last checkpoint
-                   -> Maybe Int32    -- ^ Batch size
-                   -> IO ()
-subscribeToAllFrom conn res_lnk_tos last_chk_pt batch_m = do
-    error "not implemented"
 
 --------------------------------------------------------------------------------
 -- | Asynchronously sets the metadata for a stream.
