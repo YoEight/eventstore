@@ -236,10 +236,9 @@ sendEvent mgr evt_stream exp_ver evt =
 
 --------------------------------------------------------------------------------
 class Subscription a where
-    subId :: a -> UUID
     subStreamId :: a -> Text
     unsubscribe :: a -> IO ()
-    awaitEvent :: a -> IO ResolvedEvent
+    awaitEvent  :: a -> IO ResolvedEvent
 
 --------------------------------------------------------------------------------
 data RegularSubscription =
@@ -247,6 +246,7 @@ data RegularSubscription =
     { _regSubVar    :: TVar (SubState S.Regular)
     , _regSubRun    :: S.Running
     , _regSubStream :: Text
+    , _regProd      :: Production
     }
 
 --------------------------------------------------------------------------------
@@ -255,13 +255,13 @@ data CatchupSubscription =
     { _catchVar :: TVar (SubState S.Catchup)
     , _catchRun :: TMVar S.Running
     , _catchStream :: Text
+    , _catchProd :: Production
     }
 
 --------------------------------------------------------------------------------
 instance Subscription RegularSubscription where
-    subId = S.runningUUID . _regSubRun
     subStreamId = _regSubStream
-    unsubscribe _ = return ()
+    unsubscribe RegSub{..} = pushUnsubscribe _regProd _regSubRun
     awaitEvent RegSub{..} = atomically $ do
         SubState sub close <- readTVar _regSubVar
         let (res, nxt) = S.readNext sub
@@ -272,6 +272,26 @@ instance Subscription RegularSubscription where
                     Just err -> throwSTM $ SubscriptionClosed _regSubRun err
             Just e -> do
                 writeTVar _regSubVar $ SubState nxt close
+                return e
+
+--------------------------------------------------------------------------------
+instance Subscription CatchupSubscription where
+    subStreamId = _catchStream
+    unsubscribe Catchup{..} = do
+        run <- atomically $ readTMVar _catchRun
+        pushUnsubscribe _catchProd run
+
+    awaitEvent Catchup{..} = atomically $ do
+        SubState sub close <- readTVar _catchVar
+        run                <- readTMVar _catchRun
+        let (res, nxt) = S.readNext sub
+        case res of
+            Nothing -> do
+                case close of
+                    Nothing  -> retry
+                    Just err -> throwSTM $ SubscriptionClosed run err
+            Just e -> do
+                writeTVar _catchVar $ SubState nxt close
                 return e
 
 --------------------------------------------------------------------------------
@@ -424,7 +444,7 @@ subscribe Connection{..} stream_id res_lnk_tos = do
     var  <- newTVarIO $ SubState S.regularSubscription Nothing
     as   <- async $ atomically $ readTMVar mvar
     let mk r = do
-            let reg = RegSub var r stream_id
+            let reg = RegSub var r stream_id _prod
             putTMVar mvar reg
         recv = readTVar var
         send = writeTVar var
@@ -475,7 +495,7 @@ subscribeFrom Connection{..} stream_id res_lnk_tos last_chk_pt batch_m = do
 
     pushOperation _prod readFrom op
     pushConnectStream _prod cb stream_id res_lnk_tos
-    return $ Catchup var mvar stream_id
+    return $ Catchup var mvar stream_id _prod
 
 
 --------------------------------------------------------------------------------

@@ -30,6 +30,7 @@ module Database.EventStore.Internal.Manager.Subscription.Driver
     , deletePersist
     , ackPersist
     , nakPersist
+    , unsubscribe
     ) where
 
 --------------------------------------------------------------------------------
@@ -195,6 +196,11 @@ nakPersist r i sid na mt evts (Driver k) =
     k (Cmd $ PersistNak r i sid na mt evts)
 
 --------------------------------------------------------------------------------
+-- | Unsubscribe from a subscription.
+unsubscribe :: Running -> Driver r -> (Package, Driver r)
+unsubscribe r (Driver k) = k (Cmd $ Unsubscribe r)
+
+--------------------------------------------------------------------------------
 -- EventStore result mappers:
 -- =========================
 -- EventStore protocol has several values that means the exact same thing. Those
@@ -259,6 +265,9 @@ data Cmd r
       --   'SubConnectEvent' has arrived, the driver will use the provided
       --   callback  and emit a final value. It holds a group name, stream
       --   name and a buffer size.
+
+    | Unsubscribe Running
+      -- ^ Unsubscribe from a subscription.
 
     | ApplyPersistAction (Either PersistActionException ConfirmedAction -> r)
                          Text
@@ -414,6 +423,11 @@ newDriver setts gen = Driver $ go (initState gen)
                     nxt_st     = st { _model = nxt_m
                                     , _gen   = nxt_g
                                     , _reg   = H.insert u cmd _reg } in
+                (pkg, Driver $ go nxt_st)
+            Unsubscribe r ->
+                let pkg    = createUnsubscribePackage setts $ runningUUID r
+                    nxt_m  = unsubscribed r _model
+                    nxt_st = st { _model = nxt_m } in
                 (pkg, Driver $ go nxt_st)
             ApplyPersistAction _ gn n a ->
                 let (u, nxt_g) = nextUUID _gen

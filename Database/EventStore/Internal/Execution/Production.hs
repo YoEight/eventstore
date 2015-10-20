@@ -30,6 +30,7 @@ module Database.EventStore.Internal.Execution.Production
     , pushCreatePersist
     , pushUpdatePersist
     , pushDeletePersist
+    , pushUnsubscribe
     ) where
 
 --------------------------------------------------------------------------------
@@ -52,7 +53,10 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Generator
-import Database.EventStore.Internal.Manager.Subscription hiding (submitPackage)
+import Database.EventStore.Internal.Manager.Subscription hiding
+    ( submitPackage
+    , unsubscribe
+    )
 import Database.EventStore.Internal.Operation hiding (retry)
 import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Processor
@@ -78,6 +82,7 @@ data Msg
       NewOperation (Either OperationError a -> IO ()) (Operation a)
     | ConnectStream (SubConnectEvent -> IO ()) Text Bool
     | ConnectPersist (SubConnectEvent -> IO ()) Text Text Int32
+    | Unsubscribe Running
     | CreatePersist (Either PersistActionException ConfirmedAction -> IO ())
           Text Text PersistentSubscriptionSettings
     | UpdatePersist (Either PersistActionException ConfirmedAction -> IO ())
@@ -151,6 +156,11 @@ pushDeletePersist :: Production
                   -> IO ()
 pushDeletePersist (Prod mailbox) k g n =
     atomically $ writeTChan mailbox (DeletePersist k g n)
+
+--------------------------------------------------------------------------------
+pushUnsubscribe :: Production -> Running -> IO ()
+pushUnsubscribe (Prod mailbox) r =
+    atomically $ writeTChan mailbox (Unsubscribe r)
 
 --------------------------------------------------------------------------------
 newtype Job = Job (IO ())
@@ -342,6 +352,11 @@ manager setts conn var mailbox pkg_queue job_queue = bootstrap
                     return Cruising
                 ConnectPersist k g n b -> do
                     let sm = connectPersistent k g n b $ _proc s
+                    new_proc <- loopTransition sm
+                    modifyTVar' var $ updateProc new_proc
+                    return Cruising
+                Unsubscribe r -> do
+                    let sm = unsubscribe r $ _proc s
                     new_proc <- loopTransition sm
                     modifyTVar' var $ updateProc new_proc
                     return Cruising

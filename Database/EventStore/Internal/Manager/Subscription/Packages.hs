@@ -116,3 +116,13 @@ createNakPackage Settings{..} corr sid act txt eids =
   where
     bytes = toStrict $ foldMap toByteString eids
     msg   = persistentSubscriptionNakEvents sid bytes txt act
+
+--------------------------------------------------------------------------------
+createUnsubscribePackage :: Settings -> UUID -> Package
+createUnsubscribePackage Settings{..} uuid =
+    Package
+    { packageCmd         = 0xC3
+    , packageCorrelation = uuid
+    , packageData        = runPut $ encodeMessage UnsubscribeFromStream
+    , packageCred        = s_credentials
+    }

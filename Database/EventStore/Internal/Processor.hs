@@ -24,6 +24,7 @@ module Database.EventStore.Internal.Processor
     , deletePersistent
     , newOperation
     , submitPackage
+    , unsubscribe
     ) where
 
 --------------------------------------------------------------------------------
@@ -70,6 +71,9 @@ data SubscriptionCmd r
                     Text
                     PersistentSubscriptionSettings
       -- ^ Creates a persistent subscription.
+
+    | Unsubscribe Sub.Running
+      -- ^ Unsubscribes a subscription.
 
     | UpdatePersist (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                     Text
@@ -149,6 +153,11 @@ submitPackage :: Package -> Processor r -> Transition r
 submitPackage pkg (Processor k) = k $ Pkg pkg
 
 --------------------------------------------------------------------------------
+-- | Unsubscribes a subscription.
+unsubscribe :: Sub.Running -> Processor r -> Transition r
+unsubscribe r (Processor k) = k $ Cmd $ SubscriptionCmd $ Unsubscribe r
+
+--------------------------------------------------------------------------------
 -- | 'Processor' internal state.
 data State r =
     State
@@ -213,6 +222,11 @@ handle = go
                 Transmit pkg $ Await nxt
             ConnectPersist k g s b ->
                 let (pkg, nxt_drv) = Sub.connectToPersist k g s b _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            Unsubscribe r ->
+                let (pkg, nxt_drv) = Sub.unsubscribe r _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Transmit pkg $ Await nxt
