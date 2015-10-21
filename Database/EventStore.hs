@@ -552,9 +552,15 @@ createPersistentSubscription :: Connection
                              -> Text
                              -> Text
                              -> PersistentSubscriptionSettings
-                             -> IO (Async ())
+                             -> IO (Async (Maybe S.PersistActionException))
 createPersistentSubscription Connection{..} group stream sett = do
-    error "not implemented"
+    mvar <- newEmptyTMVarIO
+    let _F res = atomically $
+            case res of
+                Left e -> putTMVar mvar (Just e)
+                _      -> putTMVar mvar Nothing
+    pushCreatePersist _prod _F group stream sett
+    async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
 -- | Asynchronously update a persistent subscription group on a stream.
@@ -562,18 +568,30 @@ updatePersistentSubscription :: Connection
                              -> Text
                              -> Text
                              -> PersistentSubscriptionSettings
-                             -> IO (Async ())
+                             -> IO (Async (Maybe S.PersistActionException))
 updatePersistentSubscription Connection{..} group stream sett = do
-    error "not implemented"
+    mvar <- newEmptyTMVarIO
+    let _F res = atomically $
+            case res of
+                Left e -> putTMVar mvar (Just e)
+                _      -> putTMVar mvar Nothing
+    pushUpdatePersist _prod _F group stream sett
+    async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
 -- | Asynchronously delete a persistent subscription group on a stream.
 deletePersistentSubscription :: Connection
                              -> Text
                              -> Text
-                             -> IO (Async ())
+                             -> IO (Async (Maybe S.PersistActionException))
 deletePersistentSubscription Connection{..} group stream = do
-    error "not implemented"
+    mvar <- newEmptyTMVarIO
+    let _F res = atomically $
+            case res of
+                Left e -> putTMVar mvar (Just e)
+                _      -> putTMVar mvar Nothing
+    pushDeletePersist _prod _F group stream
+    async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
 -- | Asynchronously connect to a persistent subscription given a group on a
