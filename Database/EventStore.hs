@@ -260,6 +260,16 @@ data CatchupSubscription =
     }
 
 --------------------------------------------------------------------------------
+data PersistentSubscription =
+    PersistentSub
+    { _perVar    :: TVar (SubState S.Persistent)
+    , _perRun    :: TMVar S.Running
+    , _perStream :: Text
+    , _perGroup  :: Text
+    , _perProd   :: Production
+    }
+
+--------------------------------------------------------------------------------
 instance Subscription RegularSubscription where
     subStreamId = _regSubStream
     unsubscribe RegSub{..} = do
@@ -296,6 +306,26 @@ instance Subscription CatchupSubscription where
                     Just err -> throwSTM $ SubscriptionClosed run err
             Just e -> do
                 writeTVar _catchVar $ SubState nxt close
+                return e
+
+--------------------------------------------------------------------------------
+instance Subscription PersistentSubscription where
+    subStreamId = _perStream
+    unsubscribe PersistentSub{..} = do
+        run <- atomically $ readTMVar _perRun
+        pushUnsubscribe _perProd run
+
+    awaitEvent PersistentSub{..} = atomically $ do
+        SubState sub close <- readTVar _perVar
+        run                <- readTMVar _perRun
+        let (res, nxt) = S.readNext sub
+        case res of
+            Nothing -> do
+                case close of
+                    Nothing  -> retry
+                    Just err -> throwSTM $ SubscriptionClosed run err
+            Just e -> do
+                writeTVar _perVar $ SubState nxt close
                 return e
 
 --------------------------------------------------------------------------------
@@ -600,9 +630,20 @@ connectToPersistentSubscription :: Connection
                                 -> Text
                                 -> Text
                                 -> Int32
-                                -> IO (Async ())
+                                -> IO PersistentSubscription
 connectToPersistentSubscription Connection{..} group stream bufSize = do
-    error "not implemented"
+    mvar <- newEmptyTMVarIO
+    var  <- newTVarIO $ SubState S.persistentSubscription Nothing
+    as   <- async $ atomically $ readTMVar mvar
+    let mk r = putTMVar mvar r
+        recv = readTVar var
+        send = writeTVar var
+        dropped r = do
+            SubState sm _ <- readTVar var
+            writeTVar var $ SubState sm (Just r)
+        cb = createSubAsync mk recv send dropped
+    pushConnectPersist _prod cb group stream bufSize
+    return $ PersistentSub var mvar stream group _prod
 
 --------------------------------------------------------------------------------
 createOpAsync :: IO (Either OperationError a -> IO (), Async a)
