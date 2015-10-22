@@ -102,20 +102,20 @@ module Database.EventStore
     -- , transactionSendEvents
       -- * Volatile Subscription
     , DropReason(..)
-    , Subscription(..)
+    , Subscription
     , RegularSubscription
+    , CatchupSubscription
+    , PersistentSubscription
     , subscribe
     , subscribeToAll
-    -- , subNextEvent
-    -- , subId
-    -- , subStreamId
-    -- , subIsSubscribedToAll
+    , subStreamId
+    , isSubscribedToAll
+    , unsubscribe
+    , nextEvent
     -- , subResolveLinkTos
     -- , subLastCommitPos
     -- , subLastEventNumber
-    -- , subUnsubscribe
       -- * Catch-up Subscription
-    -- , CatchupError(..)
     , subscribeFrom
     , subscribeToAllFrom
     -- , waitTillCatchup
@@ -124,8 +124,8 @@ module Database.EventStore
     , PersistentSubscriptionSettings(..)
     , SystemConsumerStrategy(..)
     , NakAction(..)
-    -- , notifyEventsProcessed
-    -- , notifyEventsFailed
+    , notifyEventsProcessed
+    , notifyEventsFailed
     , defaultPersistentSubscriptionSettings
     , createPersistentSubscription
     , updatePersistentSubscription
@@ -237,9 +237,10 @@ sendEvent mgr evt_stream exp_ver evt =
 
 --------------------------------------------------------------------------------
 class Subscription a where
-    subStreamId :: a -> Text
-    unsubscribe :: a -> IO ()
-    awaitEvent  :: a -> IO ResolvedEvent
+    subStreamId       :: a -> Text
+    isSubscribedToAll :: a -> Bool
+    unsubscribe       :: a -> IO ()
+    nextEvent         :: a -> IO ResolvedEvent
 
 --------------------------------------------------------------------------------
 data RegularSubscription =
@@ -270,12 +271,34 @@ data PersistentSubscription =
     }
 
 --------------------------------------------------------------------------------
+-- | Acknowledges those event ids have been successfully processed.
+notifyEventsProcessed :: PersistentSubscription -> [UUID] -> IO ()
+notifyEventsProcessed PersistentSub{..} evts = do
+    run <- atomically $ readTMVar _perRun
+    pushAckPersist _perProd (return ()) run _perGroup evts
+
+--------------------------------------------------------------------------------
+-- | Acknowledges those event ids have failed to be processed successfully.
+notifyEventsFailed :: PersistentSubscription
+                   -> NakAction
+                   -> Maybe Text
+                   -> [UUID]
+                   -> IO ()
+notifyEventsFailed PersistentSub{..} act res evts = do
+    run <- atomically $ readTMVar _perRun
+    pushNakPersist _perProd (return ()) run _perGroup act res evts
+
+--------------------------------------------------------------------------------
 instance Subscription RegularSubscription where
     subStreamId = _regSubStream
+
+    isSubscribedToAll = (== "") . subStreamId
+
     unsubscribe RegSub{..} = do
         run <- atomically $ readTMVar _regSubRun
         pushUnsubscribe _regProd run
-    awaitEvent RegSub{..} = atomically $ do
+
+    nextEvent RegSub{..} = atomically $ do
         SubState sub close <- readTVar _regSubVar
         run                <- readTMVar _regSubRun
         let (res, nxt) = S.readNext sub
@@ -291,11 +314,14 @@ instance Subscription RegularSubscription where
 --------------------------------------------------------------------------------
 instance Subscription CatchupSubscription where
     subStreamId = _catchStream
+
     unsubscribe Catchup{..} = do
         run <- atomically $ readTMVar _catchRun
         pushUnsubscribe _catchProd run
 
-    awaitEvent Catchup{..} = atomically $ do
+    isSubscribedToAll = (== "") . subStreamId
+
+    nextEvent Catchup{..} = atomically $ do
         SubState sub close <- readTVar _catchVar
         run                <- readTMVar _catchRun
         let (res, nxt) = S.readNext sub
@@ -311,11 +337,14 @@ instance Subscription CatchupSubscription where
 --------------------------------------------------------------------------------
 instance Subscription PersistentSubscription where
     subStreamId = _perStream
+
+    isSubscribedToAll _ = False
+
     unsubscribe PersistentSub{..} = do
         run <- atomically $ readTMVar _perRun
         pushUnsubscribe _perProd run
 
-    awaitEvent PersistentSub{..} = atomically $ do
+    nextEvent PersistentSub{..} = atomically $ do
         SubState sub close <- readTVar _perVar
         run                <- readTMVar _perRun
         let (res, nxt) = S.readNext sub

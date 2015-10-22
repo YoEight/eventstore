@@ -20,6 +20,7 @@ module Database.EventStore.Internal.Manager.Subscription.Driver
     , SubConnectEvent(..)
     , PersistActionException(..)
     , ConfirmedAction(..)
+    , NakAction(..)
     , Driver
     , newDriver
     , submitPackage

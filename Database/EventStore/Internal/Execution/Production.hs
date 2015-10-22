@@ -30,6 +30,8 @@ module Database.EventStore.Internal.Execution.Production
     , pushCreatePersist
     , pushUpdatePersist
     , pushDeletePersist
+    , pushAckPersist
+    , pushNakPersist
     , pushUnsubscribe
     ) where
 
@@ -56,6 +58,8 @@ import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Manager.Subscription hiding
     ( submitPackage
     , unsubscribe
+    , ackPersist
+    , nakPersist
     )
 import Database.EventStore.Internal.Operation hiding (retry)
 import Database.EventStore.Internal.Packages
@@ -89,6 +93,8 @@ data Msg
           Text Text PersistentSubscriptionSettings
     | DeletePersist (Either PersistActionException ConfirmedAction -> IO ())
           Text Text
+    | AckPersist (IO ()) Running Text [UUID]
+    | NakPersist (IO ()) Running Text NakAction (Maybe Text) [UUID]
 
 --------------------------------------------------------------------------------
 -- | Asks to shutdown the connection to the server asynchronously.
@@ -158,6 +164,26 @@ pushDeletePersist (Prod mailbox) k g n =
     atomically $ writeTChan mailbox (DeletePersist k g n)
 
 --------------------------------------------------------------------------------
+-- | Acknowledges a set of events has been successfully handled.
+pushAckPersist :: Production -> IO () -> Running -> Text -> [UUID] -> IO ()
+pushAckPersist (Prod mailbox) r run gid evts =
+    atomically $ writeTChan mailbox (AckPersist r run gid evts)
+
+--------------------------------------------------------------------------------
+-- | Acknowledges a set of events hasn't been handled successfully.
+pushNakPersist :: Production
+               -> IO ()
+               -> Running
+               -> Text
+               -> NakAction
+               -> Maybe Text
+               -> [UUID]
+               -> IO ()
+pushNakPersist (Prod mailbox) r run gid act res evts =
+    atomically $ writeTChan mailbox (NakPersist r run gid act res evts)
+
+--------------------------------------------------------------------------------
+-- | Unsubscribe from a subscription.
 pushUnsubscribe :: Production -> Running -> IO ()
 pushUnsubscribe (Prod mailbox) r =
     atomically $ writeTChan mailbox (Unsubscribe r)
@@ -372,6 +398,16 @@ manager setts conn var mailbox pkg_queue job_queue = bootstrap
                     return Cruising
                 DeletePersist k g n -> do
                     let sm = deletePersistent k g n $ _proc s
+                    new_proc <- loopTransition sm
+                    modifyTVar' var $ updateProc new_proc
+                    return Cruising
+                AckPersist r run gid evts -> do
+                    let sm = ackPersist r run gid evts $ _proc s
+                    new_proc <- loopTransition sm
+                    modifyTVar' var $ updateProc new_proc
+                    return Cruising
+                NakPersist r run gid act res evts -> do
+                    let sm = nakPersist r run gid act res evts $ _proc s
                     new_proc <- loopTransition sm
                     modifyTVar' var $ updateProc new_proc
                     return Cruising

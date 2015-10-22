@@ -22,6 +22,8 @@ module Database.EventStore.Internal.Processor
     , createPersistent
     , updatePersistent
     , deletePersistent
+    , ackPersist
+    , nakPersist
     , newOperation
     , submitPackage
     , unsubscribe
@@ -32,6 +34,7 @@ import Data.Int
 
 --------------------------------------------------------------------------------
 import Data.Text
+import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
@@ -86,6 +89,12 @@ data SubscriptionCmd r
                     Text
       -- ^ Deletes a persistent subscription.
 
+    | AckPersist r Sub.Running Text [UUID]
+      -- ^ Acknowledges a set of events has been successfully handled.
+
+    | NakPersist r Sub.Running Text Sub.NakAction (Maybe Text) [UUID]
+      -- ^ Acknowledges a set of events hasn't been handled successfully.
+
 --------------------------------------------------------------------------------
 -- | Creates a regular subscription connection.
 connectRegularStream :: (Sub.SubConnectEvent -> r)
@@ -138,6 +147,25 @@ deletePersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
                  -> Transition r
 deletePersistent c g s (Processor k) =
     k $ Cmd $ SubscriptionCmd $ DeletePersist c g s
+
+--------------------------------------------------------------------------------
+-- | Acknowledges a set of events has been successfully handled.
+ackPersist :: r -> Sub.Running -> Text -> [UUID] -> Processor r -> Transition r
+ackPersist r run gid evts (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ AckPersist r run gid evts
+
+--------------------------------------------------------------------------------
+-- | Acknowledges a set of events hasn't been handled successfully.
+nakPersist :: r
+           -> Sub.Running
+           -> Text
+           -> Sub.NakAction
+           -> Maybe Text
+           -> [UUID]
+           -> Processor r
+           -> Transition r
+nakPersist r run gid act res evts (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ NakPersist r run gid act res evts
 
 --------------------------------------------------------------------------------
 -- | Registers a new 'Operation'.
@@ -245,6 +273,18 @@ handle = go
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Transmit pkg $ Await nxt
+            AckPersist r run gid evts ->
+                let (pkg, nxt_drv) = Sub.ackPersist r run gid evts _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            NakPersist r run gid act res evts ->
+                let (pkg, nxt_drv) = Sub.nakPersist r run gid act res evts
+                                     _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+
 --------------------------------------------------------------------------------
 -- | Creates a new 'Processor' state-machine.
 newProcessor :: Settings -> Generator -> Processor r
