@@ -85,6 +85,8 @@ library
                    Database.EventStore.Internal.Operation.ReadStreamEvents.Message
                    Database.EventStore.Internal.Operation.Read.Common
                    Database.EventStore.Internal.Operation.StreamMetadata
+                   Database.EventStore.Internal.Operation.Transaction
+                   Database.EventStore.Internal.Operation.Transaction.Message
                    Database.EventStore.Internal.Operation.WriteEvents
                    Database.EventStore.Internal.Operation.WriteEvents.Message
                    Database.EventStore.Internal.Operation.Write.Common

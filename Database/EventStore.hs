@@ -181,7 +181,7 @@ import qualified Database.EventStore.Internal.Manager.Subscription as S
 import           Database.EventStore.Internal.Manager.Subscription.Message
 import           Database.EventStore.Internal.Operation hiding (retry)
 import qualified Database.EventStore.Internal.Operations as Op
-import           Database.EventStore.Internal.Operation.TransactionStart
+import           Database.EventStore.Internal.Operation.Transaction
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
 import           Database.EventStore.Internal.Stream

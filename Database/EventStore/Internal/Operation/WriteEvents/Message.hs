@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds     #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Operation.TransactionStart.Message
+-- Module : Database.EventStore.Internal.Operation.WriteEvents.Message
 -- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --

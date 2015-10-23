@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeFamilies   #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Operation.TransactionStart
+-- Module : Database.EventStore.Internal.Operation.Transaction
 -- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -13,7 +13,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Operation.TransactionStart where
+module Database.EventStore.Internal.Operation.Transaction where
 
 --------------------------------------------------------------------------------
 import Data.Int
@@ -23,6 +23,7 @@ import Data.Text
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Operation.Transaction.Message
 import Database.EventStore.Internal.Operation.Write.Common
 import Database.EventStore.Internal.Types
 
