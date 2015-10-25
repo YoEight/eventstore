@@ -27,6 +27,8 @@ module Database.EventStore.Internal.Manager.Subscription
     , batchRead
     , hasCaughtUp
     , runningUUID
+    , runningLastEventNumber
+    , runningLastCommitPosition
     ) where
 
 --------------------------------------------------------------------------------

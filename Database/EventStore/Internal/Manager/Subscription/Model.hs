@@ -20,6 +20,8 @@ module Database.EventStore.Internal.Manager.Subscription.Model
     , Meta(..)
     , Model
     , runningUUID
+    , runningLastEventNumber
+    , runningLastCommitPosition
     , querySubscription
     , queryPersistentAction
     , confirmedSubscription
@@ -92,6 +94,16 @@ data Running
       --             |    |---------------------------------------- Group name.
       --             |--------------------------------------------- Sub. id.
       deriving Show
+
+--------------------------------------------------------------------------------
+runningLastEventNumber :: Running -> Maybe Int32
+runningLastEventNumber (RunningReg _ _ _ _ i) = i
+runningLastEventNumber (RunningPersist _ _ _ _ _ _ i) = i
+
+--------------------------------------------------------------------------------
+runningLastCommitPosition :: Running -> Int64
+runningLastCommitPosition (RunningReg _ _ _ i _) = i
+runningLastCommitPosition (RunningPersist _ _ _ _ _ i _) = i
 
 --------------------------------------------------------------------------------
 runningUUID :: Running -> UUID
