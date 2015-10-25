@@ -13,6 +13,7 @@
 module Database.EventStore.Internal.Manager.Subscription.Packages where
 
 --------------------------------------------------------------------------------
+import Data.Foldable
 import Data.Int
 
 --------------------------------------------------------------------------------
@@ -26,6 +27,9 @@ import Data.UUID
 import Database.EventStore.Internal.Manager.Subscription.Message
 import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+import Prelude
 
 --------------------------------------------------------------------------------
 createConnectRegularPackage :: Settings -> UUID -> Text -> Bool -> Package

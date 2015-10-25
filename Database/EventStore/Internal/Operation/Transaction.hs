@@ -23,6 +23,7 @@ module Database.EventStore.Internal.Operation.Transaction
 --------------------------------------------------------------------------------
 import Data.Int
 import Data.Maybe
+import Data.Traversable
 
 --------------------------------------------------------------------------------
 import Data.ProtocolBuffers
@@ -34,6 +35,9 @@ import Database.EventStore.Internal.Operation.Transaction.Message
 import Database.EventStore.Internal.Operation.Write.Common
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+import Prelude
 
 --------------------------------------------------------------------------------
 transactionStart :: Settings -> Text -> ExpectedVersion -> Operation Int64

@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable  #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -31,6 +32,7 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import qualified Data.ByteString as B
 import           Data.Foldable
+import           Data.Typeable
 import           System.IO
 
 --------------------------------------------------------------------------------
@@ -46,7 +48,7 @@ import Database.EventStore.Logging
 data ConnectionException
     = MaxAttempt HostName Int Int -- ^ HostName Port MaxAttempt's value.
     | ClosedConnection            -- ^ Use of a close 'Connection'.
-    deriving Show
+    deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
 instance Exception ConnectionException

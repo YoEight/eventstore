@@ -1,7 +1,8 @@
-{-# LANGUAGE DataKinds      #-}
-{-# LANGUAGE GADTs          #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE Rank2Types     #-}
+{-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE GADTs              #-}
+{-# LANGUAGE KindSignatures     #-}
+{-# LANGUAGE Rank2Types         #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation
@@ -16,8 +17,10 @@
 module Database.EventStore.Internal.Operation where
 
 --------------------------------------------------------------------------------
+import Control.Applicative
 import Control.Exception
 import Control.Monad
+import Data.Typeable
 
 --------------------------------------------------------------------------------
 import Data.ByteString
@@ -30,6 +33,9 @@ import Data.Word
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+import Prelude
 
 --------------------------------------------------------------------------------
 data OpResult
@@ -54,7 +60,7 @@ data OperationError
     | ServerError (Maybe Text)                  -- ^ Reason
     | InvalidOperation Text
       -- ^ Invalid operation state. If happens, it's a driver bug.
-    deriving Show
+    deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
 instance Exception OperationError

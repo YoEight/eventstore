@@ -1,6 +1,7 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE RecordWildCards    #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore
@@ -169,6 +170,7 @@ import Control.Monad (when)
 import Data.Int
 import Data.Maybe
 import Data.Monoid ((<>))
+import Data.Typeable
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
@@ -362,7 +364,9 @@ modifySubSM k (SubState sm r) = SubState (k sm) r
 --------------------------------------------------------------------------------
 data SubscriptionClosed =
     SubscriptionClosed S.Running S.SubDropReason
-    deriving Show
+    deriving (Show, Typeable)
+
+--------------------------------------------------------------------------------
 
 instance Exception SubscriptionClosed
 --------------------------------------------------------------------------------

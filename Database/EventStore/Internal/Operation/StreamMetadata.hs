@@ -23,10 +23,10 @@ module Database.EventStore.Internal.Operation.StreamMetadata
 import Data.Int
 import Data.Monoid ((<>))
 
-import Data.Aeson (decode, encode)
-import Data.ByteString.Lazy (fromStrict, toStrict)
+--------------------------------------------------------------------------------
+import Data.Aeson (decode)
+import Data.ByteString.Lazy (fromStrict)
 import Data.Text (Text)
-import Data.UUID (UUID)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation

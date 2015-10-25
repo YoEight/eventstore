@@ -1,5 +1,6 @@
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DataKinds     #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DataKinds             #-}
+{-# OPTIONS_GHC -fcontext-stack=26 #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation.ReadEvent.Message
