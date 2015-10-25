@@ -14,9 +14,9 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Subscription
     ( module Database.EventStore.Internal.Manager.Subscription.Driver
-    , Regular
-    , Persistent
-    , Catchup
+    , Regular(..)
+    , Persistent(..)
+    , Catchup(..)
     , Subscription
     , Running(..)
     , regularSubscription
@@ -33,6 +33,7 @@ module Database.EventStore.Internal.Manager.Subscription
 
 --------------------------------------------------------------------------------
 import Data.Sequence
+import Data.Text (Text)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription.Driver
@@ -40,9 +41,17 @@ import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-data Regular
-data Persistent
-data Catchup
+-- | Represents a subscription to a single stream or $all stream in the
+--   EventStore.
+data Regular = Regular { _subTos :: Bool }
+
+--------------------------------------------------------------------------------
+-- | Represents catch-up subscription.
+data Catchup = Catchup
+
+--------------------------------------------------------------------------------
+-- | Represents a persistent subscription.
+data Persistent = Persistent { _perGroup  :: Text }
 
 --------------------------------------------------------------------------------
 data Input t a where
