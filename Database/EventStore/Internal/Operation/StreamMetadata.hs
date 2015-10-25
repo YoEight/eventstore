@@ -59,10 +59,11 @@ setMetaStream :: Settings
               -> ExpectedVersion
               -> StreamMetadata
               -> Operation WriteResult
-setMetaStream setts s v meta = do
-    evt_id <- freshId
+setMetaStream setts s v meta =
     let stream = metaStream s
-        inner  = writeEvents setts stream v [createNewEvent meta evt_id]
+        json   = streamMetadataJSON meta
+        evt    = createEvent "$metadata" Nothing (withJson json)
+        inner  = writeEvents setts stream v [evt] in
     foreach inner yield
 
 --------------------------------------------------------------------------------
@@ -86,10 +87,3 @@ onReadResult (ReadStreamDeleted s) _ = failure $ StreamDeleted s
 onReadResult ReadNotModified _       = failure $ ServerError Nothing
 onReadResult (ReadError e) _         = failure $ ServerError e
 onReadResult (ReadAccessDenied s) _  = failure $ AccessDenied s
-
---------------------------------------------------------------------------------
-createNewEvent :: StreamMetadata -> UUID -> NewEvent
-createNewEvent meta uuid =
-    newEvent "$metadata" uuid 1 1 bytes Nothing
-  where
-    bytes = toStrict $ encode $ streamMetadataJSON meta

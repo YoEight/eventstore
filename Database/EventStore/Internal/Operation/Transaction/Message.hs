@@ -22,6 +22,7 @@ import Data.ProtocolBuffers
 import Data.Text
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -37,7 +38,7 @@ data Start =
 instance Encode Start
 
 --------------------------------------------------------------------------------
-newStart :: Text -> Int32 -> Bool -> TransactionStart
+newStart :: Text -> Int32 -> Bool -> Start
 newStart stream_id exp_ver req_master =
     Start
     { _streamId        = putField stream_id
@@ -123,4 +124,4 @@ data Committed =
     deriving (Generic, Show)
 
 --------------------------------------------------------------------------------
-instance Decode Commited
+instance Decode Committed

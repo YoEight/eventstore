@@ -17,6 +17,7 @@ module Database.EventStore.Internal.Operations
        , module Database.EventStore.Internal.Operation.ReadEvent
        , module Database.EventStore.Internal.Operation.ReadStreamEvents
        , module Database.EventStore.Internal.Operation.StreamMetadata
+       , module Database.EventStore.Internal.Operation.Transaction
        , module Database.EventStore.Internal.Operation.WriteEvents
        ) where
 
@@ -27,4 +28,5 @@ import Database.EventStore.Internal.Operation.ReadAllEvents
 import Database.EventStore.Internal.Operation.ReadEvent
 import Database.EventStore.Internal.Operation.ReadStreamEvents
 import Database.EventStore.Internal.Operation.StreamMetadata
+import Database.EventStore.Internal.Operation.Transaction
 import Database.EventStore.Internal.Operation.WriteEvents

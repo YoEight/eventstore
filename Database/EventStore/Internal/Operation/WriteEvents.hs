@@ -31,10 +31,11 @@ import Database.EventStore.Internal.Types
 writeEvents :: Settings
             -> Text
             -> ExpectedVersion
-            -> [NewEvent]
+            -> [Event]
             -> Operation WriteResult
 writeEvents Settings{..} s v evts = do
-    let msg = newRequest s (expVersionInt32 v) evts s_requireMaster
+    nevts <- traverse eventToNewEvent evts
+    let msg = newRequest s (expVersionInt32 v) nevts s_requireMaster
     resp <- send 0x82 0x83 msg
     let r            = getField $ _result resp
         com_pos      = getField $ _commitPosition resp

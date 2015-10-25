@@ -95,11 +95,12 @@ module Database.EventStore
     , timeSpanFromDays
     , timeSpanTotalMillis
       -- * Transaction
-    -- , Transaction
-    -- , transactionStart
-    -- , transactionCommit
-    -- , transactionRollback
-    -- , transactionSendEvents
+    , Transaction
+    , startTransaction
+    , transactionId
+    , transactionCommit
+    , transactionRollback
+    , transactionWrite
       -- * Volatile Subscription
     , DropReason(..)
     , Subscription
@@ -181,7 +182,6 @@ import qualified Database.EventStore.Internal.Manager.Subscription as S
 import           Database.EventStore.Internal.Manager.Subscription.Message
 import           Database.EventStore.Internal.Operation hiding (retry)
 import qualified Database.EventStore.Internal.Operations as Op
-import           Database.EventStore.Internal.Operation.Transaction
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
 import           Database.EventStore.Internal.Stream
@@ -385,8 +385,7 @@ sendEvents :: Connection
            -> IO (Async WriteResult)
 sendEvents Connection{..} evt_stream exp_ver evts = do
     (k, as)  <- createOpAsync
-    fin_evts <- traverse eventToNewEvent evts
-    let op = Op.writeEvents _settings evt_stream exp_ver fin_evts
+    let op = Op.writeEvents _settings evt_stream exp_ver evts
     pushOperation _prod k op
     return as
 
@@ -404,13 +403,72 @@ deleteStream Connection{..} evt_stream exp_ver hard_del = do
     return as
 
 --------------------------------------------------------------------------------
+-- | Represents a multi-request transaction with the EventStore.
+data Transaction =
+    Transaction
+    { _tStream  :: Text
+    , _tTransId :: TransactionId
+    , _tExpVer  :: ExpectedVersion
+    , _tConn    :: Connection
+    }
+
+--------------------------------------------------------------------------------
+-- | The id of the transaction. This can be used to recover a transaction later
+newtype TransactionId =
+    TransactionId { _unTransId :: Int64 }
+    deriving (Eq, Ord, Show)
+
+--------------------------------------------------------------------------------
+-- | Gets the id of a 'Transaction'.
+transactionId :: Transaction -> TransactionId
+transactionId = _tTransId
+
+--------------------------------------------------------------------------------
 -- | Starts a transaction on given stream.
-transactionStart :: Connection
+startTransaction :: Connection
                  -> Text            -- ^ Stream name
                  -> ExpectedVersion
                  -> IO (Async Transaction)
-transactionStart Connection{..} evt_stream exp_ver = do
-    error "not implemented"
+startTransaction conn@Connection{..} evt_stream exp_ver = do
+    (k, as) <- createOpAsync
+    let op = Op.transactionStart _settings evt_stream exp_ver
+    pushOperation _prod k op
+    let _F trans_id =
+            Transaction
+            { _tStream  = evt_stream
+            , _tTransId = TransactionId trans_id
+            , _tExpVer  = exp_ver
+            , _tConn    = conn
+            }
+    return $ fmap _F as
+
+--------------------------------------------------------------------------------
+-- | Asynchronously writes to a transaction in the EventStore.
+transactionWrite :: Transaction -> [Event] -> IO (Async ())
+transactionWrite Transaction{..} evts = do
+    (k, as) <- createOpAsync
+    let Connection{..} = _tConn
+        raw_id = _unTransId _tTransId
+        op     = Op.transactionWrite _settings _tStream _tExpVer raw_id evts
+    pushOperation _prod k op
+    return as
+
+--------------------------------------------------------------------------------
+-- | Asynchronously commits this transaction.
+transactionCommit :: Transaction -> IO (Async WriteResult)
+transactionCommit Transaction{..} = do
+    (k, as) <- createOpAsync
+    let Connection{..} = _tConn
+        raw_id = _unTransId _tTransId
+        op     = Op.transactionCommit _settings _tStream _tExpVer raw_id
+    pushOperation _prod k op
+    return as
+
+--------------------------------------------------------------------------------
+-- | There isn't such of thing in EventStore parlance. Basically, if you want to
+--   rollback, you just have to not 'transactionCommit' a 'Transaction'.
+transactionRollback :: Transaction -> IO ()
+transactionRollback _ = return ()
 
 --------------------------------------------------------------------------------
 -- | Reads a single event from given stream.
@@ -697,20 +755,3 @@ createSubAsync mk rcv send quit = go
         let nxt = S.eventArrived e sm
         send $ SubState nxt close
     go (S.Dropped _ r) = atomically $ quit r
-
---------------------------------------------------------------------------------
-eventToNewEvent :: Event -> IO NewEvent
-eventToNewEvent evt =
-    newEventIO evt_type
-             evt_id
-             evt_data_type
-             evt_metadata_type
-             evt_data_bytes
-             evt_metadata_bytes
-  where
-    evt_type           = eventType evt
-    evt_id             = eventId evt
-    evt_data_bytes     = eventDataBytes $ eventData evt
-    evt_data_type      = eventDataType $ eventData evt
-    evt_metadata_bytes = eventMetadataBytes $ eventData evt
-    evt_metadata_type  = eventMetadataType $ eventData evt
