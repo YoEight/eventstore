@@ -10,7 +10,7 @@ name:                eventstore
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.8.0.0
+version:             0.9.0.0
 
 -- A short (one-line) description of the package.
 synopsis: EventStore TCP Client
@@ -57,21 +57,39 @@ library
   exposed-modules: Database.EventStore
                    Database.EventStore.Logging
   -- Modules included in this library but not exported.
-  other-modules:   Database.EventStore.Catchup
-                   Database.EventStore.Internal.Connection
+  other-modules:   Database.EventStore.Internal.Connection
+                   Database.EventStore.Internal.Execution.Production
+                   Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Packages
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Reader
+                   Database.EventStore.Internal.Step
+                   Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.TimeSpan
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Manager.Operation
+                   Database.EventStore.Internal.Manager.Operation.Model
                    Database.EventStore.Internal.Manager.Subscription
-                   Database.EventStore.Internal.Operation.DeleteStreamOperation
-                   Database.EventStore.Internal.Operation.ReadAllEventsOperation
-                   Database.EventStore.Internal.Operation.ReadEventOperation
-                   Database.EventStore.Internal.Operation.ReadStreamEventsOperation
-                   Database.EventStore.Internal.Operation.TransactionStartOperation
-                   Database.EventStore.Internal.Operation.WriteEventsOperation
+                   Database.EventStore.Internal.Manager.Subscription.Driver
+                   Database.EventStore.Internal.Manager.Subscription.Message
+                   Database.EventStore.Internal.Manager.Subscription.Model
+                   Database.EventStore.Internal.Manager.Subscription.Packages
+                   Database.EventStore.Internal.Operations
+                   Database.EventStore.Internal.Operation.DeleteStream
+                   Database.EventStore.Internal.Operation.DeleteStream.Message
+                   Database.EventStore.Internal.Operation.ReadAllEvents
+                   Database.EventStore.Internal.Operation.ReadAllEvents.Message
+                   Database.EventStore.Internal.Operation.ReadEvent
+                   Database.EventStore.Internal.Operation.ReadEvent.Message
+                   Database.EventStore.Internal.Operation.ReadStreamEvents
+                   Database.EventStore.Internal.Operation.ReadStreamEvents.Message
+                   Database.EventStore.Internal.Operation.Read.Common
+                   Database.EventStore.Internal.Operation.StreamMetadata
+                   Database.EventStore.Internal.Operation.Transaction
+                   Database.EventStore.Internal.Operation.Transaction.Message
+                   Database.EventStore.Internal.Operation.WriteEvents
+                   Database.EventStore.Internal.Operation.WriteEvents.Message
+                   Database.EventStore.Internal.Operation.Write.Common
                    Database.EventStore.Internal.Util.Sodium
                    Database.EventStore.Internal.Writer
 

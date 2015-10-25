@@ -1,5 +1,6 @@
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE RecordWildCards           #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Processor
@@ -10,274 +11,281 @@
 -- Stability : provisional
 -- Portability : non-portable
 --
+-- Top level operation and subscription logic of EventStore driver.
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Processor
-    ( ConnectionException(..)
-    , InternalException(..)
-    , Cmd(..)
+    ( Processor
+    , Transition(..)
     , newProcessor
+    , connectRegularStream
+    , connectPersistent
+    , createPersistent
+    , updatePersistent
+    , deletePersistent
+    , ackPersist
+    , nakPersist
+    , newOperation
+    , submitPackage
+    , unsubscribe
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent
-import Control.Exception
-import Data.Functor (void)
 import Data.Int
-import Data.Monoid ((<>))
-import Data.Word
 
 --------------------------------------------------------------------------------
-import Data.Text (Text)
+import Data.Text
 import Data.UUID
-import FRP.Sodium
-import Network
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Connection
-import Database.EventStore.Internal.Manager.Operation
-import Database.EventStore.Internal.Manager.Subscription
-import Database.EventStore.Internal.Packages
-import Database.EventStore.Internal.Reader
-import Database.EventStore.Internal.Types hiding (Event, newEvent)
-import Database.EventStore.Internal.Util.Sodium
-import Database.EventStore.Internal.Writer
-import Database.EventStore.Logging (Log(..), InfoMessage (Disconnected))
+import Database.EventStore.Internal.Generator
+import Database.EventStore.Internal.Operation hiding (SM(..))
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
--- Processor
---------------------------------------------------------------------------------
-type Result a  = a -> IO ()
-type EResult a = Result (Either OperationException a)
+import qualified Database.EventStore.Internal.Manager.Operation.Model as Op
+import qualified Database.EventStore.Internal.Manager.Subscription    as Sub
 
 --------------------------------------------------------------------------------
-data Cmd
-    = DoConnect HostName Int
-    | DoShutdown
-    | NewOperation OperationParams
-    | NewSub Text Bool (Result (Subscription Regular))
-    | CreatePersist Text Text PersistentSubscriptionSettings (EResult ())
-    | UpdatePersist Text Text PersistentSubscriptionSettings (EResult ())
-    | DeletePersist Text Text (EResult ())
-    | ConnectPersist Text Text Int32 (Result (Subscription Persistent))
+-- | Type of inputs handled by the 'Processor' driver.
+data In r
+    = Cmd (Cmd r)
+      -- ^ A command can be an 'Operation' or a 'Subscription' actions.
+    | Pkg Package
+      -- ^ Handle a 'Package' coming from the server.
 
 --------------------------------------------------------------------------------
-type Processor = Cmd -> IO ()
+-- | Type of commmand a 'Processor' can handle.
+data Cmd r
+    = SubscriptionCmd (SubscriptionCmd r)
+      -- ^ Subcription related commands.
+    | forall a. NewOp (Operation a) (Either OperationError a -> r)
+      -- ^ Register a new 'Operation'.
 
 --------------------------------------------------------------------------------
-newProcessor :: Settings -> IO Processor
-newProcessor sett = sync . network sett =<< newChan
+-- | Supported subscription command.
+data SubscriptionCmd r
+    = ConnectStream (Sub.SubConnectEvent -> r) Text Bool
+      -- ^ Creates a regular subscription connection.
+    | ConnectPersist (Sub.SubConnectEvent -> r) Text Text Int32
+      -- ^ Creates a persistent subscription connection.
+
+    | CreatePersist (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
+                    Text
+                    Text
+                    PersistentSubscriptionSettings
+      -- ^ Creates a persistent subscription.
+
+    | Unsubscribe Sub.Running
+      -- ^ Unsubscribes a subscription.
+
+    | UpdatePersist (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
+                    Text
+                    Text
+                    PersistentSubscriptionSettings
+      -- ^ Updates a persistent subscription.
+
+    | DeletePersist (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
+                    Text
+                    Text
+      -- ^ Deletes a persistent subscription.
+
+    | AckPersist r Sub.Running Text [UUID]
+      -- ^ Acknowledges a set of events has been successfully handled.
+
+    | NakPersist r Sub.Running Text Sub.NakAction (Maybe Text) [UUID]
+      -- ^ Acknowledges a set of events hasn't been handled successfully.
 
 --------------------------------------------------------------------------------
--- State
---------------------------------------------------------------------------------
-data State
-    = Offline
-    | Online
-      { _uuidCon      :: !UUID
-      , _packageCount :: !Int
-      , _host         :: !HostName
-      , _port         :: !Int
-      , _cleanup      :: !(IO ())
-      }
+-- | Creates a regular subscription connection.
+connectRegularStream :: (Sub.SubConnectEvent -> r)
+                     -> Text -- ^ Stream name.
+                     -> Bool -- ^ Resolve Link TOS.
+                     -> Processor r
+                     -> Transition r
+connectRegularStream c s tos (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ ConnectStream c s tos
 
 --------------------------------------------------------------------------------
--- Event
---------------------------------------------------------------------------------
-data Connect     = Connect HostName Int
-data Connected   = Connected HostName Int UUID (IO ())
-data Cleanup     = Cleanup
-data Reconnect   = Reconnect
-data Reconnected = Reconnected UUID (IO ())
+-- | Creates a persistent subscription connection.
+connectPersistent :: (Sub.SubConnectEvent -> r)
+                  -> Text  -- ^ Group name.
+                  -> Text  -- ^ Stream name.
+                  -> Int32 -- ^ Buffer size.
+                  -> Processor r
+                  -> Transition r
+connectPersistent c g s siz (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ ConnectPersist c g s siz
 
 --------------------------------------------------------------------------------
-heartbeatRequestCmd :: Word8
-heartbeatRequestCmd = 0x01
+-- | Creates a persistent subscription.
+createPersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
+                 -> Text -- ^ Group name.
+                 -> Text -- ^ Stream name.
+                 -> PersistentSubscriptionSettings
+                 -> Processor r
+                 -> Transition r
+createPersistent c g s sett (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ CreatePersist c g s sett
 
 --------------------------------------------------------------------------------
-network :: Settings -> Chan Package -> Reactive Processor
-network sett chan = do
-    (onConnect, pushConnect)         <- newEvent
-    (onConnected, pushConnected)     <- newEvent
-    (onCleanup, pushCleanup)         <- newEvent
-    (onReconnect, pushReconnect)     <- newEvent
-    (onReconnected, pushReconnected) <- newEvent
-    (onReceived, pushReceived)       <- newEvent
-    (onSend, pushSend)               <- newEvent
-
-    push_new_op <- operationNetwork sett
-                                    pushSend
-                                    (pushReconnect Reconnect)
-                                    onReceived
-
-    runSubCmd <- subscriptionNetwork sett pushSend onReceived
-
-    let stateE = fmap connected  onConnected    <>
-                 fmap reconnected onReconnected <>
-                 fmap received onReceived
-
-    stateB <- accum Offline stateE
-
-    let heartbeatP pkg = packageCmd pkg == heartbeatRequestCmd
-        onlyHeartbeats = filterE heartbeatP onReceived
-
-        con_snap   = fmap connectSnapshot onConnect
-        reco_snap  = snapshot reconnectSnapshot onReconnect stateB
-        clean_snap = snapshot cleanupSnapshot onCleanup stateB
-
-        full_reco c = do
-            pushCleanup Cleanup
-            pushReconnect c
-
-        push_reco_io  = pushAsync full_reco Reconnect
-        push_recv_io  = \pkg -> sync $ pushReceived pkg
-        push_recod_io = pushAsync2 $ \u c -> pushReconnected $ Reconnected u c
-        push_send_io  = pushAsync pushSend
-        push_con_io   = pushAsync4 $ \h p u c ->
-                                      pushConnected $ Connected h p u c
-
-    _ <- listen con_snap $ \(ConnectionSnapshot host port) ->
-             connection sett
-                        chan
-                        push_recv_io
-                        (push_con_io host port)
-                        push_reco_io
-                        host
-                        port
-
-    _ <- listen reco_snap $ \(ConnectionSnapshot host port) ->
-             connection sett
-                        chan
-                        push_recv_io
-                        push_recod_io
-                        push_reco_io
-                        host
-                        port
-
-    _ <- listen clean_snap $ \(CleanupSnapshot finalizer) -> finalizer
-
-    _ <- listen onlyHeartbeats $ \pkg ->
-             push_send_io $ heartbeatResponsePackage (packageCorrelation pkg)
-
-    let runCmd (DoConnect h p) =
-            void $ forkIO $ sync $ pushConnect $ Connect h p
-        runCmd DoShutdown =
-            void $ forkIO $ sync $ pushCleanup Cleanup
-        runCmd (NewOperation o) =
-            void $ forkIO $ sync $ push_new_op o
-        runCmd (NewSub stream tos cb) =
-            runSubCmd (SubscribeTo (RegularSub stream tos) cb)
-        runCmd (CreatePersist g s stgs cb) =
-            runSubCmd (SubmitPersistAction g s (PersistCreate stgs) cb)
-        runCmd (UpdatePersist g s stgs cb) =
-            runSubCmd (SubmitPersistAction g s (PersistUpdate stgs) cb)
-        runCmd (DeletePersist g s cb) =
-            runSubCmd (SubmitPersistAction g s PersistDelete cb)
-        runCmd (ConnectPersist g s b cb) =
-            runSubCmd (SubscribeTo (PersistentSub g s b) cb)
-
-    _ <- listen onSend (writeChan chan)
-
-    return runCmd
+-- | Updates a persistent subscription.
+updatePersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
+                 -> Text -- ^ Group name.
+                 -> Text -- ^ Stream name.
+                 -> PersistentSubscriptionSettings
+                 -> Processor r
+                 -> Transition r
+updatePersistent c g s sett (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ UpdatePersist c g s sett
 
 --------------------------------------------------------------------------------
--- Observer
---------------------------------------------------------------------------------
-data ConnectionSnapshot
-    = ConnectionSnapshot
-      { _conHost :: !HostName
-      , _conPort :: !Int
-      }
+-- | Deletes a persistent subscription.
+deletePersistent :: (Either Sub.PersistActionException Sub.ConfirmedAction -> r)
+                 -> Text -- ^ Group name.
+                 -> Text -- ^ Stream name.
+                 -> Processor r
+                 -> Transition r
+deletePersistent c g s (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ DeletePersist c g s
 
 --------------------------------------------------------------------------------
-connectSnapshot :: Connect -> ConnectionSnapshot
-connectSnapshot (Connect host port) =
-    ConnectionSnapshot
-    { _conHost = host
-    , _conPort = port
+-- | Acknowledges a set of events has been successfully handled.
+ackPersist :: r -> Sub.Running -> Text -> [UUID] -> Processor r -> Transition r
+ackPersist r run gid evts (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ AckPersist r run gid evts
+
+--------------------------------------------------------------------------------
+-- | Acknowledges a set of events hasn't been handled successfully.
+nakPersist :: r
+           -> Sub.Running
+           -> Text
+           -> Sub.NakAction
+           -> Maybe Text
+           -> [UUID]
+           -> Processor r
+           -> Transition r
+nakPersist r run gid act res evts (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ NakPersist r run gid act res evts
+
+--------------------------------------------------------------------------------
+-- | Registers a new 'Operation'.
+newOperation :: (Either OperationError a -> r)
+             -> Operation a
+             -> Processor r
+             -> Transition r
+newOperation c op (Processor k) = k $ Cmd $ NewOp op c
+
+--------------------------------------------------------------------------------
+-- | Submits a 'Package'.
+submitPackage :: Package -> Processor r -> Transition r
+submitPackage pkg (Processor k) = k $ Pkg pkg
+
+--------------------------------------------------------------------------------
+-- | Unsubscribes a subscription.
+unsubscribe :: Sub.Running -> Processor r -> Transition r
+unsubscribe r (Processor k) = k $ Cmd $ SubscriptionCmd $ Unsubscribe r
+
+--------------------------------------------------------------------------------
+-- | 'Processor' internal state.
+data State r =
+    State
+    { _subDriver :: Sub.Driver r
+      -- ^ Subscription driver.
+    , _opModel :: Op.Model r
+      -- ^ Operation model.
     }
 
 --------------------------------------------------------------------------------
-connection :: Settings
-           -> Chan Package
-           -> (Package -> IO ())
-           -> (UUID -> IO () -> IO ())
-           -> IO ()
-           -> HostName
-           -> Int
-           -> IO ()
-connection sett chan push_pkg push_con push_reco host port = do
-    conn <- newConnection sett host port
-    rid  <- forkFinally (readerThread sett push_pkg conn) (recovering push_reco)
-    wid  <- forkFinally (writerThread chan conn) (recovering push_reco)
-    push_con (connUUID conn) $ do
-        throwTo rid Stopped
-        throwTo wid Stopped
-        connClose conn
-        _settingsLog sett (Info $ Disconnected $ connUUID conn)
+initState :: Settings -> Generator -> State r
+initState setts g = State (Sub.newDriver setts g1) (Op.newModel setts g2)
+  where
+    (g1, g2) = splitGenerator g
 
 --------------------------------------------------------------------------------
-recovering :: IO () -> Either SomeException () -> IO ()
-recovering recover (Left some_ex) = do
-    case fromException some_ex of
-        Just e ->
-            case e of
-                ConnectionClosedByServer
-                    -> recover
-                Stopped
-                    -> return ()
-        _ -> recover
-recovering _ _ = return ()
+data Transition r
+    = Produce r (Transition r)
+    | Transmit Package (Transition r)
+    | Await (Processor r)
 
 --------------------------------------------------------------------------------
-reconnectSnapshot :: Reconnect -> State -> ConnectionSnapshot
-reconnectSnapshot _ s =
-    ConnectionSnapshot
-    { _conHost  = _host s
-    , _conPort  = _port s
-    }
+-- | Processor state-machine.
+newtype Processor r = Processor (In r -> Transition r)
 
 --------------------------------------------------------------------------------
-newtype CleanupSnapshot = CleanupSnapshot (IO ())
+loopOpTransition :: State r -> Op.Transition r -> Transition r
+loopOpTransition st (Op.Produce r nxt) =
+    Produce r (loopOpTransition st nxt)
+loopOpTransition st (Op.Transmit pkg nxt) =
+    Transmit pkg (loopOpTransition st nxt)
+loopOpTransition st (Op.Await m) =
+    let nxt_st = st { _opModel = m } in Await $ Processor $ handle nxt_st
 
 --------------------------------------------------------------------------------
-cleanupSnapshot :: Cleanup -> State -> CleanupSnapshot
-cleanupSnapshot _ s =
-    case s of
-        Offline {}
-            -> CleanupSnapshot (return ())
-        Online {}
-            -> CleanupSnapshot $ _cleanup s
+handle :: State r -> In r -> Transition r
+handle = go
+  where
+    go st (Cmd tpe) =
+        case tpe of
+            NewOp op cb ->
+                let sm = Op.pushOperation cb op $ _opModel st in
+                loopOpTransition st sm
+            SubscriptionCmd cmd -> subCmd st cmd
+    go st (Pkg pkg) =
+        let sm_m = Op.submitPackage pkg $ _opModel st in
+        case fmap (loopOpTransition st) sm_m of
+            Just nxt -> nxt
+            Nothing ->
+                case Sub.submitPackage pkg $ _subDriver st of
+                    Nothing           -> Await $ Processor $ go st
+                    Just (r, nxt_drv) ->
+                        let nxt_st = st { _subDriver = nxt_drv } in
+                        Produce r $ Await $ Processor $ go nxt_st
+
+    subCmd st@State{..} cmd =
+        case cmd of
+            ConnectStream k s tos ->
+                let (pkg, nxt_drv) = Sub.connectToStream k s tos _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            ConnectPersist k g s b ->
+                let (pkg, nxt_drv) = Sub.connectToPersist k g s b _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            Unsubscribe r ->
+                let (pkg, nxt_drv) = Sub.unsubscribe r _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            CreatePersist k g s ss ->
+                let (pkg, nxt_drv) = Sub.createPersist k g s ss _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            UpdatePersist k g s ss ->
+                let (pkg, nxt_drv) = Sub.updatePersist k g s ss _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            DeletePersist k g s ->
+                let (pkg, nxt_drv) = Sub.deletePersist k g s _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            AckPersist r run gid evts ->
+                let (pkg, nxt_drv) = Sub.ackPersist r run gid evts _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
+            NakPersist r run gid act res evts ->
+                let (pkg, nxt_drv) = Sub.nakPersist r run gid act res evts
+                                     _subDriver
+                    nxt_st         = st { _subDriver = nxt_drv }
+                    nxt            = Processor $ go nxt_st in
+                Transmit pkg $ Await nxt
 
 --------------------------------------------------------------------------------
--- Model
---------------------------------------------------------------------------------
-connected :: Connected -> State -> State
-connected (Connected host port uuid cl) s =
-    case s of
-        Offline
-            -> Online
-               { _uuidCon      = uuid
-               , _packageCount = 0
-               , _host         = host
-               , _port         = port
-               , _cleanup      = cl
-               }
-        _ -> s
-
---------------------------------------------------------------------------------
-reconnected :: Reconnected -> State -> State
-reconnected (Reconnected uuid cl) s =
-    case s of
-        Online {}
-            -> s { _uuidCon = uuid
-                 , _cleanup = cl
-                 }
-        _ -> s
-
---------------------------------------------------------------------------------
-received :: Package -> State -> State
-received _ s =
-    case s of
-        Online {}
-            -> let cnt = _packageCount s in s { _packageCount = cnt + 1 }
-        _ -> s
+-- | Creates a new 'Processor' state-machine.
+newProcessor :: Settings -> Generator -> Processor r
+newProcessor setts gen = Processor $ handle $ initState setts gen
