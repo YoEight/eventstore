@@ -164,23 +164,20 @@ module Database.EventStore
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception
-import Data.ByteString.Lazy (fromStrict)
 import Data.Int
 import Data.Maybe
 import Data.Monoid ((<>))
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
-import Data.Aeson (decode)
 import Data.Text hiding (group)
 import Data.UUID
-import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Connection hiding (Connection)
 import qualified Database.EventStore.Internal.Manager.Subscription as S
 import           Database.EventStore.Internal.Manager.Subscription.Message
-import           Database.EventStore.Internal.Operation hiding (retry)
+import           Database.EventStore.Internal.Operation (OperationError(..))
 import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
@@ -563,7 +560,6 @@ subscribe :: Connection
 subscribe Connection{..} stream_id res_lnk_tos = do
     mvar <- newEmptyTMVarIO
     var  <- newTVarIO $ SubState S.regularSubscription Nothing
-    as   <- async $ atomically $ readTMVar mvar
     let mk r = putTMVar mvar r
         recv = readTVar var
         send = writeTVar var
@@ -620,7 +616,6 @@ subscribeFromCommon :: Connection
 subscribeFromCommon Connection{..} stream_id res_lnk_tos batch_m tpe = do
     mvar <- newEmptyTMVarIO
     var  <- newTVarIO $ SubState S.catchupSubscription Nothing
-    as   <- async $ atomically $ readTMVar mvar
     let readFrom res =
             case res of
                 Left _ -> return ()
@@ -721,7 +716,6 @@ connectToPersistentSubscription :: Connection
 connectToPersistentSubscription Connection{..} group stream bufSize = do
     mvar <- newEmptyTMVarIO
     var  <- newTVarIO $ SubState S.persistentSubscription Nothing
-    as   <- async $ atomically $ readTMVar mvar
     let mk r = putTMVar mvar r
         recv = readTVar var
         send = writeTVar var
