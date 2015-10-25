@@ -119,8 +119,8 @@ module Database.EventStore
       -- * Catch-up Subscription
     , subscribeFrom
     , subscribeToAllFrom
-    -- , waitTillCatchup
-    -- , hasCaughtUp
+    , waitTillCatchup
+    , hasCaughtUp
      -- * Persistent Subscription
     , PersistentSubscriptionSettings(..)
     , SystemConsumerStrategy(..)
@@ -164,6 +164,7 @@ module Database.EventStore
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception
+import Control.Monad (when)
 import Data.Int
 import Data.Maybe
 import Data.Monoid ((<>))
@@ -256,6 +257,24 @@ data CatchupSubscription =
     , _catchStream :: Text
     , _catchProd   :: Production
     }
+
+--------------------------------------------------------------------------------
+-- | Non blocking version of `waitTillCatchup`.
+hasCaughtUp :: CatchupSubscription -> IO Bool
+hasCaughtUp sub = atomically $ _hasCaughtUp sub
+
+--------------------------------------------------------------------------------
+-- | Waits until 'CatchupSubscription' subscription catch-up its stream.
+waitTillCatchup :: CatchupSubscription -> IO ()
+waitTillCatchup sub = atomically $ do
+    caughtUp <- _hasCaughtUp sub
+    when (not caughtUp) retry
+
+--------------------------------------------------------------------------------
+_hasCaughtUp :: CatchupSubscription -> STM Bool
+_hasCaughtUp Catchup{..} = do
+    SubState sm _ <- readTVar _catchVar
+    return $ S.hasCaughtUp sm
 
 --------------------------------------------------------------------------------
 data PersistentSubscription =
