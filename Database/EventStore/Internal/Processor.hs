@@ -39,6 +39,7 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Operation hiding (SM(..))
+import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -230,16 +231,20 @@ handle = go
                 let sm = Op.pushOperation cb op $ _opModel st in
                 loopOpTransition st sm
             SubscriptionCmd cmd -> subCmd st cmd
-    go st (Pkg pkg) =
-        let sm_m = Op.submitPackage pkg $ _opModel st in
-        case fmap (loopOpTransition st) sm_m of
-            Just nxt -> nxt
-            Nothing ->
-                case Sub.submitPackage pkg $ _subDriver st of
-                    Nothing           -> Await $ Processor $ go st
-                    Just (r, nxt_drv) ->
-                        let nxt_st = st { _subDriver = nxt_drv } in
-                        Produce r $ Await $ Processor $ go nxt_st
+    go st (Pkg pkg)
+        | packageCmd pkg == 0x01 =
+          let r_pkg = heartbeatResponsePackage $ packageCorrelation pkg in
+          Transmit r_pkg $ Await $ Processor $ go st
+        | otherwise =
+          let sm_m = Op.submitPackage pkg $ _opModel st in
+          case fmap (loopOpTransition st) sm_m of
+              Just nxt -> nxt
+              Nothing ->
+                  case Sub.submitPackage pkg $ _subDriver st of
+                      Nothing           -> Await $ Processor $ go st
+                      Just (r, nxt_drv) ->
+                          let nxt_st = st { _subDriver = nxt_drv } in
+                          Produce r $ Await $ Processor $ go nxt_st
 
     subCmd st@State{..} cmd =
         case cmd of
