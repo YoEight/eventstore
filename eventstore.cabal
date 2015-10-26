@@ -63,7 +63,6 @@ library
                    Database.EventStore.Internal.Packages
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Reader
-                   Database.EventStore.Internal.Step
                    Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.TimeSpan
                    Database.EventStore.Internal.Types
