@@ -60,6 +60,9 @@ data OperationError
     | ServerError (Maybe Text)                  -- ^ Reason
     | InvalidOperation Text
       -- ^ Invalid operation state. If happens, it's a driver bug.
+    | Aborted
+      -- ^ Occurs when the user asked to close the connection or if the
+      --   connection can't reconnect anymore.
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------

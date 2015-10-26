@@ -429,7 +429,12 @@ manager setts conn var mailbox pkg_queue job_queue = bootstrap
                                 nxt_proc <- loopTransition sm
                                 modifyTVar' var $ updateProc nxt_proc
                             _ -> loop
-        atomically loop
+        atomically $ do
+            loop
+            s <- readTVar var
+            _ <- loopTransition $ abort $ _proc s
+            return ()
+
         atomically $ do
             end <- isEmptyTChan job_queue
             when (not end) retry

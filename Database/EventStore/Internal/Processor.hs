@@ -27,6 +27,7 @@ module Database.EventStore.Internal.Processor
     , newOperation
     , submitPackage
     , unsubscribe
+    , abort
     ) where
 
 --------------------------------------------------------------------------------
@@ -61,6 +62,8 @@ data Cmd r
       -- ^ Subcription related commands.
     | forall a. NewOp (Operation a) (Either OperationError a -> r)
       -- ^ Register a new 'Operation'.
+    | Abort
+      -- ^ Aborts every pending operation.
 
 --------------------------------------------------------------------------------
 -- | Supported subscription command.
@@ -187,6 +190,11 @@ unsubscribe :: Sub.Running -> Processor r -> Transition r
 unsubscribe r (Processor k) = k $ Cmd $ SubscriptionCmd $ Unsubscribe r
 
 --------------------------------------------------------------------------------
+-- | Aborts every pending operation.
+abort :: Processor r -> Transition r
+abort (Processor k) = k $ Cmd Abort
+
+--------------------------------------------------------------------------------
 -- | 'Processor' internal state.
 data State r =
     State
@@ -231,6 +239,10 @@ handle = go
                 let sm = Op.pushOperation cb op $ _opModel st in
                 loopOpTransition st sm
             SubscriptionCmd cmd -> subCmd st cmd
+            Abort ->
+                let sm = Op.abort $ _opModel st in
+                loopOpTransition st sm
+
     go st (Pkg pkg)
         | packageCmd pkg == 0x01 =
           let r_pkg = heartbeatResponsePackage $ packageCorrelation pkg in

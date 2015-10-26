@@ -18,6 +18,7 @@ module Database.EventStore.Internal.Manager.Operation.Model
     , newModel
     , pushOperation
     , submitPackage
+    , abort
     ) where
 
 --------------------------------------------------------------------------------
@@ -66,6 +67,8 @@ data Request r
       -- ^ Register a new 'Operation'.
     | Pkg Package
       -- ^ Submit a package.
+    | Abort
+      -- ^ Aborts every pending operation.
 
 --------------------------------------------------------------------------------
 data Transition r
@@ -91,6 +94,11 @@ pushOperation cb op (Model k) = let Just t = k (New op cb) in t
 --   complex logic (retry for instance), it returns a 'Step'.
 submitPackage :: Package -> Model r -> Maybe (Transition r)
 submitPackage pkg (Model k) = k (Pkg pkg)
+
+--------------------------------------------------------------------------------
+-- | Aborts every pending operation.
+abort :: Model r -> Transition r
+abort (Model k) = let Just t = k Abort in t
 
 --------------------------------------------------------------------------------
 runOperation :: Settings
@@ -144,6 +152,16 @@ runPackage setts st Package{..} = do
                 Right m -> return $ runOperation setts cb op (cont m) nxt_st
 
 --------------------------------------------------------------------------------
+abortOperations :: Settings -> State r -> Transition r
+abortOperations setts init_st = go init_st $ H.toList $ _pending init_st
+  where
+    go st ((key, Elem _ _ _ k):xs) =
+        let ps     = H.delete key $ _pending st
+            nxt_st = st { _pending = ps } in
+        Produce (k $ Left Aborted) $ go nxt_st xs
+    go st [] = Await $ Model $ handle setts st
+
+--------------------------------------------------------------------------------
 -- | Creates a new 'Operation' model state-machine.
 newModel :: Settings -> Generator -> Model r
 newModel setts g = Model $ handle setts $ initState g
@@ -152,3 +170,4 @@ newModel setts g = Model $ handle setts $ initState g
 handle :: Settings -> State r -> Request r -> Maybe (Transition r)
 handle setts st (New op cb) = Just $ runOperation setts cb op op st
 handle setts st (Pkg pkg)   = runPackage setts st pkg
+handle setts st Abort       = Just $ abortOperations setts st
