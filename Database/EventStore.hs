@@ -135,16 +135,23 @@ module Database.EventStore
     , deletePersistentSubscription
     , connectToPersistentSubscription
      -- * Results
-    -- , AllEventsSlice(..)
+    , Slice
+    , AllSlice
     , Op.DeleteResult(..)
     , WriteResult(..)
     , ReadResult(..)
     , RecordedEvent(..)
-    , StreamSlice(..)
+    , StreamType(..)
+    , StreamSlice
     , Position(..)
     , ReadDirection(..)
     , ResolvedEvent(..)
     , OperationError(..)
+    , sliceEvents
+    , sliceDirection
+    , sliceEOS
+    , sliceFrom
+    , sliceNext
     , eventResolved
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId

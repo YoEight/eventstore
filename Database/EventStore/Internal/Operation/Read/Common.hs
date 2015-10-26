@@ -26,7 +26,7 @@ import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
--- | Enumeration detailing the possible outcomes of reading a slice of stream.
+-- | Enumeration detailing the possible outcomes of reading a stream.
 data ReadResult        :: StreamType -> * -> * where
     ReadSuccess        :: a -> ReadResult t a
     ReadNoStream       :: ReadResult 'RegularStream a
@@ -45,16 +45,23 @@ instance Functor (ReadResult t) where
     fmap _ (ReadAccessDenied s)  = ReadAccessDenied s
 
 --------------------------------------------------------------------------------
+-- | Gathers common slice operations.
 class Slice a where
     type Loc a
 
-    sliceEvents    :: a -> [ResolvedEvent]
+    sliceEvents :: a -> [ResolvedEvent]
+    -- ^ Gets slice's 'ResolvedEvent's.
     sliceDirection :: a -> ReadDirection
-    sliceEOS       :: a -> Bool
-    sliceFrom      :: a -> Loc a
-    sliceNext      :: a -> Loc a
+    -- ^ Gets slice's reading direction.
+    sliceEOS :: a -> Bool
+    -- ^ If the slice reaches the end of the stream.
+    sliceFrom :: a -> Loc a
+    -- ^ Gets the starting location of this slice.
+    sliceNext :: a -> Loc a
+    -- ^ Gets the next location of this slice.
 
 --------------------------------------------------------------------------------
+-- | Regular stream slice.
 data StreamSlice =
     StreamSlice
     { sliceStream :: !Text
@@ -77,6 +84,7 @@ instance Slice StreamSlice where
     sliceNext      = _ssNext
 
 --------------------------------------------------------------------------------
+-- | Represents a slice of the $all stream.
 data AllSlice =
     AllSlice
     { _saFrom   :: !Position

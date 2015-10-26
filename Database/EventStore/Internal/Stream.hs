@@ -18,6 +18,7 @@ module Database.EventStore.Internal.Stream where
 import Data.Text
 
 --------------------------------------------------------------------------------
+-- | A stream can either point to $all or a regular one.
 data StreamType = All | RegularStream
 
 --------------------------------------------------------------------------------
