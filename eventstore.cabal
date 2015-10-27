@@ -120,3 +120,16 @@ library
   ghc-options: -Wall
 
   default-language:    Haskell2010
+
+test-suite integration-tests
+    type: exitcode-stdio-1.0
+    default-language: Haskell2010
+    hs-source-dirs: tests
+    main-is: integration.hs
+
+    ghc-options: -Wall
+
+    build-depends: base,
+                   eventstore,
+                   tasty,
+                   tasty-hunit
