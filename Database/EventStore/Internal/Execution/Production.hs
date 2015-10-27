@@ -60,6 +60,7 @@ import Database.EventStore.Internal.Manager.Subscription hiding
     , unsubscribe
     , ackPersist
     , nakPersist
+    , abort
     )
 import Database.EventStore.Internal.Operation hiding (retry)
 import Database.EventStore.Internal.Packages

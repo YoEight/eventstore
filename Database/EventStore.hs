@@ -751,4 +751,4 @@ createSubAsync mk rcv send quit = go
         SubState sm close <- rcv
         let nxt = S.eventArrived e sm
         send $ SubState nxt close
-    go (S.Dropped _ r) = atomically $ quit r
+    go (S.Dropped r) = atomically $ quit r

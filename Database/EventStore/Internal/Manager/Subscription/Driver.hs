@@ -32,6 +32,7 @@ module Database.EventStore.Internal.Manager.Subscription.Driver
     , ackPersist
     , nakPersist
     , unsubscribe
+    , abort
     ) where
 
 --------------------------------------------------------------------------------
@@ -58,7 +59,7 @@ import Database.EventStore.Internal.Types
 data SubConnectEvent
     = EventAppeared ResolvedEvent
       -- ^ A wild event appeared !
-    | Dropped Running SubDropReason
+    | Dropped SubDropReason
       -- ^ The subscription connection dropped.
     | SubConfirmed Running
       -- ^ Subscription connection is confirmed. It means that subscription can
@@ -75,13 +76,16 @@ data SubDropReason
       -- ^ Given stream name doesn't exist.
     | SubPersistDeleted
       -- ^ Given stream is deleted.
+    | SubAborted
+      -- ^ Occurs when the user shutdown the connection from the server or if
+      -- the connection to the server is no longer possible.
     deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
 -- | Enumerates all persistent action exceptions.
 data PersistActionException
     = PersistActionFail
-      -- ^ The action failed because of the given reason.
+      -- ^ The action failed.
     | PersistActionAlreadyExist
       -- ^ Happens when creating a persistent subscription on a stream with a
       --   group name already taken.
@@ -91,6 +95,9 @@ data PersistActionException
     | PersistActionAccessDenied
       -- ^ The current user is not allowed to operate on the supplied stream or
       --   persistent subscription.
+    | PersistActionAborted
+      -- ^ That action has been aborted because the user shutdown the connection
+      --   to the server or the connection to the server is no longer possible.
 
 --------------------------------------------------------------------------------
 -- | Emitted when a persistent action has been carried out successfully.
@@ -202,6 +209,11 @@ unsubscribe :: Running -> Driver r -> (Package, Driver r)
 unsubscribe r (Driver k) = k (Cmd $ Unsubscribe r)
 
 --------------------------------------------------------------------------------
+-- | Aborts every pending action.
+abort :: Driver r -> [r]
+abort (Driver k) = k Abort
+
+--------------------------------------------------------------------------------
 -- EventStore result mappers:
 -- =========================
 -- EventStore protocol has several values that means the exact same thing. Those
@@ -250,6 +262,8 @@ data In r a where
     -- ^ A 'Package' has been submitted to the 'Subscription' driver. If the
     --   driver recognize that 'Package', it returns a final value and update
     --   the driver internal state.
+    Abort :: In r [r]
+    -- ^ Aborts every pending action.
 
 --------------------------------------------------------------------------------
 -- | Set of commands handled by the driver.
@@ -380,7 +394,7 @@ newDriver setts gen = Driver $ go (initState gen)
                                                        $ dropReason msg
                     nxt_m   = unsubscribed run _model
                     dreason = toSubDropReason reason
-                    evt     = Dropped run dreason
+                    evt     = Dropped dreason
                     nxt_reg = H.delete packageCorrelation _reg
                     nxt_st  = st { _model = nxt_m
                                  , _reg   = nxt_reg }
@@ -448,6 +462,12 @@ newDriver setts gen = Driver $ go (initState gen)
                     pkg    = createNakPackage setts u sid na r evts
                     nxt_st = st { _reg = H.insert u cmd _reg } in
                 (pkg, Driver $ go nxt_st)
+    go st Abort = (H.elems $ _reg st) >>= _F
+      where
+        _F (ConnectReg k _ _)           = [k $ Dropped SubAborted]
+        _F (ConnectPersist k _ _ _)     = [k $ Dropped SubAborted]
+        _F (ApplyPersistAction k _ _ _) = [k $ Left PersistActionAborted]
+        _F _                            = []
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a

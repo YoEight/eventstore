@@ -230,6 +230,17 @@ loopOpTransition st (Op.Await m) =
     let nxt_st = st { _opModel = m } in Await $ Processor $ handle nxt_st
 
 --------------------------------------------------------------------------------
+abortTransition :: State r -> Op.Transition r -> [r] -> Transition r
+abortTransition st init_op init_rs = abortOp init_op
+  where
+    abortOp (Op.Produce r nxt)  = Produce r (abortOp nxt)
+    abortOp (Op.Transmit _ nxt) = abortOp nxt
+    abortOp _                   = abortSub init_rs
+
+    abortSub []     = Await $ Processor $ handle st
+    abortSub (r:rs) = Produce r (abortSub rs)
+
+--------------------------------------------------------------------------------
 handle :: State r -> In r -> Transition r
 handle = go
   where
@@ -240,8 +251,9 @@ handle = go
                 loopOpTransition st sm
             SubscriptionCmd cmd -> subCmd st cmd
             Abort ->
-                let sm = Op.abort $ _opModel st in
-                loopOpTransition st sm
+                let sm = Op.abort $ _opModel st
+                    rs = Sub.abort $ _subDriver st in
+                abortTransition st sm rs
 
     go st (Pkg pkg)
         | packageCmd pkg == 0x01 =
