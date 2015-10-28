@@ -34,6 +34,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Delete stream" $ deleteStreamTest conn
     , testCase "Transaction" $ transactionTest conn
     , testCase "Read forward" $ readStreamEventForwardTest conn
+    , testCase "Read backward" $ readStreamEventBackwardTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -120,4 +121,22 @@ readStreamEventForwardTest conn = do
                            recordedEventDataAsJson
                 jss_evts = catMaybes $ fmap action $ sliceEvents sl
             assertEqual "Events should be equal" jss jss_evts
+        e -> fail $ "Read failure: " ++ show e
+
+--------------------------------------------------------------------------------
+readStreamEventBackwardTest :: Connection -> IO ()
+readStreamEventBackwardTest conn = do
+    let jss = [ [ "baz" .= True]
+              , [ "foo" .= False]
+              , [ "bar" .= True]
+              ]
+        evts = fmap (createEvent "foo" Nothing . withJson) jss
+    _  <- sendEvents conn "read-backward-test" anyStream evts >>= wait
+    rs <- readStreamEventsBackward conn "read-backward-test" 2 10 False >>= wait
+    case rs of
+        ReadSuccess sl -> do
+            let action e = resolvedEventOriginal e >>=
+                           recordedEventDataAsJson
+                jss_evts = catMaybes $ fmap action $ sliceEvents sl
+            assertEqual "Events should be equal" (reverse jss) jss_evts
         e -> fail $ "Read failure: " ++ show e
