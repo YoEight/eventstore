@@ -135,4 +135,5 @@ test-suite integration-tests
                    tasty,
                    tasty-hunit,
                    aeson,
-                   text
+                   text,
+                   stm

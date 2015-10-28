@@ -37,6 +37,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Read backward" $ readStreamEventBackwardTest conn
     , testCase "Real $all forward" $ readAllEventsForwardTest conn
     , testCase "Real $all backward" $ readAllEventsBackwardTest conn
+    , testCase "Subscription test" $ subscribeTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -154,3 +155,23 @@ readAllEventsBackwardTest :: Connection -> IO ()
 readAllEventsBackwardTest conn = do
     sl <- readAllEventsBackward conn positionEnd 3 False >>= wait
     assertEqual "Events is not empty" False (null $ sliceEvents sl)
+
+--------------------------------------------------------------------------------
+subscribeTest :: Connection -> IO ()
+subscribeTest conn = do
+    let jss = [ [ "baz" .= True]
+              , [ "foo" .= False]
+              , [ "bar" .= True]
+              ]
+        evts = fmap (createEvent "foo" Nothing . withJson) jss
+    sub  <- subscribe conn "subscribe-test" False
+    _    <- sendEvents conn "subscribe-test" anyStream evts >>= wait
+    let action e = resolvedEventOriginal e >>= recordedEventDataAsJson
+
+        loop 3 = return []
+        loop i = do
+            e <- nextEvent sub
+            fmap (action e:) $ loop (i+1)
+
+    nxt_js <- loop (0 :: Int)
+    assertEqual "Events should be equal" jss (catMaybes nxt_js)
