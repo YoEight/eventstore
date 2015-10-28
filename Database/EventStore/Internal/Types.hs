@@ -300,6 +300,11 @@ data RecordedEvent
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Tries to parse JSON object from the given 'RecordedEvent'.
+recordedEventDataAsJson :: A.FromJSON a => RecordedEvent -> Maybe a
+recordedEventDataAsJson = A.decode . fromStrict . recordedEventData
+
+--------------------------------------------------------------------------------
 toUTC :: Int64 -> UTCTime
 toUTC = posixSecondsToUTCTime . (/1000) . realToFrac . CTime
 

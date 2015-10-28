@@ -36,6 +36,15 @@ data ReadResult        :: StreamType -> * -> * where
     ReadAccessDenied   :: StreamName -> ReadResult t a
 
 --------------------------------------------------------------------------------
+instance Show a => Show (ReadResult t a) where
+    show (ReadSuccess a)       = "ReadSuccess " ++ show a
+    show ReadNoStream          = "ReadNoStream"
+    show (ReadStreamDeleted s) = "ReadStreamDeleted" ++ show s
+    show ReadNotModified       = "ReadNoModified"
+    show (ReadError e)         = "ReadError" ++ show e
+    show (ReadAccessDenied s)  = "ReadAccessDenied " ++ show s
+
+--------------------------------------------------------------------------------
 instance Functor (ReadResult t) where
     fmap f (ReadSuccess a)       = ReadSuccess (f a)
     fmap _ ReadNoStream          = ReadNoStream

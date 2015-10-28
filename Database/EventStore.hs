@@ -141,6 +141,7 @@ module Database.EventStore
     , WriteResult(..)
     , ReadResult(..)
     , RecordedEvent(..)
+    , Op.ReadEvent(..)
     , StreamType(..)
     , StreamSlice
     , Position(..)
@@ -156,6 +157,7 @@ module Database.EventStore
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
     , resolvedEventOriginalId
+    , recordedEventDataAsJson
     , positionStart
     , positionEnd
       -- * Misc
