@@ -29,6 +29,7 @@ tests :: Connection -> TestTree
 tests conn = testGroup "EventStore actions tests"
     [ testCase "Write event" $ writeEventTest conn
     , testCase "Read event" $ readEventTest conn
+    , testCase "Delete stream" $ deleteStreamTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -62,3 +63,12 @@ readEventTest conn = do
                         Nothing -> fail "Error when retrieving recorded data"
                 _ -> fail "Event not found"
         e -> fail $ "Read failure: " ++ show e
+
+--------------------------------------------------------------------------------
+deleteStreamTest :: Connection -> IO ()
+deleteStreamTest conn = do
+    let js  = [ "baz" .= True ]
+        evt = createEvent "foo" Nothing $ withJson js
+    _ <- sendEvent conn "delete-stream-test" anyStream evt >>= wait
+    _ <- deleteStream conn "delete-stream-test" anyStream Nothing
+    return ()
