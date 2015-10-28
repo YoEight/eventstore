@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
@@ -30,6 +31,7 @@ tests conn = testGroup "EventStore actions tests"
     [ testCase "Write event" $ writeEventTest conn
     , testCase "Read event" $ readEventTest conn
     , testCase "Delete stream" $ deleteStreamTest conn
+    , testCase "Transaction" $ transactionTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -72,3 +74,30 @@ deleteStreamTest conn = do
     _ <- sendEvent conn "delete-stream-test" anyStream evt >>= wait
     _ <- deleteStream conn "delete-stream-test" anyStream Nothing
     return ()
+
+--------------------------------------------------------------------------------
+transactionTest :: Connection -> IO ()
+transactionTest conn = do
+    let js  = [ "baz" .= True ]
+        evt = createEvent "foo" Nothing $ withJson js
+    t  <- startTransaction conn "transaction-test" anyStream >>= wait
+    _  <- transactionWrite t [evt] >>= wait
+    rs <- readEvent conn "transaction-test" 0 False >>= wait
+    case rs of
+        ReadNoStream -> return ()
+        e -> fail $ "transaction-test stream is supposed to not exist "
+                  ++ show e
+    _   <- transactionCommit t >>= wait
+    rs2 <- readEvent conn "transaction-test" 0 False >>= wait
+    case rs2 of
+        ReadSuccess re ->
+            case re of
+                ReadEvent _ _ revt ->
+                    let action = resolvedEventOriginal revt >>=
+                                 recordedEventDataAsJson in
+                    case action of
+                        Just js_evt ->
+                            assertEqual "event should match" js js_evt
+                        Nothing -> fail "Error when retrieving recorded data"
+                _ -> fail "Event not found"
+        e -> fail $ "Read failure: " ++ show e
