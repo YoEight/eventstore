@@ -35,6 +35,8 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Transaction" $ transactionTest conn
     , testCase "Read forward" $ readStreamEventForwardTest conn
     , testCase "Read backward" $ readStreamEventBackwardTest conn
+    , testCase "Real $all forward" $ readAllEventsForwardTest conn
+    , testCase "Real $all backward" $ readAllEventsBackwardTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -140,3 +142,15 @@ readStreamEventBackwardTest conn = do
                 jss_evts = catMaybes $ fmap action $ sliceEvents sl
             assertEqual "Events should be equal" (reverse jss) jss_evts
         e -> fail $ "Read failure: " ++ show e
+
+--------------------------------------------------------------------------------
+readAllEventsForwardTest :: Connection -> IO ()
+readAllEventsForwardTest conn = do
+    sl <- readAllEventsForward conn positionStart 3 False >>= wait
+    assertEqual "Events is not empty" False (null $ sliceEvents sl)
+
+--------------------------------------------------------------------------------
+readAllEventsBackwardTest :: Connection -> IO ()
+readAllEventsBackwardTest conn = do
+    sl <- readAllEventsBackward conn positionEnd 3 False >>= wait
+    assertEqual "Events is not empty" False (null $ sliceEvents sl)

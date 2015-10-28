@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Main
@@ -23,6 +24,8 @@ import Tests
 --------------------------------------------------------------------------------
 main :: IO ()
 main = do
-    conn <- connect defaultSettings "127.0.0.1" 1113
+    let setts = defaultSettings
+                { s_credentials = Just $ credentials "admin" "changeit" }
+    conn <- connect setts "127.0.0.1" 1113
     let tree = tests conn
     defaultMainWithIngredients [consoleTestReporter] tree
