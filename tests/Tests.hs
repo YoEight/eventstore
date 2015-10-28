@@ -15,6 +15,7 @@
 module Tests where
 
 --------------------------------------------------------------------------------
+import Data.Maybe (catMaybes)
 import System.IO
 
 --------------------------------------------------------------------------------
@@ -32,6 +33,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Read event" $ readEventTest conn
     , testCase "Delete stream" $ deleteStreamTest conn
     , testCase "Transaction" $ transactionTest conn
+    , testCase "Read forward" $ readStreamEventForwardTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -100,4 +102,22 @@ transactionTest conn = do
                             assertEqual "event should match" js js_evt
                         Nothing -> fail "Error when retrieving recorded data"
                 _ -> fail "Event not found"
+        e -> fail $ "Read failure: " ++ show e
+
+--------------------------------------------------------------------------------
+readStreamEventForwardTest :: Connection -> IO ()
+readStreamEventForwardTest conn = do
+    let jss = [ [ "baz" .= True]
+              , [ "foo" .= False]
+              , [ "bar" .= True]
+              ]
+        evts = fmap (createEvent "foo" Nothing . withJson) jss
+    _  <- sendEvents conn "read-forward-test" anyStream evts >>= wait
+    rs <- readStreamEventsForward conn "read-forward-test" 0 10 False >>= wait
+    case rs of
+        ReadSuccess sl -> do
+            let action e = resolvedEventOriginal e >>=
+                           recordedEventDataAsJson
+                jss_evts = catMaybes $ fmap action $ sliceEvents sl
+            assertEqual "Events should be equal" jss jss_evts
         e -> fail $ "Read failure: " ++ show e

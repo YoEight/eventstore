@@ -80,7 +80,7 @@ data StreamSlice =
     , _ssNext     :: !Int32
     , _ssEvents   :: ![ResolvedEvent]
     , _ssEOS      :: !Bool
-    }
+    } deriving Show
 
 --------------------------------------------------------------------------------
 instance Slice StreamSlice where
@@ -101,7 +101,7 @@ data AllSlice =
     , _saDir    :: !ReadDirection
     , _saEvents :: ![ResolvedEvent]
     , _saEOS    :: !Bool
-    }
+    } deriving Show
 
 --------------------------------------------------------------------------------
 instance Slice AllSlice where
