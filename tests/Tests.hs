@@ -38,6 +38,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Real $all forward" $ readAllEventsForwardTest conn
     , testCase "Real $all backward" $ readAllEventsBackwardTest conn
     , testCase "Subscription test" $ subscribeTest conn
+    , testCase "Subscription from test" $ subscribeFromTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -175,3 +176,25 @@ subscribeTest conn = do
 
     nxt_js <- loop (0 :: Int)
     assertEqual "Events should be equal" jss (catMaybes nxt_js)
+
+--------------------------------------------------------------------------------
+subscribeFromTest :: Connection -> IO ()
+subscribeFromTest conn = do
+    let jss = [ [ "baz" .= True]
+              , [ "foo" .= False]
+              , [ "bar" .= True]
+              ]
+        evts = fmap (createEvent "foo" Nothing . withJson) jss
+    _   <- sendEvents conn "subscribe-from-test" anyStream evts >>= wait
+    sub <- subscribeFrom conn "subscribe-from-test" False Nothing Nothing
+    _   <- sendEvents conn "subscribe-from-test" anyStream evts >>= wait
+
+    let action e = resolvedEventOriginal e >>= recordedEventDataAsJson
+
+        loop 6 = return []
+        loop i = do
+            e <- nextEvent sub
+            fmap (action e:) $ loop (i+1)
+
+    nxt_js <- loop (0 :: Int)
+    assertEqual "Events should be equal" (jss ++ jss) (catMaybes nxt_js)
