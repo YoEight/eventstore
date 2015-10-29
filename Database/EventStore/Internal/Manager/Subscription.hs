@@ -118,7 +118,7 @@ catchupSubscription = Subscription $ catchingUp empty empty
     caughtUp  b s (Arrived e) = Subscription $ caughtUp b (s |> e)
     caughtUp b s ReadNext =
         case viewl b of
-            EmptyL -> error "impossible: catch-up subscription"
+            EmptyL -> live s ReadNext
             e :< rest ->
                 case viewl rest of
                     EmptyL -> (Just e, Subscription $ live s)

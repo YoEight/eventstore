@@ -59,8 +59,8 @@ catchup setts init_tpe tos bat_siz = go init_tpe
         let action =
                 case tpe of
                     RegularCatchup stream cur_evt ->
-                        let op = readStreamEvents setts Forward stream batch
-                                 cur_evt tos in
+                        let op = readStreamEvents setts Forward stream cur_evt
+                                 batch tos in
                         mapOp Left op
                     AllCatchup c_pos p_pos ->
                         let op = readAllEvents setts c_pos p_pos batch
