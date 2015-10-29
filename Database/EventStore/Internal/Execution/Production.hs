@@ -230,15 +230,22 @@ reader sett mailbox c = forever $ do
     parsePackage bs =
         case runGet getPackage bs of
             Left e    -> _settingsLog sett (Error $ PackageParsingError e)
-            Right pkg -> atomically $ writeTChan mailbox (Arrived pkg)
+            Right pkg -> do
+                atomically $ writeTChan mailbox (Arrived pkg)
+                let cmd  = packageCmd pkg
+                    uuid = packageCorrelation pkg
+                _settingsLog sett $ Info $ PackageReceived cmd uuid
 
 --------------------------------------------------------------------------------
 -- | Writer thread, writes incoming 'Package's
 --------------------------------------------------------------------------------
-writer :: TChan Package -> Connection -> IO ()
-writer chan conn = forever $ do
+writer :: Settings -> TChan Package -> Connection -> IO ()
+writer setts chan conn = forever $ do
     pkg <- atomically $ readTChan chan
     connSend conn $ runPut $ putPackage pkg
+    let cmd  = packageCmd pkg
+        uuid = packageCorrelation pkg
+    _settingsLog setts $ Info $ PackageSent cmd uuid
 
 --------------------------------------------------------------------------------
 getLengthPrefix :: Get Int
@@ -326,7 +333,7 @@ manager setts conn var mailbox pkg_queue job_queue = bootstrap
   where
     createReader = spawn Reader (reader setts mailbox conn)
     createRunner = spawn Runner (runner job_queue)
-    createWriter = spawn Writer (writer pkg_queue conn)
+    createWriter = spawn Writer (writer setts pkg_queue conn)
 
     bootstrap = do
         reid <- createReader
