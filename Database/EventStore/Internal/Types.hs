@@ -22,7 +22,7 @@ import Data.Monoid (Endo(..))
 --------------------------------------------------------------------------------
 import           Control.Applicative
 import           Control.Exception
-import           Control.Monad
+import           Control.Monad (mzero)
 import           Data.ByteString (ByteString)
 import           Data.ByteString.Lazy (fromStrict, toStrict)
 import           Data.Int
@@ -264,7 +264,20 @@ data Position
       { positionCommit  :: !Int64 -- ^ Commit position of the record
       , positionPrepare :: !Int64 -- ^ Prepare position of the record
       }
-    deriving (Eq, Show)
+    deriving Show
+
+--------------------------------------------------------------------------------
+instance Eq Position where
+    Position ac ap == Position bc bp = ac == bc && ap == bp
+
+--------------------------------------------------------------------------------
+instance Ord Position where
+    compare (Position ac ap) (Position bc bp) =
+        if ac < bc || (ac == bc && ap < bp)
+        then LT
+        else if ac > bc || (ac == bc && ap > bp)
+             then GT
+             else EQ
 
 --------------------------------------------------------------------------------
 -- | Representing the start of the transaction file.
@@ -338,6 +351,8 @@ data ResolvedEvent
         --   link event.
       , resolvedEventLink :: !(Maybe RecordedEvent)
         -- ^ The link event if this 'ResolvedEvent' is a link event.
+      , resolvedEventPosition :: !(Maybe Position)
+        -- ^ Possible 'Position' of that event.
       }
     deriving Show
 
@@ -348,8 +363,9 @@ newResolvedEvent rie = re
     record = getField $ resolvedIndexedRecord rie
     link   = getField $ resolvedIndexedLink rie
     re     = ResolvedEvent
-             { resolvedEventRecord = fmap newRecordedEvent record
-             , resolvedEventLink   = fmap newRecordedEvent link
+             { resolvedEventRecord   = fmap newRecordedEvent record
+             , resolvedEventLink     = fmap newRecordedEvent link
+             , resolvedEventPosition = Nothing
              }
 
 --------------------------------------------------------------------------------
@@ -358,9 +374,13 @@ newResolvedEventFromBuf reb = re
   where
     record = Just $ newRecordedEvent $ getField $ resolvedEventBufEvent reb
     link   = getField $ resolvedEventBufLink reb
+    com    = getField $ resolvedEventBufCommitPosition reb
+    pre    = getField $ resolvedEventBufPreparePosition reb
+    pos    = Position com pre
     re     = ResolvedEvent
-             { resolvedEventRecord = record
-             , resolvedEventLink   = fmap newRecordedEvent link
+             { resolvedEventRecord   = record
+             , resolvedEventLink     = fmap newRecordedEvent link
+             , resolvedEventPosition = Just pos
              }
 
 --------------------------------------------------------------------------------
@@ -369,7 +389,7 @@ newResolvedEventFromBuf reb = re
 --   If this 'ResolvedEvent' represents a link event, the link will be the
 --   original event, otherwise it will be the event.
 resolvedEventOriginal :: ResolvedEvent -> RecordedEvent
-resolvedEventOriginal (ResolvedEvent record link) =
+resolvedEventOriginal (ResolvedEvent record link _) =
     let Just evt = link <|> record in evt
 
 --------------------------------------------------------------------------------
