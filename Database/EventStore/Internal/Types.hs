@@ -368,25 +368,24 @@ newResolvedEventFromBuf reb = re
 --
 --   If this 'ResolvedEvent' represents a link event, the link will be the
 --   original event, otherwise it will be the event.
-resolvedEventOriginal :: ResolvedEvent -> Maybe RecordedEvent
+resolvedEventOriginal :: ResolvedEvent -> RecordedEvent
 resolvedEventOriginal (ResolvedEvent record link) =
-    link <|> record
+    let Just evt = link <|> record in evt
 
 --------------------------------------------------------------------------------
 -- | Indicates whether this 'ResolvedEvent' is a resolved link event.
-eventResolved :: ResolvedEvent -> Bool
-eventResolved = isJust . resolvedEventOriginal
+isEventResolvedLink :: ResolvedEvent -> Bool
+isEventResolvedLink = isJust . resolvedEventLink
 
 --------------------------------------------------------------------------------
 -- | The stream name of the original event.
-resolvedEventOriginalStreamId :: ResolvedEvent -> Maybe Text
-resolvedEventOriginalStreamId =
-    fmap recordedEventStreamId . resolvedEventOriginal
+resolvedEventOriginalStreamId :: ResolvedEvent -> Text
+resolvedEventOriginalStreamId = recordedEventStreamId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
 -- | The ID of the original event.
-resolvedEventOriginalId :: ResolvedEvent -> Maybe UUID
-resolvedEventOriginalId = fmap recordedEventId . resolvedEventOriginal
+resolvedEventOriginalId :: ResolvedEvent -> UUID
+resolvedEventOriginalId = recordedEventId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
 -- | Represents the direction of read operation (both from $all an usual

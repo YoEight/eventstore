@@ -153,7 +153,7 @@ module Database.EventStore
     , sliceEOS
     , sliceFrom
     , sliceNext
-    , eventResolved
+    , isEventResolvedLink
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
     , resolvedEventOriginalId
