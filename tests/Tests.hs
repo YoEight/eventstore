@@ -174,19 +174,31 @@ subscribeTest conn = do
 --------------------------------------------------------------------------------
 subscribeFromTest :: Connection -> IO ()
 subscribeFromTest conn = do
-    let jss = [ [ "baz" .= True]
-              , [ "foo" .= False]
-              , [ "bar" .= True]
+    let jss = [ [ "1" .= (1 :: Int)]
+              , [ "2" .= (2 :: Int)]
+              , [ "3" .= (3 :: Int)]
               ]
-        evts = fmap (createEvent "foo" Nothing . withJson) jss
+        jss2 = [ [ "4" .= (4 :: Int)]
+               , [ "5" .= (5 :: Int)]
+               , [ "6" .= (6 :: Int)]
+               ]
+        alljss = jss ++ jss2
+        evts   = fmap (createEvent "foo" Nothing . withJson) jss
+        evts2  = fmap (createEvent "foo" Nothing . withJson) jss2
     _   <- sendEvents conn "subscribe-from-test" anyStream evts >>= wait
-    sub <- subscribeFrom conn "subscribe-from-test" False Nothing Nothing
-    _   <- sendEvents conn "subscribe-from-test" anyStream evts >>= wait
+    sub <- subscribeFrom conn "subscribe-from-test" False Nothing (Just 1)
+    _   <- sendEvents conn "subscribe-from-test" anyStream evts2 >>= wait
 
-    let loop 6 = return []
-        loop i = do
-            e <- nextEvent sub
-            fmap (eventJson e:) $ loop (i+1)
+    let loop [] = do
+            m <- nextEventMaybe sub
+            case m of
+                Just _  -> fail "should not have more events at the point."
+                Nothing -> return ()
+        loop (x:xs) = do
+            evt <- nextEvent sub
+            case recordedEventDataAsJson $ resolvedEventOriginal evt of
+                Just e | e == x    -> loop xs
+                       | otherwise -> fail "Out of order event's appeared."
+                _ -> fail "Can't deserialized event"
 
-    nxt_js <- loop (0 :: Int)
-    assertEqual "Events should be equal" (jss ++ jss) (catMaybes nxt_js)
+    loop alljss
