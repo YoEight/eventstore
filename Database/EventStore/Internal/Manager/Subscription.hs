@@ -19,6 +19,7 @@ module Database.EventStore.Internal.Manager.Subscription
     , Catchup(..)
     , Subscription
     , Running(..)
+    , Checkpoint(..)
     , regularSubscription
     , catchupSubscription
     , persistentSubscription
@@ -30,6 +31,9 @@ module Database.EventStore.Internal.Manager.Subscription
     , runningLastEventNumber
     , runningLastCommitPosition
     ) where
+
+--------------------------------------------------------------------------------
+import Data.Int
 
 --------------------------------------------------------------------------------
 import Data.Sequence
@@ -57,7 +61,10 @@ data Persistent = Persistent { _perGroup  :: Text }
 data Input t a where
     Arrived   :: ResolvedEvent -> Input t (Subscription t)
     ReadNext  :: Input t (Maybe ResolvedEvent, Subscription t)
-    BatchRead :: [ResolvedEvent] -> Bool -> Input Catchup (Subscription Catchup)
+    BatchRead :: [ResolvedEvent]
+              -> Bool
+              -> Checkpoint
+              -> Input Catchup (Subscription Catchup)
     CaughtUp  :: Input Catchup Bool
 
 --------------------------------------------------------------------------------
@@ -74,9 +81,10 @@ readNext (Subscription k) = k ReadNext
 --------------------------------------------------------------------------------
 batchRead :: [ResolvedEvent]
           -> Bool
+          -> Checkpoint
           -> Subscription Catchup
           -> Subscription Catchup
-batchRead es eos (Subscription k) = k (BatchRead es eos)
+batchRead es eos nxt (Subscription k) = k (BatchRead es eos nxt)
 
 --------------------------------------------------------------------------------
 hasCaughtUp :: Subscription Catchup -> Bool
@@ -91,6 +99,16 @@ persistentSubscription :: Subscription Persistent
 persistentSubscription = baseSubscription
 
 --------------------------------------------------------------------------------
+data Checkpoint = CheckpointNumber Int32 | CheckpointPosition Position
+
+--------------------------------------------------------------------------------
+beforeChk :: Checkpoint -> ResolvedEvent -> Bool
+beforeChk (CheckpointNumber num) re =
+    recordedEventNumber (resolvedEventOriginal re) < num
+beforeChk (CheckpointPosition pos) re =
+    maybe False (< pos) $ resolvedEventPosition re
+
+--------------------------------------------------------------------------------
 catchupSubscription :: Subscription Catchup
 catchupSubscription = Subscription $ catchingUp empty empty
   where
@@ -98,16 +116,18 @@ catchupSubscription = Subscription $ catchingUp empty empty
                -> Seq ResolvedEvent
                -> Input Catchup a
                -> a
-    catchingUp b s (Arrived e) = Subscription $ catchingUp b (s |> e)
+    catchingUp b s (Arrived e) =
+        Subscription $ catchingUp b (s |> e)
     catchingUp b s ReadNext =
         case viewl b of
             EmptyL    -> (Nothing, Subscription $ catchingUp b s)
             e :< rest -> (Just e, Subscription $ catchingUp rest s)
-    catchingUp b s (BatchRead es eos) =
+    catchingUp b s (BatchRead es eos nxt_pt) =
         let nxt_b = foldl (|>) b es
+            nxt_s = dropWhileL (beforeChk nxt_pt) s
             nxt   = if eos
-                    then Subscription $ caughtUp nxt_b s
-                    else Subscription $ catchingUp nxt_b s in
+                    then Subscription $ caughtUp nxt_b nxt_s
+                    else Subscription $ catchingUp nxt_b nxt_s in
         nxt
     catchingUp _ _ CaughtUp = False
 
@@ -116,14 +136,14 @@ catchupSubscription = Subscription $ catchingUp empty empty
              -> Input Catchup a
              -> a
     caughtUp  b s (Arrived e) = Subscription $ caughtUp b (s |> e)
-    caughtUp b s ReadNext =
+    caughtUp b s  ReadNext =
         case viewl b of
             EmptyL -> live s ReadNext
             e :< rest ->
                 case viewl rest of
                     EmptyL -> (Just e, Subscription $ live s)
                     _      -> (Just e, Subscription $ caughtUp rest s)
-    caughtUp b s (BatchRead _ _) = Subscription $ caughtUp b s
+    caughtUp b s (BatchRead _ _ _) = Subscription $ caughtUp b s
     caughtUp _ _ CaughtUp = False
 
     live :: forall a. Seq ResolvedEvent -> Input Catchup a -> a
@@ -132,7 +152,7 @@ catchupSubscription = Subscription $ catchingUp empty empty
         case viewl s of
             EmptyL    -> (Nothing, Subscription $ live s)
             e :< rest -> (Just e, Subscription $ live rest)
-    live s (BatchRead _ _) = Subscription $ live s
+    live s (BatchRead _ _ _) = Subscription $ live s
     live _ CaughtUp = True
 
 --------------------------------------------------------------------------------

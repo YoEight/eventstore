@@ -624,9 +624,9 @@ subscribeFromCommon Connection{..} stream_id res_lnk_tos batch_m tpe = do
     let readFrom res =
             case res of
                 Left _ -> return ()
-                Right (xs, eos) -> atomically $ do
+                Right (xs, eos, chk) -> atomically $ do
                     s <- readTVar var
-                    let nxt_s = modifySubSM (S.batchRead xs eos) s
+                    let nxt_s = modifySubSM (S.batchRead xs eos chk) s
                     writeTVar var nxt_s
         mk   = putTMVar mvar
         rcv  = readTVar var
