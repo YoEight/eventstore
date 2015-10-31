@@ -39,6 +39,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Real $all backward" $ readAllEventsBackwardTest conn
     , testCase "Subscription test" $ subscribeTest conn
     , testCase "Subscription from test" $ subscribeFromTest conn
+    , testCase "Set Stream Metadata" $ setStreamMetadataTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -202,3 +203,10 @@ subscribeFromTest conn = do
                 _ -> fail "Can't deserialized event"
 
     loop alljss
+
+--------------------------------------------------------------------------------
+setStreamMetadataTest :: Connection -> IO ()
+setStreamMetadataTest conn = do
+    let metadata = buildStreamMetadata $ setCustomProperty "foo" (1 :: Int)
+    _ <- setStreamMetadata conn "set-metadata-test" anyStream metadata >>= wait
+    return ()

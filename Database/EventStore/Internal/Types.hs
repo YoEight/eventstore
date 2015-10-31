@@ -570,7 +570,7 @@ streamMetadataGetCustomPropertyValue s k = H.lookup k obj
   where
     obj = streamMetadataCustom s
 
----------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 -- | Get a custom property value from metadata.
 streamMetadataGetCustomProperty :: A.FromJSON a
                                 => StreamMetadata
