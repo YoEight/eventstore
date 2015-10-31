@@ -115,6 +115,7 @@ module Database.EventStore
     , isSubscribedToAll
     , unsubscribe
     , nextEvent
+    , nextEventMaybe
     , getSubResolveLinkTos
     , getSubLastCommitPos
     , getSubLastEventNumber
@@ -331,18 +332,31 @@ getSubLastEventNumber Subscription{..} = atomically $ do
 --------------------------------------------------------------------------------
 -- | Awaits for the next event.
 nextEvent :: Subscription a -> IO ResolvedEvent
-nextEvent Subscription{..} = atomically $ do
+nextEvent sub = atomically $ do
+    m <- _nextEventMaybe sub
+    case m of
+        Nothing -> retry
+        Just e  -> return e
+
+--------------------------------------------------------------------------------
+-- | Non blocking version of 'nextEvent'.
+nextEventMaybe :: Subscription a -> IO (Maybe ResolvedEvent)
+nextEventMaybe = atomically . _nextEventMaybe
+
+--------------------------------------------------------------------------------
+_nextEventMaybe :: Subscription a -> STM (Maybe ResolvedEvent)
+_nextEventMaybe Subscription{..} = do
     SubState sub close <- readTVar _subVar
     run                <- readTMVar _subRun
     let (res, nxt) = S.readNext sub
     case res of
         Nothing -> do
             case close of
-                Nothing  -> retry
+                Nothing  -> return Nothing
                 Just err -> throwSTM $ SubscriptionClosed run err
         Just e -> do
             writeTVar _subVar $ SubState nxt close
-            return e
+            return $ Just e
 
 --------------------------------------------------------------------------------
 -- | Acknowledges those event ids have been successfully processed.
