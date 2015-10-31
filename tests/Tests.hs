@@ -40,6 +40,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Subscription test" $ subscribeTest conn
     , testCase "Subscription from test" $ subscribeFromTest conn
     , testCase "Set Stream Metadata" $ setStreamMetadataTest conn
+    , testCase "Get Stream Metadata" $ getStreamMetadataTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -210,3 +211,16 @@ setStreamMetadataTest conn = do
     let metadata = buildStreamMetadata $ setCustomProperty "foo" (1 :: Int)
     _ <- setStreamMetadata conn "set-metadata-test" anyStream metadata >>= wait
     return ()
+
+--------------------------------------------------------------------------------
+getStreamMetadataTest :: Connection -> IO ()
+getStreamMetadataTest conn = do
+    let metadata = buildStreamMetadata $ setCustomProperty "foo" (1 :: Int)
+    _ <- setStreamMetadata conn "get-metadata-test" anyStream metadata >>= wait
+    r <- getStreamMetadata conn "get-metadata-test" >>= wait
+    case r of
+        StreamMetadataResult _ _ m ->
+            case getCustomProperty m "foo" of
+                Just i -> assertEqual "Should have equal value" (1 :: Int) i
+                _      -> fail "Can't find foo property"
+        _ -> fail "Stream get-metadata-test doesn't exist"

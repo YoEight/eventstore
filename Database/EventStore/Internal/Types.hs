@@ -565,19 +565,16 @@ data StreamMetadata
 
 --------------------------------------------------------------------------------
 -- | Gets a custom property value from metadata.
-streamMetadataGetCustomPropertyValue :: StreamMetadata -> Text -> Maybe A.Value
-streamMetadataGetCustomPropertyValue s k = H.lookup k obj
+getCustomPropertyValue :: StreamMetadata -> Text -> Maybe A.Value
+getCustomPropertyValue s k = H.lookup k obj
   where
     obj = streamMetadataCustom s
 
 --------------------------------------------------------------------------------
 -- | Get a custom property value from metadata.
-streamMetadataGetCustomProperty :: A.FromJSON a
-                                => StreamMetadata
-                                -> Text
-                                -> Maybe a
-streamMetadataGetCustomProperty s k = do
-    v <- streamMetadataGetCustomPropertyValue s k
+getCustomProperty :: A.FromJSON a => StreamMetadata -> Text -> Maybe a
+getCustomProperty s k = do
+    v <- getCustomPropertyValue s k
     case A.fromJSON v of
         A.Error _   -> Nothing
         A.Success a -> return a

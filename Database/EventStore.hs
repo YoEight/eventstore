@@ -43,8 +43,8 @@ module Database.EventStore
       -- * Write Operations
     , StreamACL(..)
     , StreamMetadata(..)
-    , streamMetadataGetCustomPropertyValue
-    , streamMetadataGetCustomProperty
+    , getCustomPropertyValue
+    , getCustomProperty
     , emptyStreamACL
     , emptyStreamMetadata
     , deleteStream
