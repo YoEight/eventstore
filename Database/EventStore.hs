@@ -157,6 +157,7 @@ module Database.EventStore
     , sliceNext
     , isEventResolvedLink
     , resolvedEventOriginal
+    , resolvedEventDataAsJson
     , resolvedEventOriginalStreamId
     , resolvedEventOriginalId
     , recordedEventDataAsJson

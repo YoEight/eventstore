@@ -393,6 +393,11 @@ resolvedEventOriginal (ResolvedEvent record link _) =
     let Just evt = link <|> record in evt
 
 --------------------------------------------------------------------------------
+-- | Tries to desarialize 'resolvedEventOriginal' data as JSON.
+resolvedEventDataAsJson :: A.FromJSON a => ResolvedEvent -> Maybe a
+resolvedEventDataAsJson = recordedEventDataAsJson . resolvedEventOriginal
+
+--------------------------------------------------------------------------------
 -- | Indicates whether this 'ResolvedEvent' is a resolved link event.
 isEventResolvedLink :: ResolvedEvent -> Bool
 isEventResolvedLink = isJust . resolvedEventLink

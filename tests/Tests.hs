@@ -47,10 +47,6 @@ tests conn = testGroup "EventStore actions tests"
     ]
 
 --------------------------------------------------------------------------------
-eventJson :: FromJSON a => ResolvedEvent -> Maybe a
-eventJson = recordedEventDataAsJson . resolvedEventOriginal
-
---------------------------------------------------------------------------------
 writeEventTest :: Connection -> IO ()
 writeEventTest conn = do
     let js  = [ "baz" .= True ]
@@ -73,7 +69,7 @@ readEventTest conn = do
         ReadSuccess re ->
             case re of
                 ReadEvent _ _ revt ->
-                    case eventJson revt of
+                    case resolvedEventDataAsJson revt of
                         Just js_evt ->
                             assertEqual "event should match" js js_evt
                         Nothing -> fail "Error when retrieving recorded data"
@@ -107,7 +103,7 @@ transactionTest conn = do
         ReadSuccess re ->
             case re of
                 ReadEvent _ _ revt ->
-                    case eventJson revt of
+                    case resolvedEventDataAsJson revt of
                         Just js_evt ->
                             assertEqual "event should match" js js_evt
                         Nothing -> fail "Error when retrieving recorded data"
@@ -126,7 +122,8 @@ readStreamEventForwardTest conn = do
     rs <- readStreamEventsForward conn "read-forward-test" 0 10 False >>= wait
     case rs of
         ReadSuccess sl -> do
-            let jss_evts = catMaybes $ fmap eventJson $ sliceEvents sl
+            let jss_evts = catMaybes $ fmap resolvedEventDataAsJson
+                                     $ sliceEvents sl
             assertEqual "Events should be equal" jss jss_evts
         e -> fail $ "Read failure: " ++ show e
 
@@ -142,7 +139,8 @@ readStreamEventBackwardTest conn = do
     rs <- readStreamEventsBackward conn "read-backward-test" 2 10 False >>= wait
     case rs of
         ReadSuccess sl -> do
-            let jss_evts = catMaybes $ fmap eventJson $ sliceEvents sl
+            let jss_evts = catMaybes $ fmap resolvedEventDataAsJson
+                                     $ sliceEvents sl
             assertEqual "Events should be equal" (reverse jss) jss_evts
         e -> fail $ "Read failure: " ++ show e
 
@@ -171,7 +169,7 @@ subscribeTest conn = do
     let loop 3 = return []
         loop i = do
             e <- nextEvent sub
-            fmap (eventJson e:) $ loop (i+1)
+            fmap (resolvedEventDataAsJson e:) $ loop (i+1)
 
     nxt_js <- loop (0 :: Int)
     assertEqual "Events should be equal" jss (catMaybes nxt_js)
@@ -267,6 +265,6 @@ connectToPersistentTest conn = do
     sub <- connectToPersistentSubscription conn "group" "connect-sub" 10
     _   <- sendEvent conn "connect-sub" anyStream evt >>= wait
     r   <- nextEvent sub
-    case eventJson r of
+    case resolvedEventDataAsJson r of
         Just js_evt -> assertEqual "event should match" js js_evt
         _           -> fail "Deserialization error"
