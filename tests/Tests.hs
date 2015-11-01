@@ -16,7 +16,6 @@ module Tests where
 
 --------------------------------------------------------------------------------
 import Data.Maybe (catMaybes)
-import System.IO
 
 --------------------------------------------------------------------------------
 import Data.Aeson
@@ -43,6 +42,8 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Get Stream Metadata" $ getStreamMetadataTest conn
     , testCase "Create persistent sub" $ createPersistentTest conn
     , testCase "Update persistent sub" $ updatePersistentTest conn
+    , testCase "Delete persistent sub" $ deletePersistentTest conn
+    , testCase "Connect persistent sub" $ connectToPersistentTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -231,7 +232,7 @@ getStreamMetadataTest conn = do
 createPersistentTest :: Connection -> IO ()
 createPersistentTest conn = do
     let def = defaultPersistentSubscriptionSettings
-    r <- createPersistentSubscription conn "group" "sub" def >>= wait
+    r <- createPersistentSubscription conn "group" "create-sub" def >>= wait
     case r of
         Nothing -> return ()
         Just e  -> fail $ "Exception arised: " ++ show e
@@ -240,8 +241,32 @@ createPersistentTest conn = do
 updatePersistentTest :: Connection -> IO ()
 updatePersistentTest conn = do
     let def = defaultPersistentSubscriptionSettings
-    _ <- createPersistentSubscription conn "group" "sub" def >>= wait
-    r <- updatePersistentSubscription conn "group" "sub" def >>= wait
+    _ <- createPersistentSubscription conn "group" "update-sub" def >>= wait
+    r <- updatePersistentSubscription conn "group" "update-sub" def >>= wait
     case r of
         Nothing -> return ()
         Just e  -> fail $ "Exception arised: " ++ show e
+
+--------------------------------------------------------------------------------
+deletePersistentTest :: Connection -> IO ()
+deletePersistentTest conn = do
+    let def = defaultPersistentSubscriptionSettings
+    _ <- createPersistentSubscription conn "group" "delete-sub" def >>= wait
+    r <- deletePersistentSubscription conn "group" "delete-sub" >>= wait
+    case r of
+        Nothing -> return ()
+        Just e  -> fail $ "Exception arised: " ++ show e
+
+--------------------------------------------------------------------------------
+connectToPersistentTest :: Connection -> IO ()
+connectToPersistentTest conn = do
+    let def = defaultPersistentSubscriptionSettings
+        js  = [ "baz" .= True ]
+        evt = createEvent "foo" Nothing $ withJson js
+    _   <- createPersistentSubscription conn "group" "connect-sub" def >>= wait
+    sub <- connectToPersistentSubscription conn "group" "connect-sub" 10
+    _   <- sendEvent conn "connect-sub" anyStream evt >>= wait
+    r   <- nextEvent sub
+    case eventJson r of
+        Just js_evt -> assertEqual "event should match" js js_evt
+        _           -> fail "Deserialization error"
