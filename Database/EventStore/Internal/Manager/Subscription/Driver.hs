@@ -1,7 +1,8 @@
-{-# LANGUAGE GADTs                     #-}
-{-# LANGUAGE Rank2Types                #-}
-{-# LANGUAGE RecordWildCards           #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE DeriveDataTypeable  #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE Rank2Types          #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Manager.Subscription.Driver
@@ -36,8 +37,10 @@ module Database.EventStore.Internal.Manager.Subscription.Driver
     ) where
 
 --------------------------------------------------------------------------------
+import Control.Exception
 import Data.Int
 import Data.Maybe
+import Data.Typeable
 
 --------------------------------------------------------------------------------
 import           Data.ByteString
@@ -98,6 +101,10 @@ data PersistActionException
     | PersistActionAborted
       -- ^ That action has been aborted because the user shutdown the connection
       --   to the server or the connection to the server is no longer possible.
+    deriving (Show, Typeable)
+
+--------------------------------------------------------------------------------
+instance Exception PersistActionException
 
 --------------------------------------------------------------------------------
 -- | Emitted when a persistent action has been carried out successfully.

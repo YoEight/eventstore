@@ -41,6 +41,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Subscription from test" $ subscribeFromTest conn
     , testCase "Set Stream Metadata" $ setStreamMetadataTest conn
     , testCase "Get Stream Metadata" $ getStreamMetadataTest conn
+    , testCase "Create persistent sub" $ createPersistentTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -224,3 +225,12 @@ getStreamMetadataTest conn = do
                 Just i -> assertEqual "Should have equal value" (1 :: Int) i
                 _      -> fail "Can't find foo property"
         _ -> fail "Stream get-metadata-test doesn't exist"
+
+--------------------------------------------------------------------------------
+createPersistentTest :: Connection -> IO ()
+createPersistentTest conn = do
+    let def = defaultPersistentSubscriptionSettings
+    r <- createPersistentSubscription conn "group" "sub" def >>= wait
+    case r of
+        Nothing -> return ()
+        Just e  -> fail $ "Exception arised: " ++ show e
