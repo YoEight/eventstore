@@ -40,6 +40,7 @@ import Database.EventStore.Internal.Types
 import Prelude
 
 --------------------------------------------------------------------------------
+-- | Start transaction operation.
 transactionStart :: Settings -> Text -> ExpectedVersion -> Operation Int64
 transactionStart Settings{..} stream exp_v = do
     let msg = newStart stream (expVersionInt32 exp_v) s_requireMaster
@@ -57,6 +58,7 @@ transactionStart Settings{..} stream exp_v = do
         OP_SUCCESS                -> yield tid
 
 --------------------------------------------------------------------------------
+-- | Transactional write operation.
 transactionWrite :: Settings
                  -> Text
                  -> ExpectedVersion
@@ -79,6 +81,7 @@ transactionWrite Settings{..} stream exp_v trans_id evts = do
         OP_SUCCESS                -> yield ()
 
 --------------------------------------------------------------------------------
+-- | Transactional commit operation.
 transactionCommit :: Settings
                   -> Text
                   -> ExpectedVersion

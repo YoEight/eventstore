@@ -211,10 +211,14 @@ initState setts g = State (Sub.newDriver setts g1) (Op.newModel setts g2)
     (g1, g2) = splitGenerator g
 
 --------------------------------------------------------------------------------
+-- | Represents the state transition of 'Processor' state machine.
 data Transition r
     = Produce r (Transition r)
+      -- ^ Produces a final value.
     | Transmit Package (Transition r)
+      -- ^ Indicates to send the given 'Package'.
     | Await (Processor r)
+      -- ^ Waits for more input.
 
 --------------------------------------------------------------------------------
 -- | Processor state-machine.

@@ -28,6 +28,7 @@ import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Batch read on $all stream operation.
 readAllEvents :: Settings
               -> Int64
               -> Int64

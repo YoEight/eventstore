@@ -45,9 +45,14 @@ import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
+-- | Type of connection issue that can arise during the communication with the
+--   server.
 data ConnectionException
-    = MaxAttempt HostName Int Int -- ^ HostName Port MaxAttempt's value.
-    | ClosedConnection            -- ^ Use of a close 'Connection'.
+    = MaxAttempt HostName Int Int
+      -- ^ The max reconnection attempt threshold has been reached. Holds a
+      --   'HostName', the port used and the given threshold.
+    | ClosedConnection
+      -- ^ Use of a close 'Connection'.
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
@@ -62,6 +67,7 @@ data In a where
     Recv     :: Int -> In B.ByteString
 
 --------------------------------------------------------------------------------
+-- | Internal representation of a connection with the server.
 data Connection =
     Connection
     { _var   :: TMVar State

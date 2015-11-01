@@ -36,6 +36,7 @@ import Database.EventStore.Internal.Types
 newtype DeleteResult = DeleteResult Position deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Delete a regular stream operation.
 deleteStream :: Settings
              -> Text
              -> ExpectedVersion

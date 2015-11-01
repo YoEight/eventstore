@@ -25,6 +25,7 @@ import Data.Text
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Batch read on regular stream request.
 data Request
     = Request
       { _streamId       :: Required 1 (Value Text)
@@ -36,6 +37,7 @@ data Request
     deriving (Generic, Show)
 
 --------------------------------------------------------------------------------
+-- | 'Request' smart constructor.
 newRequest :: Text -> Int32 -> Int32 -> Bool -> Bool -> Request
 newRequest stream_id evt_num max_c res_link_tos req_master =
     Request
@@ -61,6 +63,7 @@ data Result
     deriving (Eq, Enum, Show)
 
 --------------------------------------------------------------------------------
+-- | Batch read on regular stream response.
 data Response
     = Response
       { _events             :: Repeated 1 (Message ResolvedIndexedEvent)

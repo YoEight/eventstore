@@ -52,6 +52,7 @@ data PersistAction
     | PersistDelete
 
 --------------------------------------------------------------------------------
+-- | Represents an persistent action that hasn't been completed yet.
 data PendingAction =
     PendingAction
     { _paGroup  :: !Text
@@ -96,16 +97,19 @@ data Running
       deriving Show
 
 --------------------------------------------------------------------------------
+-- | Gets the event number of a running subscription.
 runningLastEventNumber :: Running -> Maybe Int32
 runningLastEventNumber (RunningReg _ _ _ _ i) = i
 runningLastEventNumber (RunningPersist _ _ _ _ _ _ i) = i
 
 --------------------------------------------------------------------------------
+-- | Gets the commit position of a running subscription.
 runningLastCommitPosition :: Running -> Int64
 runningLastCommitPosition (RunningReg _ _ _ i _) = i
 runningLastCommitPosition (RunningPersist _ _ _ _ _ i _) = i
 
 --------------------------------------------------------------------------------
+-- | Gets the 'UUID' of a running subscription.
 runningUUID :: Running -> UUID
 runningUUID (RunningReg i _ _ _ _)         = i
 runningUUID (RunningPersist i _ _ _ _ _ _) = i
@@ -113,18 +117,18 @@ runningUUID (RunningPersist i _ _ _ _ _ _) = i
 --------------------------------------------------------------------------------
 -- | Type of requests handled by the model.
 data Request a where
+    -- Read request.
     Query :: Query a -> Request a
-    -- ^ Read request.
+    -- Write request.
     Execute :: Action -> Request Model
-    -- ^ Write request.
 
 --------------------------------------------------------------------------------
 -- | Set of a piece of information we can query from the 'Subscription' model.
 data Query a where
+    -- Query a running 'Subscription'.
     QuerySub :: UUID -> Query (Maybe Running)
-    -- ^ Query a running 'Subscription'.
+    -- Query a pending persistent action.
     QueryAction :: UUID -> Query (Maybe PendingAction)
-    -- ^ Query a pending persistent action.
 
 --------------------------------------------------------------------------------
 -- | Set of actions handled by the 'Subscription' model.
@@ -227,6 +231,8 @@ emptyState :: State
 emptyState = State H.empty H.empty H.empty
 
 --------------------------------------------------------------------------------
+-- | Subscription operations state machine. Keeps every information related to
+--   subscription updated.
 newtype Model = Model (forall a. Request a -> a)
 
 --------------------------------------------------------------------------------

@@ -28,6 +28,7 @@ import Database.EventStore.Internal.TimeSpan
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Stream subscription connection request.
 data SubscribeToStream
     = SubscribeToStream
       { subscribeStreamId       :: Required 1 (Value Text)
@@ -39,6 +40,7 @@ data SubscribeToStream
 instance Encode SubscribeToStream
 
 --------------------------------------------------------------------------------
+-- | 'SubscribeToStream' smart constructor.
 subscribeToStream :: Text -> Bool -> SubscribeToStream
 subscribeToStream stream_id res_link_tos =
     SubscribeToStream
@@ -47,6 +49,7 @@ subscribeToStream stream_id res_link_tos =
     }
 
 --------------------------------------------------------------------------------
+-- | Stream subscription connection response.
 data SubscriptionConfirmation
     = SubscriptionConfirmation
       { subscribeLastCommitPos   :: Required 1 (Value Int64)
@@ -58,6 +61,8 @@ data SubscriptionConfirmation
 instance Decode SubscriptionConfirmation
 
 --------------------------------------------------------------------------------
+-- | Serialized event sent by the server when a new event has been appended to a
+--   stream.
 data StreamEventAppeared
     = StreamEventAppeared
       { streamResolvedEvent :: Required 1 (Message ResolvedEventBuf) }
@@ -76,6 +81,7 @@ data DropReason
     deriving (Enum, Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | A message sent by the server when a subscription has been dropped.
 data SubscriptionDropped
     = SubscriptionDropped
       { dropReason :: Optional 1 (Enumeration DropReason) }
@@ -85,12 +91,15 @@ data SubscriptionDropped
 instance Decode SubscriptionDropped
 
 --------------------------------------------------------------------------------
+-- | A message sent to the server to indicate the user asked to end a
+--   subscription.
 data UnsubscribeFromStream = UnsubscribeFromStream deriving (Generic, Show)
 
 --------------------------------------------------------------------------------
 instance Encode UnsubscribeFromStream
 
 --------------------------------------------------------------------------------
+-- | Create persistent subscription request.
 data CreatePersistentSubscription =
     CreatePersistentSubscription
     { cpsGroupName         :: Required 1  (Value Text)
@@ -112,6 +121,7 @@ data CreatePersistentSubscription =
     } deriving (Generic, Show)
 
 --------------------------------------------------------------------------------
+-- | 'CreatePersistentSubscription' smart constructor.
 _createPersistentSubscription :: Text
                               -> Text
                               -> PersistentSubscriptionSettings
@@ -143,6 +153,7 @@ _createPersistentSubscription group stream sett =
 instance Encode CreatePersistentSubscription
 
 --------------------------------------------------------------------------------
+-- | Create persistent subscription outcome.
 data CreatePersistentSubscriptionResult
     = CPS_Success
     | CPS_AlreadyExists
@@ -151,6 +162,7 @@ data CreatePersistentSubscriptionResult
     deriving (Enum, Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Create persistent subscription response.
 data CreatePersistentSubscriptionCompleted =
     CreatePersistentSubscriptionCompleted
     { cpscResult :: Required 1 (Enumeration CreatePersistentSubscriptionResult)
@@ -161,6 +173,7 @@ data CreatePersistentSubscriptionCompleted =
 instance Decode CreatePersistentSubscriptionCompleted
 
 --------------------------------------------------------------------------------
+-- | Delete persistent subscription request.
 data DeletePersistentSubscription =
     DeletePersistentSubscription
     { dpsGroupName :: Required 1 (Value Text)
@@ -171,6 +184,7 @@ data DeletePersistentSubscription =
 instance Encode DeletePersistentSubscription
 
 --------------------------------------------------------------------------------
+-- | 'DeletePersistentSubscription' smart construction.
 _deletePersistentSubscription :: Text -> Text -> DeletePersistentSubscription
 _deletePersistentSubscription group_name stream_id =
     DeletePersistentSubscription
@@ -179,6 +193,7 @@ _deletePersistentSubscription group_name stream_id =
     }
 
 --------------------------------------------------------------------------------
+-- | Delete persistent subscription outcome.
 data DeletePersistentSubscriptionResult
     = DPS_Success
     | DPS_DoesNotExist
@@ -187,6 +202,7 @@ data DeletePersistentSubscriptionResult
     deriving (Enum, Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Delete persistent subscription response.
 data DeletePersistentSubscriptionCompleted =
     DeletePersistentSubscriptionCompleted
     { dpscResult :: Required 1 (Enumeration DeletePersistentSubscriptionResult)
@@ -197,6 +213,7 @@ data DeletePersistentSubscriptionCompleted =
 instance Decode DeletePersistentSubscriptionCompleted
 
 --------------------------------------------------------------------------------
+-- | Update persistent subscription request.
 data UpdatePersistentSubscription =
     UpdatePersistentSubscription
     { upsGroupName         :: Required 1  (Value Text)
@@ -218,6 +235,7 @@ data UpdatePersistentSubscription =
     } deriving (Generic, Show)
 
 --------------------------------------------------------------------------------
+-- | 'UpdatePersistentSubscription' smart constructor.
 _updatePersistentSubscription :: Text
                               -> Text
                               -> PersistentSubscriptionSettings
@@ -249,6 +267,7 @@ _updatePersistentSubscription group stream sett =
 instance Encode UpdatePersistentSubscription
 
 --------------------------------------------------------------------------------
+-- | Update persistent subscription outcome.
 data UpdatePersistentSubscriptionResult
     = UPS_Success
     | UPS_DoesNotExist
@@ -257,6 +276,7 @@ data UpdatePersistentSubscriptionResult
     deriving (Enum, Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Update persistent subscription response.
 data UpdatePersistentSubscriptionCompleted =
     UpdatePersistentSubscriptionCompleted
     { upscResult :: Required 1 (Enumeration UpdatePersistentSubscriptionResult)
@@ -267,6 +287,7 @@ data UpdatePersistentSubscriptionCompleted =
 instance Decode UpdatePersistentSubscriptionCompleted
 
 --------------------------------------------------------------------------------
+-- | Connect to a persistent subscription request.
 data ConnectToPersistentSubscription =
     ConnectToPersistentSubscription
     { ctsId                  :: Required 1 (Value Text)
@@ -278,6 +299,7 @@ data ConnectToPersistentSubscription =
 instance Encode ConnectToPersistentSubscription
 
 --------------------------------------------------------------------------------
+-- | 'ConnectToPersistentSubscription' smart constructor.
 _connectToPersistentSubscription :: Text
                                  -> Text
                                  -> Int32
@@ -290,6 +312,7 @@ _connectToPersistentSubscription sub_id stream_id all_fly_msgs =
     }
 
 --------------------------------------------------------------------------------
+-- | Ack processed events request.
 data PersistentSubscriptionAckEvents =
     PersistentSubscriptionAckEvents
     { psaeId              :: Required 1 (Value Text)
@@ -300,6 +323,7 @@ data PersistentSubscriptionAckEvents =
 instance Encode PersistentSubscriptionAckEvents
 
 --------------------------------------------------------------------------------
+-- | 'PersistentSubscriptionAckEvents' smart constructor.
 persistentSubscriptionAckEvents :: Text
                                 -> ByteString
                                 -> PersistentSubscriptionAckEvents
@@ -310,6 +334,7 @@ persistentSubscriptionAckEvents sub_id evt_ids =
     }
 
 --------------------------------------------------------------------------------
+-- | Gathers every possible Nak actions.
 data NakAction
     = NA_Unknown
     | NA_Park
@@ -319,6 +344,7 @@ data NakAction
     deriving (Enum, Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Nak processed events request.
 data PersistentSubscriptionNakEvents =
     PersistentSubscriptionNakEvents
     { psneId              :: Required 1 (Value Text)
@@ -331,6 +357,7 @@ data PersistentSubscriptionNakEvents =
 instance Encode PersistentSubscriptionNakEvents
 
 --------------------------------------------------------------------------------
+-- | 'PersistentSubscriptionNakEvents' smart constructor.
 persistentSubscriptionNakEvents :: Text
                                 -> ByteString
                                 -> Maybe Text
@@ -345,6 +372,7 @@ persistentSubscriptionNakEvents sub_id evt_ids msg action =
     }
 
 --------------------------------------------------------------------------------
+-- | Connection to persistent subscription response.
 data PersistentSubscriptionConfirmation =
     PersistentSubscriptionConfirmation
     { pscLastCommitPos :: Required 1 (Value Int64)
@@ -356,6 +384,8 @@ data PersistentSubscriptionConfirmation =
 instance Decode PersistentSubscriptionConfirmation
 
 --------------------------------------------------------------------------------
+-- | Avalaible event sent by the server in the context of a persistent
+--   subscription..
 data PersistentSubscriptionStreamEventAppeared =
     PersistentSubscriptionStreamEventAppeared
     { psseaEvt :: Required 1 (Message ResolvedIndexedEvent) }

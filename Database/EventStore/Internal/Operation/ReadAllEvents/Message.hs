@@ -25,6 +25,7 @@ import Data.Text
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Batch read on $all stream request.
 data Request
     = Request
       { _commitPosition  :: Required 1 (Value Int64)
@@ -39,6 +40,7 @@ data Request
 instance Encode Request
 
 --------------------------------------------------------------------------------
+-- | 'Request' smart constructor.
 newRequest :: Int64
            -> Int64
            -> Int32
@@ -65,6 +67,7 @@ data Result
     deriving (Eq, Enum, Show)
 
 --------------------------------------------------------------------------------
+-- | Batch read on $all stream response.
 data Response
     = Response
       { _CommitPosition      :: Required 1 (Value Int64)

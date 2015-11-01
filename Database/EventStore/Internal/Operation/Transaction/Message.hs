@@ -26,6 +26,7 @@ import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Start transaction request.
 data Start =
     Start
     { _streamId        :: Required 1 (Value Text)
@@ -38,6 +39,7 @@ data Start =
 instance Encode Start
 
 --------------------------------------------------------------------------------
+-- | 'Start' smart constructor.
 newStart :: Text -> Int32 -> Bool -> Start
 newStart stream_id exp_ver req_master =
     Start
@@ -47,6 +49,7 @@ newStart stream_id exp_ver req_master =
     }
 
 --------------------------------------------------------------------------------
+-- | Start transaction response.
 data Started =
     Started
     { _transId :: Required 1 (Value Int64)
@@ -59,6 +62,7 @@ data Started =
 instance Decode Started
 
 --------------------------------------------------------------------------------
+-- | Write transactional events request.
 data Write =
     Write
     { _wTransId       :: Required 1 (Value Int64)
@@ -71,6 +75,7 @@ data Write =
 instance Encode Write
 
 --------------------------------------------------------------------------------
+-- | 'Write' smart constructor.
 newWrite :: Int64 -> [NewEvent] -> Bool -> Write
 newWrite trans_id evts req_master =
     Write
@@ -80,6 +85,7 @@ newWrite trans_id evts req_master =
     }
 
 --------------------------------------------------------------------------------
+-- | Write transactional events response.
 data Written =
     Written
     { _wwTransId :: Required 1 (Value Int64)
@@ -92,6 +98,7 @@ data Written =
 instance Decode Written
 
 --------------------------------------------------------------------------------
+-- | Commit transaction request.
 data Commit =
     Commit
     { _cTransId       :: Required 1 (Value Int64)
@@ -103,6 +110,7 @@ data Commit =
 instance Encode Commit
 
 --------------------------------------------------------------------------------
+-- | 'Commit' smart constructor.
 newCommit :: Int64 -> Bool -> Commit
 newCommit trans_id req_master =
     Commit
@@ -111,6 +119,7 @@ newCommit trans_id req_master =
     }
 
 --------------------------------------------------------------------------------
+-- | Commit transaction response.
 data Committed =
     Committed
     { _ccTransId       :: Required 1 (Value Int64)

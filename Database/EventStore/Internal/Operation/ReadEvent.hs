@@ -31,6 +31,7 @@ import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Represents the result of looking up a specific event number from a stream.
 data ReadEvent
     = ReadEventNotFound
       { readEventStream :: !Text
@@ -43,6 +44,7 @@ data ReadEvent
       } deriving Show
 
 --------------------------------------------------------------------------------
+-- | Read a specific event given event number operation.
 readEvent :: Settings
           -> Text
           -> Int32

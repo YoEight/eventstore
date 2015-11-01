@@ -26,6 +26,7 @@ import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Write events request.
 data Request
     = Request
       { _streamId        :: Required 1 (Value Text)
@@ -39,6 +40,7 @@ data Request
 instance Encode Request
 
 --------------------------------------------------------------------------------
+-- | 'Request' smart constructor.
 newRequest :: Text        -- ^ Stream
            -> Int32       -- ^ Expected version
            -> [NewEvent]  -- ^ Events
@@ -53,6 +55,7 @@ newRequest stream_id exp_ver evts req_master =
     }
 
 --------------------------------------------------------------------------------
+-- | Write events response.
 data Response
     = Response
       { _result          :: Required 1 (Enumeration OpResult)

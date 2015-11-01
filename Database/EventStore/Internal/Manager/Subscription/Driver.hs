@@ -261,16 +261,16 @@ toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
 --------------------------------------------------------------------------------
 -- | Type of inputs handled by the 'Subscription' driver.
 data In r a where
+    -- A command consists of receiving some parameters, updating the
+    -- 'Subscription' model accordingly and thus modifying driver internal
+    -- state.
     Cmd :: Cmd r -> In r (Package, Driver r)
-    -- ^ A command consists of receiving some parameters, updating the
-    --   'Subscription' model accordingly and thus modifying driver internal
-    --   state.
+    -- A 'Package' has been submitted to the 'Subscription' driver. If the
+    -- driver recognize that 'Package', it returns a final value and update
+    -- the driver internal state.
     Pkg :: Package -> In r (Maybe (r, Driver r))
-    -- ^ A 'Package' has been submitted to the 'Subscription' driver. If the
-    --   driver recognize that 'Package', it returns a final value and update
-    --   the driver internal state.
+    -- Aborts every pending action.
     Abort :: In r [r]
-    -- ^ Aborts every pending action.
 
 --------------------------------------------------------------------------------
 -- | Set of commands handled by the driver.

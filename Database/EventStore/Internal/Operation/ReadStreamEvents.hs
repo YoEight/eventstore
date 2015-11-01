@@ -29,6 +29,7 @@ import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Batch read from a regular stream operation.
 readStreamEvents :: Settings
                  -> ReadDirection
                  -> Text

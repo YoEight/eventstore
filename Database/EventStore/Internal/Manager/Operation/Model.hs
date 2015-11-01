@@ -71,12 +71,17 @@ data Request r
       -- ^ Aborts every pending operation.
 
 --------------------------------------------------------------------------------
+-- | Output produces by the interpretation of an 'Operation'.
 data Transition r
     = Produce r (Transition r)
+      -- ^ Produces an intermediary value.
     | Transmit Package (Transition r)
+      -- ^ Asks for sending the given 'Package'.
     | Await (Model r)
+      -- ^ waits for more input.
 
 --------------------------------------------------------------------------------
+-- | Main 'Operation' bookkeeping state machine.
 newtype Model r = Model (Request r -> Maybe (Transition r))
 
 --------------------------------------------------------------------------------

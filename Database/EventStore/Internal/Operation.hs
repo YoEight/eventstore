@@ -23,9 +23,7 @@ import Control.Monad
 import Data.Typeable
 
 --------------------------------------------------------------------------------
-import Data.ByteString
 import Data.ProtocolBuffers
-import Data.Serialize
 import Data.Text
 import Data.UUID
 import Data.Word
@@ -38,6 +36,7 @@ import Database.EventStore.Internal.Types
 import Prelude
 
 --------------------------------------------------------------------------------
+-- | Operation result sent by the server.
 data OpResult
     = OP_SUCCESS
     | OP_PREPARE_TIMEOUT
@@ -50,6 +49,7 @@ data OpResult
     deriving (Eq, Enum, Show)
 
 --------------------------------------------------------------------------------
+-- | Operation exception that can occurs on an operation response.
 data OperationError
     = WrongExpectedVersion Text ExpectedVersion -- ^ Stream and Expected Version
     | StreamDeleted Text                        -- ^ Stream
@@ -69,13 +69,23 @@ data OperationError
 instance Exception OperationError
 
 --------------------------------------------------------------------------------
+-- | Main operation state machine instruction.
 data SM o a
     = Return a
+      -- ^ Lifts a pure value into the intruction tree. Also marks the end of
+      --   an instruction tree.
     | Yield o (SM o a)
+      -- ^ Emits an operation return value.
     | FreshId (UUID -> SM o a)
+      -- ^ Asks for an unused 'UUID'.
     | forall rq rp. (Encode rq, Decode rp) =>
       SendPkg Word8 Word8 rq (rp -> SM o a)
+      -- ^ Send a request message given a command and an expected command.
+      --   response. It also carries a callback to call when response comes in.
     | Failure (Maybe OperationError)
+      -- ^ Ends the instruction interpretation. If holds Nothing, the
+      --   interpretation should resume from the beginning. Otherwise it ends
+      --   by indicating what went wrong.
 
 --------------------------------------------------------------------------------
 instance Functor (SM o) where
@@ -101,26 +111,34 @@ instance Monad (SM o) where
     Failure e         >>= _ = Failure e
 
 --------------------------------------------------------------------------------
+-- | Asks for a unused 'UUID'.
 freshId :: SM o UUID
 freshId = FreshId Return
 
 --------------------------------------------------------------------------------
+-- | Raises an 'OperationError'.
 failure :: OperationError -> SM o a
 failure e = Failure $ Just e
 
 --------------------------------------------------------------------------------
+-- | Asks to resume the interpretation from the beginning.
 retry :: SM o a
 retry = Failure Nothing
 
 --------------------------------------------------------------------------------
+-- | Sends a request to the server given a command request and response. It
+--   returns the expected deserialized message.
 send :: (Encode rq, Decode rp) => Word8 -> Word8 -> rq -> SM o rp
 send ci co rq = SendPkg ci co rq Return
 
 --------------------------------------------------------------------------------
+-- | Emits operation return value.
 yield :: o -> SM o ()
 yield o = Yield o (Return ())
 
 --------------------------------------------------------------------------------
+-- | Replaces every emitted value, via 'yield' function by calling the given
+--   callback.
 foreach :: SM a x -> (a -> SM b x) -> SM b x
 foreach start k = go start
   where
@@ -131,43 +149,45 @@ foreach start k = go start
     go (Failure e)          = Failure e
 
 --------------------------------------------------------------------------------
+-- | Maps every emitted value, via 'yield', using given function.
 mapOp :: (a -> b) -> SM a () -> SM b ()
 mapOp k sm = foreach sm (yield . k)
 
 --------------------------------------------------------------------------------
+-- | An operation is just a 'SM' tree.
 type Operation a = SM a ()
 
 --------------------------------------------------------------------------------
-decodeResp :: Decode a => ByteString -> SM o a
-decodeResp bytes =
-    case runGet decodeMessage bytes of
-        Left e  -> failure $ ProtobufDecodingError e
-        Right m -> return m
-
---------------------------------------------------------------------------------
+-- | Raises 'WrongExpectedVersion' exception.
 wrongVersion :: Text -> ExpectedVersion -> SM o a
 wrongVersion stream ver = failure (WrongExpectedVersion stream ver)
 
 --------------------------------------------------------------------------------
+-- | Raises 'StreamDeleted' exception.
 streamDeleted :: Text -> SM o a
 streamDeleted stream = failure (StreamDeleted stream)
 
 --------------------------------------------------------------------------------
+-- | Raises 'InvalidTransaction' exception.
 invalidTransaction :: SM o a
 invalidTransaction = failure InvalidTransaction
 
 --------------------------------------------------------------------------------
+-- | Raises 'AccessDenied' exception.
 accessDenied :: StreamName -> SM o a
 accessDenied = failure . AccessDenied
 
 --------------------------------------------------------------------------------
+-- | Raises 'ProtobufDecodingError' exception.
 protobufDecodingError :: String -> SM o a
 protobufDecodingError = failure . ProtobufDecodingError
 
 --------------------------------------------------------------------------------
+-- | Raises 'ServerError' exception.
 serverError :: Maybe Text -> SM o a
 serverError = failure . ServerError
 
 --------------------------------------------------------------------------------
+-- | Raises 'InvalidServerResponse' exception.
 invalidServerResponse :: Word8 -> Word8 -> SM o a
 invalidServerResponse expe got = failure $ InvalidServerResponse expe got
