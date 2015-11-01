@@ -42,6 +42,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Set Stream Metadata" $ setStreamMetadataTest conn
     , testCase "Get Stream Metadata" $ getStreamMetadataTest conn
     , testCase "Create persistent sub" $ createPersistentTest conn
+    , testCase "Update persistent sub" $ updatePersistentTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -231,6 +232,16 @@ createPersistentTest :: Connection -> IO ()
 createPersistentTest conn = do
     let def = defaultPersistentSubscriptionSettings
     r <- createPersistentSubscription conn "group" "sub" def >>= wait
+    case r of
+        Nothing -> return ()
+        Just e  -> fail $ "Exception arised: " ++ show e
+
+--------------------------------------------------------------------------------
+updatePersistentTest :: Connection -> IO ()
+updatePersistentTest conn = do
+    let def = defaultPersistentSubscriptionSettings
+    _ <- createPersistentSubscription conn "group" "sub" def >>= wait
+    r <- updatePersistentSubscription conn "group" "sub" def >>= wait
     case r of
         Nothing -> return ()
         Just e  -> fail $ "Exception arised: " ++ show e
