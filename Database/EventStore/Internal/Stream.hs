@@ -19,11 +19,11 @@ import Data.Text
 
 --------------------------------------------------------------------------------
 -- | A stream can either point to $all or a regular one.
-data StreamType = All | RegularStream
+data StreamType = All | RegularStream deriving (Eq, Ord)
 
 --------------------------------------------------------------------------------
 -- | Represents a regular stream name or $all stream.
-data StreamName = StreamName Text | AllStream
+data StreamName = StreamName Text | AllStream deriving Eq
 
 --------------------------------------------------------------------------------
 instance Show StreamName where

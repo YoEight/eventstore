@@ -16,7 +16,11 @@
 module Database.EventStore.Internal.Operation.Read.Common where
 
 --------------------------------------------------------------------------------
+import Control.Applicative
+import Data.Foldable
 import Data.Int
+import Data.Monoid
+import Data.Traversable
 
 --------------------------------------------------------------------------------
 import Data.Text
@@ -26,14 +30,27 @@ import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+import Prelude
+
+--------------------------------------------------------------------------------
 -- | Enumeration detailing the possible outcomes of reading a stream.
-data ReadResult        :: StreamType -> * -> * where
-    ReadSuccess        :: a -> ReadResult t a
-    ReadNoStream       :: ReadResult 'RegularStream a
-    ReadStreamDeleted  :: Text -> ReadResult 'RegularStream a
-    ReadNotModified    :: ReadResult t a
-    ReadError          :: Maybe Text -> ReadResult t a
-    ReadAccessDenied   :: StreamName -> ReadResult t a
+data ReadResult       :: StreamType -> * -> * where
+    ReadSuccess       :: a -> ReadResult t a
+    ReadNoStream      :: ReadResult 'RegularStream a
+    ReadStreamDeleted :: Text -> ReadResult 'RegularStream a
+    ReadNotModified   :: ReadResult t a
+    ReadError         :: Maybe Text -> ReadResult t a
+    ReadAccessDenied  :: StreamName -> ReadResult t a
+
+--------------------------------------------------------------------------------
+instance Eq a => Eq (ReadResult t a) where
+    ReadSuccess a       == ReadSuccess b       = a == b
+    ReadNoStream        == ReadNoStream        = True
+    ReadStreamDeleted s == ReadStreamDeleted v = s == v
+    ReadNotModified     == ReadNotModified     = True
+    ReadError e         == ReadError u         = e == u
+    ReadAccessDenied s  == ReadAccessDenied v  = s == v
+    _                   == _                   = False
 
 --------------------------------------------------------------------------------
 instance Show a => Show (ReadResult t a) where
@@ -52,6 +69,20 @@ instance Functor (ReadResult t) where
     fmap _ ReadNotModified       = ReadNotModified
     fmap _ (ReadError e)         = ReadError e
     fmap _ (ReadAccessDenied s)  = ReadAccessDenied s
+
+--------------------------------------------------------------------------------
+instance Foldable (ReadResult t) where
+    foldMap f (ReadSuccess a) = f a
+    foldMap _ _               = mempty
+
+--------------------------------------------------------------------------------
+instance Traversable (ReadResult t) where
+    traverse f (ReadSuccess a)       = fmap ReadSuccess $ f a
+    traverse _ ReadNoStream          = pure ReadNoStream
+    traverse _ (ReadStreamDeleted s) = pure $ ReadStreamDeleted s
+    traverse _ ReadNotModified       = pure ReadNotModified
+    traverse _ (ReadError e)         = pure $ ReadError e
+    traverse _ (ReadAccessDenied s)  = pure $ ReadAccessDenied s
 
 --------------------------------------------------------------------------------
 -- | Gathers common slice operations.

@@ -149,6 +149,7 @@ module Database.EventStore
     , ReadDirection(..)
     , ResolvedEvent(..)
     , OperationError(..)
+    , StreamName(..)
     , sliceEvents
     , sliceDirection
     , sliceEOS
