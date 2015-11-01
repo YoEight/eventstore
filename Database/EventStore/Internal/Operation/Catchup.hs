@@ -26,6 +26,7 @@ import Data.Maybe
 import Data.Text (Text)
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Manager.Subscription (Checkpoint(..))
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadAllEvents
@@ -51,7 +52,7 @@ catchup :: Settings
         -> CatchupType
         -> Bool
         -> Maybe Int32
-        -> Operation ([ResolvedEvent], Bool)
+        -> Operation ([ResolvedEvent], Bool, Checkpoint)
 catchup setts init_tpe tos bat_siz = go init_tpe
   where
     batch = fromMaybe defaultBatchSize bat_siz
@@ -59,8 +60,8 @@ catchup setts init_tpe tos bat_siz = go init_tpe
         let action =
                 case tpe of
                     RegularCatchup stream cur_evt ->
-                        let op = readStreamEvents setts Forward stream batch
-                                 cur_evt tos in
+                        let op = readStreamEvents setts Forward stream cur_evt
+                                 batch tos in
                         mapOp Left op
                     AllCatchup c_pos p_pos ->
                         let op = readAllEvents setts c_pos p_pos batch
@@ -68,18 +69,20 @@ catchup setts init_tpe tos bat_siz = go init_tpe
                         mapOp Right op
 
         foreach action $ \res -> do
-            (eos, evts, nxt_tpe) <- case res of
+            (eos, evts, nchk, nxt_tpe) <- case res of
                 Right as -> do
                     let Position nxt_c nxt_p = sliceNext as
                         tmp_tpe = AllCatchup nxt_c nxt_p
-                    return (sliceEOS as, sliceEvents as, tmp_tpe)
+                        chk     = CheckpointPosition $ sliceNext as
+                    return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
                 Left rr -> fromReadResult rr $ \as ->
                     let RegularCatchup s _ = tpe
                         nxt = sliceNext as
-                        tmp_tpe = RegularCatchup s nxt in
-                    return (sliceEOS as, sliceEvents as, tmp_tpe)
+                        tmp_tpe = RegularCatchup s nxt
+                        chk = CheckpointNumber nxt in
+                    return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
 
-            yield (evts, eos)
+            yield (evts, eos, nchk)
             when (not eos) $ go nxt_tpe
 
 --------------------------------------------------------------------------------

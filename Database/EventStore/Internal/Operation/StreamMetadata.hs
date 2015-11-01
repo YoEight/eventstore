@@ -46,10 +46,8 @@ readMetaStream :: Settings -> Text -> Operation StreamMetadataResult
 readMetaStream setts s =
     foreach (readEvent setts (metaStream s) (-1) False) $ \tmp -> do
         onReadResult tmp $ \n e_num evt -> do
-            let action = do
-                    orig <- resolvedEventOriginal evt
-                    decode $ fromStrict $ recordedEventData orig
-            case action of
+            let bytes = recordedEventData $ resolvedEventOriginal evt
+            case decode $ fromStrict bytes of
                 Just pv -> yield $ StreamMetadataResult n e_num pv
                 Nothing -> failure invalidFormat
 

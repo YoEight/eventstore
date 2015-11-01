@@ -43,8 +43,8 @@ module Database.EventStore
       -- * Write Operations
     , StreamACL(..)
     , StreamMetadata(..)
-    , streamMetadataGetCustomPropertyValue
-    , streamMetadataGetCustomProperty
+    , getCustomPropertyValue
+    , getCustomProperty
     , emptyStreamACL
     , emptyStreamMetadata
     , deleteStream
@@ -115,6 +115,7 @@ module Database.EventStore
     , isSubscribedToAll
     , unsubscribe
     , nextEvent
+    , nextEventMaybe
     , getSubResolveLinkTos
     , getSubLastCommitPos
     , getSubLastEventNumber
@@ -141,6 +142,7 @@ module Database.EventStore
     , WriteResult(..)
     , ReadResult(..)
     , RecordedEvent(..)
+    , Op.ReadEvent(..)
     , StreamType(..)
     , StreamSlice
     , Position(..)
@@ -152,10 +154,11 @@ module Database.EventStore
     , sliceEOS
     , sliceFrom
     , sliceNext
-    , eventResolved
+    , isEventResolvedLink
     , resolvedEventOriginal
     , resolvedEventOriginalStreamId
     , resolvedEventOriginalId
+    , recordedEventDataAsJson
     , positionStart
     , positionEnd
       -- * Misc
@@ -329,18 +332,31 @@ getSubLastEventNumber Subscription{..} = atomically $ do
 --------------------------------------------------------------------------------
 -- | Awaits for the next event.
 nextEvent :: Subscription a -> IO ResolvedEvent
-nextEvent Subscription{..} = atomically $ do
+nextEvent sub = atomically $ do
+    m <- _nextEventMaybe sub
+    case m of
+        Nothing -> retry
+        Just e  -> return e
+
+--------------------------------------------------------------------------------
+-- | Non blocking version of 'nextEvent'.
+nextEventMaybe :: Subscription a -> IO (Maybe ResolvedEvent)
+nextEventMaybe = atomically . _nextEventMaybe
+
+--------------------------------------------------------------------------------
+_nextEventMaybe :: Subscription a -> STM (Maybe ResolvedEvent)
+_nextEventMaybe Subscription{..} = do
     SubState sub close <- readTVar _subVar
     run                <- readTMVar _subRun
     let (res, nxt) = S.readNext sub
     case res of
         Nothing -> do
             case close of
-                Nothing  -> retry
+                Nothing  -> return Nothing
                 Just err -> throwSTM $ SubscriptionClosed run err
         Just e -> do
             writeTVar _subVar $ SubState nxt close
-            return e
+            return $ Just e
 
 --------------------------------------------------------------------------------
 -- | Acknowledges those event ids have been successfully processed.
@@ -622,9 +638,9 @@ subscribeFromCommon Connection{..} stream_id res_lnk_tos batch_m tpe = do
     let readFrom res =
             case res of
                 Left _ -> return ()
-                Right (xs, eos) -> atomically $ do
+                Right (xs, eos, chk) -> atomically $ do
                     s <- readTVar var
-                    let nxt_s = modifySubSM (S.batchRead xs eos) s
+                    let nxt_s = modifySubSM (S.batchRead xs eos chk) s
                     writeTVar var nxt_s
         mk   = putTMVar mvar
         rcv  = readTVar var

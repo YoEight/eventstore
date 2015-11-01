@@ -22,7 +22,7 @@ import Data.Monoid (Endo(..))
 --------------------------------------------------------------------------------
 import           Control.Applicative
 import           Control.Exception
-import           Control.Monad
+import           Control.Monad (mzero)
 import           Data.ByteString (ByteString)
 import           Data.ByteString.Lazy (fromStrict, toStrict)
 import           Data.Int
@@ -264,7 +264,20 @@ data Position
       { positionCommit  :: !Int64 -- ^ Commit position of the record
       , positionPrepare :: !Int64 -- ^ Prepare position of the record
       }
-    deriving (Eq, Show)
+    deriving Show
+
+--------------------------------------------------------------------------------
+instance Eq Position where
+    Position ac ap == Position bc bp = ac == bc && ap == bp
+
+--------------------------------------------------------------------------------
+instance Ord Position where
+    compare (Position ac ap) (Position bc bp) =
+        if ac < bc || (ac == bc && ap < bp)
+        then LT
+        else if ac > bc || (ac == bc && ap > bp)
+             then GT
+             else EQ
 
 --------------------------------------------------------------------------------
 -- | Representing the start of the transaction file.
@@ -300,6 +313,11 @@ data RecordedEvent
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Tries to parse JSON object from the given 'RecordedEvent'.
+recordedEventDataAsJson :: A.FromJSON a => RecordedEvent -> Maybe a
+recordedEventDataAsJson = A.decode . fromStrict . recordedEventData
+
+--------------------------------------------------------------------------------
 toUTC :: Int64 -> UTCTime
 toUTC = posixSecondsToUTCTime . (/1000) . realToFrac . CTime
 
@@ -333,6 +351,8 @@ data ResolvedEvent
         --   link event.
       , resolvedEventLink :: !(Maybe RecordedEvent)
         -- ^ The link event if this 'ResolvedEvent' is a link event.
+      , resolvedEventPosition :: !(Maybe Position)
+        -- ^ Possible 'Position' of that event.
       }
     deriving Show
 
@@ -343,8 +363,9 @@ newResolvedEvent rie = re
     record = getField $ resolvedIndexedRecord rie
     link   = getField $ resolvedIndexedLink rie
     re     = ResolvedEvent
-             { resolvedEventRecord = fmap newRecordedEvent record
-             , resolvedEventLink   = fmap newRecordedEvent link
+             { resolvedEventRecord   = fmap newRecordedEvent record
+             , resolvedEventLink     = fmap newRecordedEvent link
+             , resolvedEventPosition = Nothing
              }
 
 --------------------------------------------------------------------------------
@@ -353,9 +374,13 @@ newResolvedEventFromBuf reb = re
   where
     record = Just $ newRecordedEvent $ getField $ resolvedEventBufEvent reb
     link   = getField $ resolvedEventBufLink reb
+    com    = getField $ resolvedEventBufCommitPosition reb
+    pre    = getField $ resolvedEventBufPreparePosition reb
+    pos    = Position com pre
     re     = ResolvedEvent
-             { resolvedEventRecord = record
-             , resolvedEventLink   = fmap newRecordedEvent link
+             { resolvedEventRecord   = record
+             , resolvedEventLink     = fmap newRecordedEvent link
+             , resolvedEventPosition = Just pos
              }
 
 --------------------------------------------------------------------------------
@@ -363,25 +388,24 @@ newResolvedEventFromBuf reb = re
 --
 --   If this 'ResolvedEvent' represents a link event, the link will be the
 --   original event, otherwise it will be the event.
-resolvedEventOriginal :: ResolvedEvent -> Maybe RecordedEvent
-resolvedEventOriginal (ResolvedEvent record link) =
-    link <|> record
+resolvedEventOriginal :: ResolvedEvent -> RecordedEvent
+resolvedEventOriginal (ResolvedEvent record link _) =
+    let Just evt = link <|> record in evt
 
 --------------------------------------------------------------------------------
 -- | Indicates whether this 'ResolvedEvent' is a resolved link event.
-eventResolved :: ResolvedEvent -> Bool
-eventResolved = isJust . resolvedEventOriginal
+isEventResolvedLink :: ResolvedEvent -> Bool
+isEventResolvedLink = isJust . resolvedEventLink
 
 --------------------------------------------------------------------------------
 -- | The stream name of the original event.
-resolvedEventOriginalStreamId :: ResolvedEvent -> Maybe Text
-resolvedEventOriginalStreamId =
-    fmap recordedEventStreamId . resolvedEventOriginal
+resolvedEventOriginalStreamId :: ResolvedEvent -> Text
+resolvedEventOriginalStreamId = recordedEventStreamId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
 -- | The ID of the original event.
-resolvedEventOriginalId :: ResolvedEvent -> Maybe UUID
-resolvedEventOriginalId = fmap recordedEventId . resolvedEventOriginal
+resolvedEventOriginalId :: ResolvedEvent -> UUID
+resolvedEventOriginalId = recordedEventId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
 -- | Represents the direction of read operation (both from $all an usual
@@ -541,19 +565,16 @@ data StreamMetadata
 
 --------------------------------------------------------------------------------
 -- | Gets a custom property value from metadata.
-streamMetadataGetCustomPropertyValue :: StreamMetadata -> Text -> Maybe A.Value
-streamMetadataGetCustomPropertyValue s k = H.lookup k obj
+getCustomPropertyValue :: StreamMetadata -> Text -> Maybe A.Value
+getCustomPropertyValue s k = H.lookup k obj
   where
     obj = streamMetadataCustom s
 
----------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 -- | Get a custom property value from metadata.
-streamMetadataGetCustomProperty :: A.FromJSON a
-                                => StreamMetadata
-                                -> Text
-                                -> Maybe a
-streamMetadataGetCustomProperty s k = do
-    v <- streamMetadataGetCustomPropertyValue s k
+getCustomProperty :: A.FromJSON a => StreamMetadata -> Text -> Maybe a
+getCustomProperty s k = do
+    v <- getCustomPropertyValue s k
     case A.fromJSON v of
         A.Error _   -> Nothing
         A.Success a -> return a

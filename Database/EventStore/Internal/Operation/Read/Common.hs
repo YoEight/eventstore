@@ -36,6 +36,15 @@ data ReadResult        :: StreamType -> * -> * where
     ReadAccessDenied   :: StreamName -> ReadResult t a
 
 --------------------------------------------------------------------------------
+instance Show a => Show (ReadResult t a) where
+    show (ReadSuccess a)       = "ReadSuccess " ++ show a
+    show ReadNoStream          = "ReadNoStream"
+    show (ReadStreamDeleted s) = "ReadStreamDeleted" ++ show s
+    show ReadNotModified       = "ReadNoModified"
+    show (ReadError e)         = "ReadError" ++ show e
+    show (ReadAccessDenied s)  = "ReadAccessDenied " ++ show s
+
+--------------------------------------------------------------------------------
 instance Functor (ReadResult t) where
     fmap f (ReadSuccess a)       = ReadSuccess (f a)
     fmap _ ReadNoStream          = ReadNoStream
@@ -71,7 +80,7 @@ data StreamSlice =
     , _ssNext     :: !Int32
     , _ssEvents   :: ![ResolvedEvent]
     , _ssEOS      :: !Bool
-    }
+    } deriving Show
 
 --------------------------------------------------------------------------------
 instance Slice StreamSlice where
@@ -92,7 +101,7 @@ data AllSlice =
     , _saDir    :: !ReadDirection
     , _saEvents :: ![ResolvedEvent]
     , _saEOS    :: !Bool
-    }
+    } deriving Show
 
 --------------------------------------------------------------------------------
 instance Slice AllSlice where

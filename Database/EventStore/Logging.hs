@@ -12,6 +12,9 @@
 module Database.EventStore.Logging where
 
 --------------------------------------------------------------------------------
+import Data.Word
+
+--------------------------------------------------------------------------------
 import Data.UUID
 
 --------------------------------------------------------------------------------
@@ -38,8 +41,12 @@ data InfoMessage
       -- ^ Indicates current attempt.
     | ConnectionClosed UUID
       -- ^ Indicates connection 'UUID'.
-    | Connected UUID 
+    | Connected UUID
       -- ^ Indicates connection 'UUID'.
     | Disconnected UUID
       -- ^ Indicates connection 'UUID'
+    | PackageSent Word8 UUID
+      -- ^ Indicates a package has been sent.
+    | PackageReceived Word8 UUID
+      -- ^ Indicates the client's received a package from the server.
     deriving Show
