@@ -26,6 +26,7 @@ import Data.Text
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+-- | Read event on a regular stream request.
 data Request
     = Request
       { _streamId       :: Required 1 (Value Text)
@@ -39,6 +40,7 @@ data Request
 instance Encode Request
 
 --------------------------------------------------------------------------------
+-- | 'Request' smart constructor.
 newRequest :: Text -> Int32 -> Bool -> Bool -> Request
 newRequest stream_id evt_num res_link_tos req_master =
     Request
@@ -60,6 +62,7 @@ data Result
     deriving (Eq, Enum, Show)
 
 --------------------------------------------------------------------------------
+-- | Read event on a regular stream response.
 data Response
     = Response
       { _result       :: Required 1 (Enumeration Result)

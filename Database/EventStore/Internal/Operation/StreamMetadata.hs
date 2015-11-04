@@ -42,6 +42,7 @@ metaStream :: Text -> Text
 metaStream s = "$$" <> s
 
 --------------------------------------------------------------------------------
+-- | Read stream metadata operation.
 readMetaStream :: Settings -> Text -> Operation StreamMetadataResult
 readMetaStream setts s =
     foreach (readEvent setts (metaStream s) (-1) False) $ \tmp -> do
@@ -52,6 +53,7 @@ readMetaStream setts s =
                 Nothing -> failure invalidFormat
 
 --------------------------------------------------------------------------------
+-- | Set stream metadata operation.
 setMetaStream :: Settings
               -> Text
               -> ExpectedVersion

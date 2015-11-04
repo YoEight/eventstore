@@ -13,7 +13,7 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.Catchup
-    ( CatchupType(..)
+    ( CatchupState(..)
     , catchup
     ) where
 
@@ -43,13 +43,18 @@ streamNotFound :: OperationError
 streamNotFound = InvalidOperation "Catchup. inexistant stream"
 
 --------------------------------------------------------------------------------
-data CatchupType
+-- | Catchup operation state.
+data CatchupState
     = RegularCatchup Text Int32
+      -- ^ Indicates the stream name and the next event number to start from.
     | AllCatchup Int64 Int64
+      -- ^ Indicates the commit and prepare position. Used when catching up from
+      --   the $all stream.
 
 --------------------------------------------------------------------------------
+-- | Stream catching up operation.
 catchup :: Settings
-        -> CatchupType
+        -> CatchupState
         -> Bool
         -> Maybe Int32
         -> Operation ([ResolvedEvent], Bool, Checkpoint)

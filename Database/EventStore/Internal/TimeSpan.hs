@@ -9,7 +9,7 @@
 -- Stability : provisional
 -- Portability : non-portable
 --
--- Sorry but had no choice.
+-- .NET TimeSpan implemented in Haskell.
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.TimeSpan
     ( TimeSpan
@@ -43,8 +43,7 @@ import Data.Text.Lazy (unpack)
 import Data.Text.Lazy.Builder
 
 --------------------------------------------------------------------------------
--- | .NET TimeSpan: TimeSpan represents a duration of  time.  A TimeSpan can be
---   negative or positive. Sorry
+-- | .NET TimeSpan: Represents a time interval.
 newtype TimeSpan = TimeSpan Int64 deriving (Eq, Ord)
 
 --------------------------------------------------------------------------------
@@ -64,6 +63,7 @@ instance FromJSON TimeSpan where
     parseJSON _ = empty
 
 --------------------------------------------------------------------------------
+-- | Determines weither a number is positive or negative.
 parseFormatLiteral :: Parser FormatLiteral
 parseFormatLiteral = do
     c <- peekChar'
@@ -165,21 +165,29 @@ minMillis =
       / realToFrac ticksPerMillisecond) :: Double)
 
 --------------------------------------------------------------------------------
+-- | Initializes a new instance of the TimeSpan structure to the specified
+--   number of ticks.
 timeSpanTicks :: Int64 -> TimeSpan
 timeSpanTicks = TimeSpan
 
 --------------------------------------------------------------------------------
+-- | Initializes a new instance of the TimeSpan structure to a specified number
+--   of hours, minutes, and seconds.
 timeSpanHoursMinsSecs :: Int64 -> Int64 -> Int64 -> TimeSpan
 timeSpanHoursMinsSecs hh mm ss = TimeSpan $ totalSecs * ticksPerSecond
   where
     totalSecs = (hh * 3600) + (mm * 60) + ss
 
 --------------------------------------------------------------------------------
+-- | Initializes a new instance of the TimeSpan structure to a specified number
+--   of days, hours, minutes, and seconds.
 timeSpanDaysHoursMinsSecs :: Int64 -> Int64 -> Int64 -> Int64 -> TimeSpan
 timeSpanDaysHoursMinsSecs dd hh mm ss =
     timeSpanDaysHoursMinsSecsMillis dd hh mm ss 0
 
 --------------------------------------------------------------------------------
+-- | Initializes a new instance of the TimeSpan structure to a specified number
+--   of days, hours, minutes, seconds, and milliseconds.
 timeSpanDaysHoursMinsSecsMillis :: Int64
                                 -> Int64
                                 -> Int64
@@ -195,56 +203,78 @@ timeSpanDaysHoursMinsSecsMillis dd hh mm ss ms =
                     ss) * 1000 + ms
 
 --------------------------------------------------------------------------------
+-- | Gets the number of ticks that represent the value of the current 'TimeSpan'
+--   structure.
 timeSpanGetTicks :: TimeSpan -> Int64
 timeSpanGetTicks (TimeSpan i) = i
 
 --------------------------------------------------------------------------------
+-- | Gets the days component of the time interval represented by the current
+--   'TimeSpan' structure.
 timeSpanGetDays :: TimeSpan -> Int64
 timeSpanGetDays (TimeSpan i) = truncate $
                                (realToFrac i :: Double) /
                                (realToFrac ticksPerDay)
 
 --------------------------------------------------------------------------------
+-- | Gets the hours component of the time interval represented by the current
+--   'TimeSpan' structure.
 timeSpanGetHours :: TimeSpan -> Int64
 timeSpanGetHours (TimeSpan i) = mod (truncate $
                                 (realToFrac i :: Double) /
                                 (realToFrac ticksPerHour)) 24
 
 --------------------------------------------------------------------------------
+-- | Gets the minutes component of the time interval represented by the current
+--   'TimeSpan' structure.
 timeSpanGetMinutes :: TimeSpan -> Int64
 timeSpanGetMinutes (TimeSpan i) = mod (truncate $
                                   (realToFrac i :: Double) /
                                   (realToFrac ticksPerMinute)) 60
 
 --------------------------------------------------------------------------------
+-- | Gets the seconds component of the time interval represented by the current
+--   'TimeSpan' structure.
 timeSpanGetSeconds :: TimeSpan -> Int64
 timeSpanGetSeconds (TimeSpan i) = mod (truncate $
                                   (realToFrac i :: Double) /
                                   (realToFrac ticksPerSecond)) 60
 
 --------------------------------------------------------------------------------
+-- | Gets the milliseconds component of the time interval represented by the
+--   current 'TimeSpan' structure.
 timeSpanGetMillis :: TimeSpan -> Int64
 timeSpanGetMillis (TimeSpan i) = mod (truncate $
                                  (realToFrac i :: Double) /
                                  (realToFrac ticksPerMillisecond)) 1000
 
 --------------------------------------------------------------------------------
+-- | Returns a 'TimeSpan' that represents a specified number of seconds, where
+--   the specification is accurate to the nearest millisecond.
 timeSpanFromSeconds :: Double -> TimeSpan
 timeSpanFromSeconds i = interval i millisPerSecond
 
 --------------------------------------------------------------------------------
+-- | Returns a 'TimeSpan' that represents a specified number of minutes, where
+--   the specification is accurate to the nearest millisecond.
 timeSpanFromMinutes :: Double -> TimeSpan
 timeSpanFromMinutes i = interval i millisPerMinute
 
 --------------------------------------------------------------------------------
+-- | Returns a 'TimeSpan' that represents a specified number of hours, where the
+--   specification is accurate to the nearest millisecond.
 timeSpanFromHours :: Double -> TimeSpan
 timeSpanFromHours i = interval i millisPerHour
 
 --------------------------------------------------------------------------------
+-- | Returns a 'TimeSpan' that represents a specified number of days, where the
+--   specification is accurate to the nearest millisecond.
 timeSpanFromDays :: Double -> TimeSpan
 timeSpanFromDays i = interval i millisPerDay
 
 --------------------------------------------------------------------------------
+-- | Gets the value of the current 'TimeSpan' structure expressed in whole and
+--   fractional milliseconds.
 timeSpanTotalMillis :: TimeSpan -> Int64
 timeSpanTotalMillis (TimeSpan i) =
     let tmp = (realToFrac i) * millisPerTick in

@@ -12,13 +12,13 @@
 -- Portability : non-portable
 --
 -- Production execution model. It's striving for robustness. The model consists
--- on 3 threads. The Reader thread that reads 'Package' from the connection, the
+-- on 4 threads. The Reader thread that reads 'Package' from the connection, the
 -- Runner thread which executes finalizers submitted by the user (typically what
 -- to do on operation completion or when a event has arrived for a subscription)
--- , and the Manager thread that handles requests coming both from the user
--- and the Reader thread. If the Reader or Runner threads die, it will be
--- restarted by the Manager thread if the connection hasn't been closed by user
--- in the meantime.
+-- , the writer thread that sends 'Package' to the server, and the Manager
+-- thread that handles requests coming both from the user and the Reader
+-- thread. If the Reader or Runner threads die, it will be restarted by the
+-- Manager thread if the connection hasn't been closed by user in the meantime.
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Execution.Production
     ( Production
@@ -65,7 +65,7 @@ import Database.EventStore.Internal.Manager.Subscription hiding
 import Database.EventStore.Internal.Operation hiding (retry)
 import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Processor
-import Database.EventStore.Internal.Types hiding (Stopped)
+import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
@@ -76,6 +76,7 @@ data Worker
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Hols the execution model state.
 newtype Production = Prod (TChan Msg)
 
 --------------------------------------------------------------------------------

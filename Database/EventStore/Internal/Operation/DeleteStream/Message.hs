@@ -25,6 +25,7 @@ import Data.Text
 import Database.EventStore.Internal.Operation
 
 --------------------------------------------------------------------------------
+-- | Delete stream request.
 data Request
     = Request
       { _streamId        :: Required 1 (Value Text)
@@ -38,6 +39,7 @@ data Request
 instance Encode Request
 
 --------------------------------------------------------------------------------
+-- | 'Request' smart constructor.
 newRequest :: Text -> Int32 -> Bool -> Maybe Bool -> Request
 newRequest stream_id exp_ver req_master hard_delete =
     Request
@@ -48,6 +50,7 @@ newRequest stream_id exp_ver req_master hard_delete =
     }
 
 --------------------------------------------------------------------------------
+-- | Delete stream response.
 data Response
     = Response
       { _result          :: Required 1 (Enumeration OpResult)

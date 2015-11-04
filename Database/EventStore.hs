@@ -14,14 +14,8 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore
-    ( -- * Event
-      Event
-    , EventData
-    , createEvent
-    , withJson
-    , withJsonAndMetadata
-      -- * Connection
-    , Connection
+    ( -- * Connection
+      Connection
     , ConnectionException(..)
     , Credentials
     , Settings(..)
@@ -32,6 +26,12 @@ module Database.EventStore
     , defaultSettings
     , connect
     , shutdown
+      -- * Event
+    , Event
+    , EventData
+    , createEvent
+    , withJson
+    , withJsonAndMetadata
      -- * Read Operations
     , StreamMetadataResult(..)
     , readEvent
@@ -102,12 +102,10 @@ module Database.EventStore
     , transactionCommit
     , transactionRollback
     , transactionWrite
-      -- * Volatile Subscription
-    , DropReason(..)
+      -- * Subscription
     , Subscription
+      -- * Volatile Subscription
     , S.Regular
-    , S.Catchup
-    , S.Persistent
     , subscribe
     , subscribeToAll
     , getSubId
@@ -120,11 +118,13 @@ module Database.EventStore
     , getSubLastCommitPos
     , getSubLastEventNumber
       -- * Catch-up Subscription
+    , S.Catchup
     , subscribeFrom
     , subscribeToAllFrom
     , waitTillCatchup
     , hasCaughtUp
      -- * Persistent Subscription
+    , S.Persistent
     , PersistentSubscriptionSettings(..)
     , SystemConsumerStrategy(..)
     , NakAction(..)
@@ -164,6 +164,7 @@ module Database.EventStore
     , positionStart
     , positionEnd
       -- * Misc
+    , DropReason(..)
     , ExpectedVersion
     , anyStream
     , noStream
@@ -282,6 +283,15 @@ _hasCaughtUp Subscription{..} = do
 data SubState a = SubState (S.Subscription a) (Maybe S.SubDropReason)
 
 --------------------------------------------------------------------------------
+-- | It's possible to subscribe to a stream and be notified when new events are
+--   written to that stream. There are three types of subscription which are
+--   available, all of which can be useful in different situations.
+--
+--     * 'S.Regular'
+--
+--     * 'S.Catchup'
+--
+--     * 'S.Persistent'
 data Subscription a =
     Subscription
     { _subVar    :: TVar (SubState a)
@@ -632,7 +642,7 @@ subscribeFromCommon :: Connection
                     -> Text
                     -> Bool
                     -> Maybe Int32
-                    -> Op.CatchupType
+                    -> Op.CatchupState
                     -> IO (Subscription S.Catchup)
 subscribeFromCommon Connection{..} stream_id res_lnk_tos batch_m tpe = do
     mvar <- newEmptyTMVarIO

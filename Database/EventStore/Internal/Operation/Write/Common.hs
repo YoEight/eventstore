@@ -30,6 +30,7 @@ data WriteResult
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Constructs a 'NewEvent' from an 'Event'.
 eventToNewEvent :: Event -> SM a NewEvent
 eventToNewEvent evt = do
     uuid <- maybe freshId return evt_id

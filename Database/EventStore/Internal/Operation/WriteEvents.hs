@@ -32,6 +32,7 @@ import Database.EventStore.Internal.Types
 import Prelude
 
 --------------------------------------------------------------------------------
+-- | Write events operation.
 writeEvents :: Settings
             -> Text
             -> ExpectedVersion

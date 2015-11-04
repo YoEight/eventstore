@@ -32,6 +32,7 @@ import Database.EventStore.Internal.Types
 import Prelude
 
 --------------------------------------------------------------------------------
+-- | Creates a regular subscription connection 'Package'.
 createConnectRegularPackage :: Settings -> UUID -> Text -> Bool -> Package
 createConnectRegularPackage Settings{..} uuid stream tos =
     Package
@@ -44,6 +45,7 @@ createConnectRegularPackage Settings{..} uuid stream tos =
     msg = subscribeToStream stream tos
 
 --------------------------------------------------------------------------------
+-- | Creates a persistent subscription connection 'Package'.
 createConnectPersistPackage :: Settings
                             -> UUID
                             -> Text
@@ -61,6 +63,7 @@ createConnectPersistPackage Settings{..} uuid grp stream bufSize =
     msg = _connectToPersistentSubscription grp stream bufSize
 
 --------------------------------------------------------------------------------
+-- | Creates a persistent subscription 'Package'.
 createPersistActionPackage :: Settings
                            -> UUID
                            -> Text
@@ -90,6 +93,7 @@ createPersistActionPackage Settings{..} u grp strm tpe =
             PersistDelete    -> 0xCA
 
 --------------------------------------------------------------------------------
+-- | Creates Ack 'Package'.
 createAckPackage :: Settings -> UUID -> Text -> [UUID] -> Package
 createAckPackage Settings{..} corr sid eids =
     Package
@@ -103,6 +107,7 @@ createAckPackage Settings{..} corr sid eids =
     msg   = persistentSubscriptionAckEvents sid bytes
 
 --------------------------------------------------------------------------------
+-- | Create Nak 'Package'.
 createNakPackage :: Settings
                  -> UUID
                  -> Text
@@ -122,6 +127,7 @@ createNakPackage Settings{..} corr sid act txt eids =
     msg   = persistentSubscriptionNakEvents sid bytes txt act
 
 --------------------------------------------------------------------------------
+-- | Create an unsubscribe 'Package'.
 createUnsubscribePackage :: Settings -> UUID -> Package
 createUnsubscribePackage Settings{..} uuid =
     Package

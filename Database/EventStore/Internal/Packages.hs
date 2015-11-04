@@ -11,8 +11,7 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Packages
     ( -- * Package Smart Contructors
-      heartbeatPackage
-    , heartbeatResponsePackage
+      heartbeatResponsePackage
       -- * Cereal Put
     , putPackage
     ) where
@@ -24,7 +23,6 @@ import           Data.Foldable (for_)
 --------------------------------------------------------------------------------
 import Data.Serialize.Put
 import Data.UUID
-import System.Random
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Types
@@ -32,19 +30,7 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 -- Encode
 --------------------------------------------------------------------------------
-heartbeatPackage :: IO Package
-heartbeatPackage = do
-    uuid <- randomIO
-    let pack = Package
-               { packageCmd         = 0x01
-               , packageCorrelation = uuid
-               , packageData        = B.empty
-               , packageCred        = Nothing
-               }
-
-    return pack
-
---------------------------------------------------------------------------------
+-- | Constructs a heartbeat response given the 'UUID' of heartbeat request.
 heartbeatResponsePackage :: UUID -> Package
 heartbeatResponsePackage uuid =
     Package
@@ -55,6 +41,7 @@ heartbeatResponsePackage uuid =
     }
 
 --------------------------------------------------------------------------------
+-- | Serializes a 'Package' into raw bytes.
 putPackage :: Package -> Put
 putPackage pack = do
     putWord32le length_prefix
@@ -80,5 +67,7 @@ credSize :: Credentials -> Int
 credSize (Credentials login passw) = B.length login + B.length passw + 2
 
 --------------------------------------------------------------------------------
+-- | The minimun size a 'Package' should have. It's basically a command byte,
+--   correlation bytes ('UUID') and a 'Flag' byte.
 mandatorySize :: Int
 mandatorySize = 18

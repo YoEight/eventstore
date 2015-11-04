@@ -42,7 +42,6 @@ import           Data.Text (Text)
 import           Data.Time
 import           Data.Time.Clock.POSIX
 import           Data.UUID (UUID, fromByteString, toByteString)
-import           System.Random
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Logging
@@ -51,9 +50,14 @@ import Database.EventStore.Internal.TimeSpan
 --------------------------------------------------------------------------------
 -- Exceptions
 --------------------------------------------------------------------------------
+-- | Represent a class of error where the user is not at fault. It could be
+--   either the client or the server.
 data InternalException
     = ConnectionClosedByServer
-    | Stopped
+      -- ^ Happens when the server deliberately close the connection. This
+      --   probably happens if the client didn't respect EventStore
+      --   communication error. For instance, the client takes too much time to
+      --   respond to a heartbeat request.
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
@@ -72,6 +76,7 @@ data Event
       } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Create an 'Event' meant to be persisted.
 createEvent :: Text       -- ^ Event type
             -> Maybe UUID -- ^ Event ID, generated if 'Nothing'
             -> EventData  -- ^ Event data
@@ -85,10 +90,12 @@ data EventData
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Maps 'Event' inner data type to an 'Int32' understandable by the server.
 eventDataType :: EventData -> Int32
 eventDataType (Json _ _) = 1
 
 --------------------------------------------------------------------------------
+-- | Maps 'Event' inner metadata type to an 'Int32' understandable by the server.
 eventMetadataType :: EventData -> Int32
 eventMetadataType _ = 0
 
@@ -104,10 +111,12 @@ withJsonAndMetadata value metadata =
     Json (toJSON value) (Just $ toJSON metadata)
 
 --------------------------------------------------------------------------------
+-- | Serializes 'EventData''s data to a raw 'ByteString'.
 eventDataBytes :: EventData -> ByteString
 eventDataBytes (Json value _) = toStrict $ A.encode value
 
 --------------------------------------------------------------------------------
+-- | Serializes 'EventData' metadata to a raw 'ByteString'.
 eventMetadataBytes :: EventData -> Maybe ByteString
 eventMetadataBytes (Json _ meta_m) = fmap (toStrict . A.encode) meta_m
 
@@ -131,6 +140,7 @@ data ExpectedVersion
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Maps a 'ExpectedVersion' to an 'Int32' understandable by the server.
 expVersionInt32 :: ExpectedVersion -> Int32
 expVersionInt32 Any         = -2
 expVersionInt32 NoStream    = -1
@@ -165,6 +175,7 @@ exactStream i
 --------------------------------------------------------------------------------
 -- EventStore Messages
 --------------------------------------------------------------------------------
+-- | Serializes form of an 'Event'.
 data NewEvent
     = NewEvent
       { newEventId           :: Required 1 (Value ByteString)
@@ -180,18 +191,7 @@ data NewEvent
 instance Encode NewEvent
 
 --------------------------------------------------------------------------------
-newEventIO :: Text             -- ^ Event type
-           -> Maybe UUID       -- ^ Event ID
-           -> Int32            -- ^ Data content type
-           -> Int32            -- ^ Metadata content type
-           -> ByteString       -- ^ Event data
-           -> Maybe ByteString -- ^ Metadata
-           -> IO NewEvent
-newEventIO evt_type evt_id data_type meta_type evt_data evt_meta = do
-    new_uuid <- maybe randomIO return evt_id
-    return $ newEvent evt_type new_uuid data_type meta_type evt_data evt_meta
-
---------------------------------------------------------------------------------
+-- | 'NewEvent' smart constructor.
 newEvent :: Text             -- ^ Event type
          -> UUID             -- ^ Event ID
          -> Int32            -- ^ Data content type
@@ -212,6 +212,7 @@ newEvent evt_type evt_id data_type meta_type evt_data evt_meta =
     new_evt
 
 --------------------------------------------------------------------------------
+-- | Represents a serialized event coming from the server.
 data EventRecord
     = EventRecord
       { eventRecordStreamId     :: Required 1  (Value Text)
@@ -231,6 +232,8 @@ data EventRecord
 instance Decode EventRecord
 
 --------------------------------------------------------------------------------
+-- | Represents a serialized event representiong either an event or a link
+--   event.
 data ResolvedIndexedEvent
     = ResolvedIndexedEvent
       { resolvedIndexedRecord :: Optional 1 (Message EventRecord)
@@ -242,6 +245,7 @@ data ResolvedIndexedEvent
 instance Decode ResolvedIndexedEvent
 
 --------------------------------------------------------------------------------
+-- | Represents a serialized event sent by the server in a subscription context.
 data ResolvedEventBuf
     = ResolvedEventBuf
       { resolvedEventBufEvent           :: Required 1 (Message EventRecord)
@@ -318,10 +322,12 @@ recordedEventDataAsJson :: A.FromJSON a => RecordedEvent -> Maybe a
 recordedEventDataAsJson = A.decode . fromStrict . recordedEventData
 
 --------------------------------------------------------------------------------
+-- | Converts a raw 'Int64' into an 'UTCTime'
 toUTC :: Int64 -> UTCTime
 toUTC = posixSecondsToUTCTime . (/1000) . realToFrac . CTime
 
 --------------------------------------------------------------------------------
+-- | Constructs a 'RecordedEvent' from an 'EventRecord'.
 newRecordedEvent :: EventRecord -> RecordedEvent
 newRecordedEvent er = re
   where
@@ -357,6 +363,7 @@ data ResolvedEvent
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Constructs a 'ResolvedEvent' from a 'ResolvedIndexedEvent'.
 newResolvedEvent :: ResolvedIndexedEvent -> ResolvedEvent
 newResolvedEvent rie = re
   where
@@ -369,6 +376,7 @@ newResolvedEvent rie = re
              }
 
 --------------------------------------------------------------------------------
+-- | Constructs a 'ResolvedEvent' from a 'ResolvedEventBuf'.
 newResolvedEventFromBuf :: ResolvedEventBuf -> ResolvedEvent
 newResolvedEventFromBuf reb = re
   where
@@ -423,12 +431,14 @@ data ReadDirection
 --------------------------------------------------------------------------------
 -- Flag
 --------------------------------------------------------------------------------
+-- | Indicates either a 'Package' contains 'Credentials' data or not.
 data Flag
     = None
     | Authenticated
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Maps a 'Flag' into a 'Word8' understandable by the server.
 flagWord8 :: Flag -> Word8
 flagWord8 None          = 0x00
 flagWord8 Authenticated = 0x01
@@ -445,6 +455,7 @@ data Credentials
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
+-- | Creates a 'Credentials' given a login and a password.
 credentials :: ByteString -- ^ Login
             -> ByteString -- ^ Password
             -> Credentials
@@ -453,6 +464,7 @@ credentials = Credentials
 --------------------------------------------------------------------------------
 -- Package
 --------------------------------------------------------------------------------
+-- | Represents a package exchanged between the client and the server.
 data Package
     = Package
       { packageCmd         :: !Word8
@@ -509,6 +521,7 @@ defaultSettings = Settings
                   }
 
 --------------------------------------------------------------------------------
+-- | Triggers the logger callback if it has been set.
 _settingsLog :: Settings -> Log -> IO ()
 _settingsLog Settings{..} l =
     case s_logger of
@@ -535,6 +548,14 @@ data StreamACL
       , streamACLMetaWriteRoles :: ![Text]
         -- ^ Roles and users permitted to write stream metadata.
       } deriving Show
+
+-------------------------------------------------------------------------------
+instance A.FromJSON StreamACL where
+    parseJSON = parseStreamACL
+
+-------------------------------------------------------------------------------
+instance A.ToJSON StreamACL where
+    toJSON = streamACLJSON
 
 --------------------------------------------------------------------------------
 -- | 'StreamACL' with no role or users whatsoever.
@@ -588,6 +609,10 @@ getCustomProperty s k = do
 instance A.FromJSON StreamMetadata where
     parseJSON = parseStreamMetadata
 
+-------------------------------------------------------------------------------
+instance A.ToJSON StreamMetadata where
+    toJSON = streamMetadataJSON
+
 --------------------------------------------------------------------------------
 -- | 'StreamMetadata' with everything set to 'Nothing', using 'emptyStreamACL'
 --   and an empty 'Object'.
@@ -602,12 +627,14 @@ emptyStreamMetadata = StreamMetadata
                       }
 
 --------------------------------------------------------------------------------
+-- | Maps an 'Object' to a list of 'Pair' to ease the 'StreamMetadata'.
 customMetaToPairs :: Object -> [Pair]
 customMetaToPairs = fmap go . H.toList
   where
     go (k,v) = k .= v
 
 --------------------------------------------------------------------------------
+-- | Serialized a 'StreamACL' to 'Value' for serialization purpose.
 streamACLJSON :: StreamACL -> A.Value
 streamACLJSON StreamACL{..} =
     A.object [ p_readRoles      .= streamACLReadRoles
@@ -618,6 +645,7 @@ streamACLJSON StreamACL{..} =
              ]
 
 --------------------------------------------------------------------------------
+-- | Serialized a 'StreamMetadata' to 'Value' for serialization purpose.
 streamMetadataJSON :: StreamMetadata -> A.Value
 streamMetadataJSON StreamMetadata{..} =
     A.object $ [ p_maxAge         .= streamMetadataMaxAge
@@ -632,48 +660,60 @@ streamMetadataJSON StreamMetadata{..} =
 --------------------------------------------------------------------------------
 -- Stream ACL Properties
 --------------------------------------------------------------------------------
+-- | Read ACL property.
 p_readRoles :: Text
 p_readRoles = "$r"
 
 --------------------------------------------------------------------------------
+-- | Write ACL property.
 p_writeRoles :: Text
 p_writeRoles = "$w"
 
 --------------------------------------------------------------------------------
+-- | Delete ACL property.
 p_deleteRoles :: Text
 p_deleteRoles = "$d"
 
 --------------------------------------------------------------------------------
+-- | Metadata read ACL property.
 p_metaReadRoles :: Text
 p_metaReadRoles = "$mr"
 
 --------------------------------------------------------------------------------
+-- | Metadata write ACL property.
 p_metaWriteRoles :: Text
 p_metaWriteRoles = "$mw"
 
 --------------------------------------------------------------------------------
 -- Internal MetaData Properties
 --------------------------------------------------------------------------------
+-- | Max age metadata property.
 p_maxAge :: Text
 p_maxAge = "$maxAge"
 
 --------------------------------------------------------------------------------
+-- | Max count metadata property.
 p_maxCount :: Text
 p_maxCount = "$maxCount"
 
 --------------------------------------------------------------------------------
+-- | truncated before metadata property.
 p_truncateBefore :: Text
 p_truncateBefore = "$tb"
 
 --------------------------------------------------------------------------------
+-- | Cache control metadata property.
 p_cacheControl :: Text
 p_cacheControl = "$cacheControl"
 
 --------------------------------------------------------------------------------
+-- | ACL metadata property.
 p_acl :: Text
 p_acl = "$acl"
 
 --------------------------------------------------------------------------------
+-- | Gathers every internal metadata properties into a 'Set'. It used to safely
+--   'StreamMetadata' in JSON.
 internalMetaProperties :: S.Set Text
 internalMetaProperties =
     S.fromList [ p_maxAge
@@ -684,19 +724,21 @@ internalMetaProperties =
                ]
 
 --------------------------------------------------------------------------------
+-- | Only keeps the properties the users has set.
 keepUserProperties :: Object -> Object
 keepUserProperties = H.filterWithKey go
   where
     go k _ = not $ S.member k internalMetaProperties
 
 --------------------------------------------------------------------------------
---------------------------------------------------------------------------------
+-- | Parses a 'NominalDiffTime' from an 'Object' given a JSON property.
 parseNominalDiffTime :: Text -> Object -> Parser (Maybe NominalDiffTime)
 parseNominalDiffTime k m = fmap (fmap go) (m A..: k)
   where
     go i = (realToFrac $ CTime i)
 
 --------------------------------------------------------------------------------
+-- | Parses 'StreamACL'.
 parseStreamACL :: A.Value -> Parser StreamACL
 parseStreamACL (A.Object m) =
     StreamACL              <$>
@@ -708,6 +750,7 @@ parseStreamACL (A.Object m) =
 parseStreamACL _ = mzero
 
 --------------------------------------------------------------------------------
+-- | Parses 'StreamMetadata'.
 parseStreamMetadata :: A.Value -> Parser StreamMetadata
 parseStreamMetadata (A.Object m) =
     StreamMetadata                    <$>
@@ -722,13 +765,16 @@ parseStreamMetadata _ = mzero
 --------------------------------------------------------------------------------
 -- Builder
 --------------------------------------------------------------------------------
+-- | Allows to build a structure using 'Monoid' functions.
 type Builder a = Endo a
 
 --------------------------------------------------------------------------------
+-- | Build a structure given a 'Builder' and an initial value.
 build :: a -> Builder a -> a
 build a (Endo k) = k a
 
 --------------------------------------------------------------------------------
+-- | A 'Builder' applies to 'StreamACL'.
 type StreamACLBuilder = Builder StreamACL
 
 --------------------------------------------------------------------------------
@@ -792,6 +838,7 @@ modifyStreamACL :: StreamACLBuilder -> StreamACL -> StreamACL
 modifyStreamACL b acl = build acl b
 
 --------------------------------------------------------------------------------
+-- | A 'Builder' applies to 'StreamMetadata'.
 type StreamMetadataBuilder = Builder StreamMetadata
 
 --------------------------------------------------------------------------------
@@ -815,10 +862,13 @@ setCacheControl :: TimeSpan -> StreamMetadataBuilder
 setCacheControl d = Endo $ \s -> s { streamMetadataCacheControl = Just d }
 
 --------------------------------------------------------------------------------
+-- | Overwrites any previous 'StreamACL' by the given one in a
+--   'StreamMetadataBuilder'.
 setACL :: StreamACL -> StreamMetadataBuilder
 setACL a = Endo $ \s -> s { streamMetadataACL = a }
 
 --------------------------------------------------------------------------------
+-- | Updates a 'StreamMetadata''s 'StreamACL' given a 'StreamACLBuilder'.
 modifyACL :: StreamACLBuilder -> StreamMetadataBuilder
 modifyACL b = Endo $ \s ->
     let old = streamMetadataACL s
@@ -873,17 +923,20 @@ data SystemConsumerStrategy
     deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
+-- | Maps a 'SystemConsumerStrategy' to a 'Text' understandable by the server.
 strategyText :: SystemConsumerStrategy -> Text
 strategyText DispatchToSingle = "DispatchToSingle"
 strategyText RoundRobin       = "RoundRobin"
 
 --------------------------------------------------------------------------------
+-- | Tries to parse a 'SystemConsumerStrategy' given a raw 'Text'.
 strategyFromText :: Text -> Maybe SystemConsumerStrategy
 strategyFromText "DispatchToSingle" = Just DispatchToSingle
 strategyFromText "RoundRobin"       = Just RoundRobin
 strategyFromText _                  = Nothing
 
 --------------------------------------------------------------------------------
+-- | Gathers every persistent subscription property.
 data PersistentSubscriptionSettings =
     PersistentSubscriptionSettings
     { psSettingsResolveLinkTos :: !Bool
