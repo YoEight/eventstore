@@ -460,7 +460,7 @@ manager setts conn var mailbox pkg_queue job_queue = bootstrap
 
 --------------------------------------------------------------------------------
 -- | Main Production execution model entry point.
-newExecutionModel :: Settings -> HostName -> Int -> IO Production
+newExecutionModel :: Settings -> HostName -> PortNumber -> IO Production
 newExecutionModel setts host port = do
     gen       <- newGenerator
     mailbox   <- newTChanIO

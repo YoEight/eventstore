@@ -109,6 +109,7 @@ library
                      , unordered-containers
                      , stm
                      , attoparsec
+                     , connection == 0.2.*
 
   -- Directories containing source files.
   -- hs-source-dirs:
