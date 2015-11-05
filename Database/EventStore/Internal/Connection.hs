@@ -17,9 +17,9 @@ module Database.EventStore.Internal.Connection
     ( Connection
     , ConnectionException(..)
     , HostName
+    , PortNumber
     , connUUID
     , connClose
-    , connFlush
     , connSend
     , connRecv
     , connIsClosed
@@ -33,12 +33,12 @@ import           Control.Exception
 import qualified Data.ByteString as B
 import           Data.Foldable
 import           Data.Typeable
-import           System.IO
 
 --------------------------------------------------------------------------------
-import Data.UUID
-import Data.UUID.V4
-import Network
+import           Data.UUID
+import           Data.UUID.V4
+import           Network
+import qualified Network.Connection as C
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Types
@@ -48,9 +48,8 @@ import Database.EventStore.Logging
 -- | Type of connection issue that can arise during the communication with the
 --   server.
 data ConnectionException
-    = MaxAttempt HostName Int Int
-      -- ^ The max reconnection attempt threshold has been reached. Holds a
-      --   'HostName', the port used and the given threshold.
+    = MaxAttempt
+      -- ^ The max reconnection attempt threshold has been reached.
     | ClosedConnection
       -- ^ Use of a close 'Connection'.
     deriving (Show, Typeable)
@@ -60,34 +59,46 @@ instance Exception ConnectionException
 
 --------------------------------------------------------------------------------
 data In a where
-    Id       :: In UUID
-    Close    :: In ()
-    Flush    :: In ()
-    Send     :: B.ByteString -> In ()
-    Recv     :: Int -> In B.ByteString
+    Id    :: In UUID
+    Close :: In ()
+    Send  :: B.ByteString -> In ()
+    Recv  :: Int -> In B.ByteString
 
 --------------------------------------------------------------------------------
 -- | Internal representation of a connection with the server.
 data Connection =
     Connection
-    { _var   :: TMVar State
-    , _host  :: HostName
-    , _port  :: Int
-    , _setts :: Settings
+    { _var    :: TMVar State
+    , _ctx    :: C.ConnectionContext
+    , _params :: C.ConnectionParams
+    , _setts  :: Settings
     }
 
 --------------------------------------------------------------------------------
 data State
     = Offline
-    | Online !UUID !Handle
+    | Online !UUID !C.Connection
     | Closed
 
 --------------------------------------------------------------------------------
 -- | Creates a new 'Connection'.
-newConnection :: Settings -> HostName -> Int -> IO Connection
+newConnection :: Settings -> HostName -> PortNumber -> IO Connection
 newConnection setts host port = do
     var <- newTMVarIO Offline
-    return $ Connection var host port setts
+    ctx <- C.initConnectionContext
+    let ps = regularConnectionParams host port
+    return $ Connection var ctx ps setts
+
+--------------------------------------------------------------------------------
+-- | Builds a regular (meaning not using SSL/TLS) 'C.ConnectionParams'.
+regularConnectionParams :: HostName -> PortNumber -> C.ConnectionParams
+regularConnectionParams host port =
+    C.ConnectionParams
+    { C.connectionHostname  = host
+    , C.connectionPort      = port
+    , C.connectionUseSecure = Nothing
+    , C.connectionUseSocks  = Nothing
+    }
 
 --------------------------------------------------------------------------------
 -- | Gets current 'Connection' 'UUID'.
@@ -101,11 +112,6 @@ connUUID conn = execute conn Id
 --   call.
 connClose :: Connection -> IO ()
 connClose conn = execute conn Close
-
---------------------------------------------------------------------------------
--- | Flushes the current buffer.
-connFlush :: Connection -> IO ()
-connFlush conn = execute conn Flush
 
 --------------------------------------------------------------------------------
 -- | Writes 'ByteString' into the buffer.
@@ -127,23 +133,23 @@ connIsClosed Connection{..} = do
         _      -> return False
 
 --------------------------------------------------------------------------------
--- | Get a new 'Handle' and a 'UUID' from the 'Connection'. It handle automatic
---   connection when the 'Connection' State is 'Offline.'
-getHandle :: Connection -> IO (UUID, Handle)
+-- | Get a new 'C.Connection' and a 'UUID'. It handle automatic connection when
+--   the 'Connection' State is 'Offline.'
+getHandle :: Connection -> IO (UUID, C.Connection)
 getHandle Connection{..} = do
     r <- atomically $ do
         s <- takeTMVar _var
         case s of
             Offline -> return Nothing
-            Online u hdl -> do
+            Online u cn -> do
                 putTMVar _var s
-                return $ Just (u, hdl)
+                return $ Just (u, cn)
             Closed -> throwSTM ClosedConnection
     case r of
         Nothing -> do
-            st@(Online u hdl) <- newState _setts _host _port
+            st@(Online u cn) <- newState _setts _ctx _params
             atomically $ putTMVar _var st
-            return (u, hdl)
+            return (u, cn)
         Just t -> return t
 
 --------------------------------------------------------------------------------
@@ -152,11 +158,11 @@ closeHandle Connection{..} = do
     r <- atomically $ do
         s <- takeTMVar _var
         case s of
-            Online _ hdl -> do
+            Online _ cn -> do
                 putTMVar _var Closed
-                return $ Just hdl
+                return $ Just cn
             _ -> putTMVar _var Closed >> return Nothing
-    traverse_ hClose r
+    traverse_ C.connectionClose r
 
 --------------------------------------------------------------------------------
 -- | Main connection logic. It will automatically reconnect to the server when
@@ -167,36 +173,35 @@ execute conn i = do
             case fromException e of
                 Just (_ :: ConnectionException) -> throwIO e
                 _                               -> execute conn i
-    (u, h) <- getHandle conn
+    (u, cn) <- getHandle conn
     handle catcher $
         case i of
             Id       -> return u
             Close    -> closeHandle conn
-            Flush    -> hFlush h
-            Send b   -> B.hPut h b
-            Recv siz -> B.hGet h siz
+            Send b   -> C.connectionPut cn b
+            Recv siz -> C.connectionGet cn siz
 
 --------------------------------------------------------------------------------
-newState :: Settings -> HostName -> Int -> IO State
-newState sett host port =
+newState :: Settings -> C.ConnectionContext -> C.ConnectionParams -> IO State
+newState sett ctx params =
     case s_retry sett of
         AtMost n ->
             let loop i = do
                     _settingsLog sett (Info $ Connecting i)
-                    catch (connect sett host port) $ \(_ :: SomeException) -> do
-                        threadDelay delay
-                        if n <= i
-                            then do
-                                _settingsLog sett
-                                             $ Error
-                                             $ MaxAttemptConnectionReached i
-                                throwIO $ MaxAttempt host port n
-                            else loop (i + 1) in
+                    catch (connect sett ctx params) $ \(_ :: SomeException) ->
+                        do threadDelay delay
+                           if n <= i
+                               then do
+                                   _settingsLog sett
+                                              $ Error
+                                              $ MaxAttemptConnectionReached i
+                                   throwIO MaxAttempt
+                               else loop (i + 1) in
              loop 1
         KeepRetrying ->
             let endlessly i = do
                     _settingsLog sett (Info $ Connecting i)
-                    catch (connect sett host port) $ \(_ :: SomeException) ->
+                    catch (connect sett ctx params) $ \(_ :: SomeException) ->
                         threadDelay delay >> endlessly (i + 1) in
              endlessly (1 :: Int)
   where
@@ -207,15 +212,9 @@ secs :: Int
 secs = 1000000
 
 --------------------------------------------------------------------------------
-connect :: Settings -> HostName -> Int -> IO State
-connect sett host port = do
-    hdl <- connectTo host (PortNumber $ fromIntegral port)
-    hSetBuffering hdl NoBuffering
+connect :: Settings -> C.ConnectionContext -> C.ConnectionParams -> IO State
+connect sett ctx ps = do
+    cn <- C.connectTo ctx ps
     uuid <- nextRandom
-    regularConnection sett hdl uuid
-
---------------------------------------------------------------------------------
-regularConnection :: Settings -> Handle -> UUID -> IO State
-regularConnection sett h uuid = do
     _settingsLog sett (Info $ Connected uuid)
-    return $ Online uuid h
+    return $ Online uuid cn

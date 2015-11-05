@@ -227,8 +227,8 @@ data Connection
 --   performance out of the connection it is generally recommended to use it in
 --   this way.
 connect :: Settings
-        -> String   -- ^ HostName
-        -> Int      -- ^ Port
+        -> String -- ^ HostName
+        -> PortNumber
         -> IO Connection
 connect settings host port = do
     prod <- newExecutionModel settings host port
