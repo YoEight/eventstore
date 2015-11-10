@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 --------------------------------------------------------------------------------
 -- |
@@ -33,6 +34,7 @@ module Database.EventStore.Internal.Execution.Production
     , pushAckPersist
     , pushNakPersist
     , pushUnsubscribe
+    , prodWaitTillClosed
     ) where
 
 --------------------------------------------------------------------------------
@@ -76,8 +78,57 @@ data Worker
     deriving Show
 
 --------------------------------------------------------------------------------
+wkConstr :: Worker -> (ThreadId -> Worker)
+wkConstr (Reader _) = Reader
+wkConstr (Runner _) = Runner
+wkConstr (Writer _) = Writer
+
+--------------------------------------------------------------------------------
+wkUpdState :: Worker -> State -> State
+wkUpdState (Reader tid) s = s { _reader = Just tid }
+wkUpdState (Runner tid) s = s { _runner = Just tid }
+wkUpdState (Writer tid) s = s { _writer = Just tid }
+
+--------------------------------------------------------------------------------
 -- | Hols the execution model state.
-newtype Production = Prod (TChan Msg)
+data Production =
+    Prod
+    { _submit :: TVar (Msg -> IO ())
+      -- ^ The action to call when pushing new command.
+    , _waitClosed :: STM ()
+      -- ^ Action that attests the execution model has been closed successfully.
+      --   It doesn't mean the execution model hasn't been shutdown because of
+      --   some random exception.
+    }
+
+--------------------------------------------------------------------------------
+-- | Main execution environment used among different transitions.
+data Env =
+    Env
+    { _setts :: Settings
+      -- ^ Global settings reference.
+    , _queue :: TQueue Msg
+      -- ^ That queue ties the user, the reader thread and the manager thread.
+      --   The user and the reader push new messages onto the queue while the
+      --   manager dequeue and handles one message at the time.
+    , _pkgQueue :: TQueue Package
+      -- ^ That queue ties the writer thread with the manager thread. The writer
+      --   dequeue packages from that queue and sends those to the server. While
+      --   the manager pushes new packages on every new submitted operation.
+    , _jobQueue :: TQueue Job
+      -- ^ That queue ties the runner thread with the manager thread. The runner
+      --   dequeues IO action from it while the manager pushes new command
+      --   finalizers as those arrived.
+    , _state :: TVar State
+      -- ^ Holds manager thread state.
+    , _nextSubmit :: TVar (Msg -> IO ())
+      -- ^ Indicates the action to call in order to push new commands.
+    , _conn :: Connection
+      -- ^ Connection to the server.
+    , _disposed :: TMVar ()
+      -- ^ Indicates when the production execution model has been shutdown and
+      --   disposed any ongoing operations.
+    }
 
 --------------------------------------------------------------------------------
 data Msg
@@ -99,9 +150,15 @@ data Msg
     | NakPersist (IO ()) Running Text NakAction (Maybe Text) [UUID]
 
 --------------------------------------------------------------------------------
+pushCmd :: Production -> Msg -> IO ()
+pushCmd (Prod _sender _) msg = do
+    push <- readTVarIO _sender
+    push msg
+
+--------------------------------------------------------------------------------
 -- | Asks to shutdown the connection to the server asynchronously.
 shutdownExecutionModel :: Production -> IO ()
-shutdownExecutionModel (Prod mailbox) = atomically $ writeTChan mailbox Shutdown
+shutdownExecutionModel prod = pushCmd prod Shutdown
 
 --------------------------------------------------------------------------------
 -- | Pushes a new 'Operation' asynchronously.
@@ -109,8 +166,7 @@ pushOperation :: Production
              -> (Either OperationError a -> IO ())
              -> Operation a
              -> IO ()
-pushOperation (Prod mailbox) k op =
-    atomically $ writeTChan mailbox (NewOperation k op)
+pushOperation prod k op = pushCmd prod (NewOperation k op)
 
 --------------------------------------------------------------------------------
 -- | Subscribes to a regular stream.
@@ -119,8 +175,7 @@ pushConnectStream :: Production
                   -> Text
                   -> Bool
                   -> IO ()
-pushConnectStream (Prod mailbox) k n tos =
-    atomically $ writeTChan mailbox (ConnectStream k n tos)
+pushConnectStream prod k n tos = pushCmd prod (ConnectStream k n tos)
 
 --------------------------------------------------------------------------------
 -- | Subscribes to a persistent subscription.
@@ -130,8 +185,7 @@ pushConnectPersist :: Production
                    -> Text
                    -> Int32
                    -> IO ()
-pushConnectPersist (Prod mailbox) k g n buf =
-    atomically $ writeTChan mailbox (ConnectPersist k g n buf)
+pushConnectPersist prod k g n buf = pushCmd prod (ConnectPersist k g n buf)
 
 --------------------------------------------------------------------------------
 -- | Creates a persistent subscription.
@@ -141,8 +195,7 @@ pushCreatePersist :: Production
                   -> Text
                   -> PersistentSubscriptionSettings
                   -> IO ()
-pushCreatePersist (Prod mailbox) k g n setts =
-    atomically $ writeTChan mailbox (CreatePersist k g n setts)
+pushCreatePersist prod k g n setts = pushCmd prod (CreatePersist k g n setts)
 
 --------------------------------------------------------------------------------
 -- | Updates a persistent subscription.
@@ -152,8 +205,7 @@ pushUpdatePersist :: Production
                   -> Text
                   -> PersistentSubscriptionSettings
                   -> IO ()
-pushUpdatePersist (Prod mailbox) k g n setts =
-    atomically $ writeTChan mailbox (UpdatePersist k g n setts)
+pushUpdatePersist prod k g n setts = pushCmd prod (UpdatePersist k g n setts)
 
 --------------------------------------------------------------------------------
 -- | Deletes a persistent subscription.
@@ -162,14 +214,12 @@ pushDeletePersist :: Production
                   -> Text
                   -> Text
                   -> IO ()
-pushDeletePersist (Prod mailbox) k g n =
-    atomically $ writeTChan mailbox (DeletePersist k g n)
+pushDeletePersist prod k g n = pushCmd prod (DeletePersist k g n)
 
 --------------------------------------------------------------------------------
 -- | Acknowledges a set of events has been successfully handled.
 pushAckPersist :: Production -> IO () -> Running -> Text -> [UUID] -> IO ()
-pushAckPersist (Prod mailbox) r run gid evts =
-    atomically $ writeTChan mailbox (AckPersist r run gid evts)
+pushAckPersist prod r run gid evts = pushCmd prod (AckPersist r run gid evts)
 
 --------------------------------------------------------------------------------
 -- | Acknowledges a set of events hasn't been handled successfully.
@@ -181,14 +231,18 @@ pushNakPersist :: Production
                -> Maybe Text
                -> [UUID]
                -> IO ()
-pushNakPersist (Prod mailbox) r run gid act res evts =
-    atomically $ writeTChan mailbox (NakPersist r run gid act res evts)
+pushNakPersist prod r run gid act res evts =
+    pushCmd prod (NakPersist r run gid act res evts)
 
 --------------------------------------------------------------------------------
 -- | Unsubscribe from a subscription.
 pushUnsubscribe :: Production -> Running -> IO ()
-pushUnsubscribe (Prod mailbox) r =
-    atomically $ writeTChan mailbox (Unsubscribe r)
+pushUnsubscribe prod r = pushCmd prod (Unsubscribe r)
+
+--------------------------------------------------------------------------------
+-- | Waits the execution model to close properly.
+prodWaitTillClosed :: Production -> IO ()
+prodWaitTillClosed (Prod _ disposed) = atomically disposed
 
 --------------------------------------------------------------------------------
 newtype Job = Job (IO ())
@@ -209,20 +263,14 @@ emptyState :: Settings -> Generator -> State
 emptyState setts gen = State (newProcessor setts gen) Nothing Nothing Nothing
 
 --------------------------------------------------------------------------------
-registerWorker :: Worker -> State -> State
-registerWorker (Reader tid) s = s { _reader = Just tid }
-registerWorker (Runner tid) s = s { _runner = Just tid }
-registerWorker (Writer tid) s = s { _writer = Just tid }
-
---------------------------------------------------------------------------------
 updateProc :: Processor (IO ()) -> State -> State
 updateProc p s = s { _proc = p }
 
 --------------------------------------------------------------------------------
 -- | Reader thread. Keeps reading 'Package' from the connection.
 --------------------------------------------------------------------------------
-reader :: Settings -> TChan Msg -> Connection -> IO ()
-reader sett mailbox c = forever $ do
+reader :: Settings -> TQueue Msg -> Connection -> IO ()
+reader sett queue c = forever $ do
     header_bs <- connRecv c 4
     case runGet getLengthPrefix header_bs of
         Left _              -> _settingsLog sett (Error WrongPackageFraming)
@@ -232,7 +280,7 @@ reader sett mailbox c = forever $ do
         case runGet getPackage bs of
             Left e    -> _settingsLog sett (Error $ PackageParsingError e)
             Right pkg -> do
-                atomically $ writeTChan mailbox (Arrived pkg)
+                atomically $ writeTQueue queue (Arrived pkg)
                 let cmd  = packageCmd pkg
                     uuid = packageCorrelation pkg
                 _settingsLog sett $ Info $ PackageReceived cmd uuid
@@ -240,9 +288,9 @@ reader sett mailbox c = forever $ do
 --------------------------------------------------------------------------------
 -- | Writer thread, writes incoming 'Package's
 --------------------------------------------------------------------------------
-writer :: Settings -> TChan Package -> Connection -> IO ()
-writer setts chan conn = forever $ do
-    pkg <- atomically $ readTChan chan
+writer :: Settings -> TQueue Package -> Connection -> IO ()
+writer setts pkg_queue conn = forever $ do
+    pkg <- atomically $ readTQueue pkg_queue
     connSend conn $ runPut $ putPackage pkg
     let cmd  = packageCmd pkg
         uuid = packageCorrelation pkg
@@ -305,181 +353,210 @@ getUUID = do
 --------------------------------------------------------------------------------
 -- Runner thread. Keeps running job comming from the Manager thread.
 --------------------------------------------------------------------------------
-runner :: TChan Job -> IO ()
-runner queue = forever $ do
-    Job j <- atomically $ readTChan queue
+runner :: TQueue Job -> IO ()
+runner job_queue = forever $ do
+    Job j <- atomically $ readTQueue job_queue
     j
 
 --------------------------------------------------------------------------------
--- | Manager thread. Responsible from serving request coming from both the user
---   and the Reader thread. It also write 'Package' to the connection and
---   dispatches jobs for the runner thread.
---------------------------------------------------------------------------------
--- | Internal intermediary cruise transition.
-data Resp r
-    = Cruising
-    | Restart Worker
-    | Closing
-
---------------------------------------------------------------------------------
--- | Manager state-machine.
-manager :: Settings
-        -> Connection
-        -> TVar State
-        -> TChan Msg
-        -> TChan Package
-        -> TChan Job
-        -> IO ()
-manager setts conn var mailbox pkg_queue job_queue = bootstrap
-  where
-    createReader = spawn Reader (reader setts mailbox conn)
-    createRunner = spawn Runner (runner job_queue)
-    createWriter = spawn Writer (writer setts pkg_queue conn)
-
-    bootstrap = do
-        reid <- createReader
-        ruid <- createRunner
-        wuid <- createWriter
-        let _F = registerWorker (Reader reid) .
-                 registerWorker (Runner ruid) .
-                 registerWorker (Writer wuid)
-        atomically $ modifyTVar' var _F
-        cruise
-
-    restartWorker (Reader _) = createReader
-    restartWorker (Runner _) = createRunner
-    restartWorker (Writer _) = createWriter
-
-    loopTransition (Produce j nxt) = do
-        let job = Job j
-        writeTChan job_queue job
-        loopTransition nxt
-    loopTransition (Transmit pkg nxt) = do
-        writeTChan pkg_queue pkg
-        loopTransition nxt
-    loopTransition (Await new_proc) =
-        return new_proc
-
-    cruise = do
-        resp <- atomically $ do
-            msg <- readTChan mailbox
-            s   <- readTVar var
-            case msg of
-                Stopped w e ->
-                    case fromException e of
-                        Just (_ :: ConnectionException) -> return Closing
-                        _ -> return $ Restart w
-                Arrived pkg -> do
-                    let sm = submitPackage pkg $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                Shutdown -> return Closing
-                NewOperation k op -> do
-                    let sm = newOperation k op $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                ConnectStream k n tos -> do
-                    let sm = connectRegularStream k n tos $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                ConnectPersist k g n b -> do
-                    let sm = connectPersistent k g n b $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                Unsubscribe r -> do
-                    let sm = unsubscribe r $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                CreatePersist k g n psetts -> do
-                    let sm = createPersistent k g n psetts $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                UpdatePersist k g n psetts -> do
-                    let sm = updatePersistent k g n psetts $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                DeletePersist k g n -> do
-                    let sm = deletePersistent k g n $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                AckPersist r run gid evts -> do
-                    let sm = ackPersist r run gid evts $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-                NakPersist r run gid act res evts -> do
-                    let sm = nakPersist r run gid act res evts $ _proc s
-                    new_proc <- loopTransition sm
-                    modifyTVar' var $ updateProc new_proc
-                    return Cruising
-        case resp of
-            Cruising  -> cruise
-            Closing   -> closing
-            Restart w -> restartWorker w >> cruise
-
-    closing = do
-        let loop = do
-                nxt <- lookupTChan mailbox
-                case nxt of
-                    Nothing -> return ()
-                    Just msg ->
-                        case msg of
-                            Arrived pkg -> do
-                                s <- readTVar var
-                                let sm = submitPackage pkg $ _proc s
-                                nxt_proc <- loopTransition sm
-                                modifyTVar' var $ updateProc nxt_proc
-                            _ -> loop
-        atomically $ do
-            loop
-            s <- readTVar var
-            _ <- loopTransition $ abort $ _proc s
-            return ()
-
-        atomically $ do
-            end <- isEmptyTChan job_queue
-            when (not end) retry
-        State _ retid rutid  wutid <- readTVarIO var
-        traverse_ killThread retid
-        traverse_ killThread rutid
-        traverse_ killThread wutid
-
-    spawn mk action =
-        mfix $ \tid -> forkFinally action $ \r ->
+-- | Spawns a new thread worker.
+spawn :: Env -> (ThreadId -> Worker) -> IO Worker
+spawn Env{..} mk = do
+    tid <- mfix $ \tid ->
+        let worker = mk tid
+            action =
+                case worker of
+                    Reader _ -> reader _setts _queue _conn
+                    Runner _ -> runner _jobQueue
+                    Writer _ -> writer _setts _pkgQueue _conn in
+        forkFinally action $ \r ->
             case r of
-                Left e -> atomically $ writeTChan mailbox (Stopped (mk tid) e)
+                Left e -> atomically $ writeTQueue _queue (Stopped worker e)
                 _      -> return ()
+    return $ mk tid
+
+--------------------------------------------------------------------------------
+-- | Loops over a 'Processor''s 'Transition' state machine, returning an updated
+--   'Processor' model at the end.
+runTransition :: Env -> Transition (IO ()) -> STM (Processor (IO ()))
+runTransition Env{..} = go
+  where
+    go (Produce j nxt) = do
+        let job = Job j
+        writeTQueue _jobQueue job
+        go nxt
+    go (Transmit pkg nxt) = do
+        writeTQueue _pkgQueue pkg
+        go nxt
+    go (Await new_proc) = return new_proc
+
+--------------------------------------------------------------------------------
+-- | First execution mode. It spawns initial reader, runner and writer threads.
+--   Then it switches to 'cruising' mode.
+bootstrap :: Env -> IO ()
+bootstrap env@Env{..} = do
+    rew <- spawn env Reader
+    ruw <- spawn env Runner
+    wrw <- spawn env Writer
+    let _F = wkUpdState rew .
+             wkUpdState ruw .
+             wkUpdState wrw
+    atomically $ modifyTVar' _state _F
+    cruising env
+
+--------------------------------------------------------------------------------
+-- | Crusing execution mode. Reads and handle message coming from the channel as
+--   those are arrived. That mode is used when the connection to the server is
+--   still live. We might have deconnection once in a while but at the end, if
+--   we managed to reconnect to it, we consider everything is fine.
+cruising :: Env -> IO ()
+cruising env@Env{..} = do
+    msg <- atomically $ readTQueue _queue
+    s   <- readTVarIO _state
+    case msg of
+        Stopped w e ->
+            case fromException e of
+                Just (_ :: ConnectionException) -> do
+                    atomically $ writeTVar _nextSubmit (raiseException e)
+                    closing env
+                    let err = Error $ UnexpectedException $ toException e
+                    _settingsLog _setts err
+                _ -> do
+                    w' <- spawn env (wkConstr w)
+                    atomically $ modifyTVar' _state $ wkUpdState w'
+                    cruising env
+        Arrived pkg -> do
+            let sm = submitPackage pkg $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        Shutdown -> do
+            atomically $ writeTVar _nextSubmit (raiseException ClosedConnection)
+            closing env
+        NewOperation k op -> do
+            let sm = newOperation k op $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        ConnectStream k n tos -> do
+            let sm = connectRegularStream k n tos $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        ConnectPersist k g n b -> do
+            let sm = connectPersistent k g n b $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        Unsubscribe r -> do
+            let sm = unsubscribe r $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        CreatePersist k g n psetts -> do
+            let sm = createPersistent k g n psetts $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        UpdatePersist k g n psetts -> do
+            let sm = updatePersistent k g n psetts $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        DeletePersist k g n -> do
+            let sm = deletePersistent k g n $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        AckPersist r run gid evts -> do
+            let sm = ackPersist r run gid evts $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+        NakPersist r run gid act res evts -> do
+            let sm = nakPersist r run gid act res evts $ _proc s
+            atomically $ do
+                new_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc new_proc
+            cruising env
+
+--------------------------------------------------------------------------------
+-- | That mode is triggered either because the user asks to shutdown the
+--   connection or because the connection to server has been dropped and we
+--   can't reconnect.
+closing :: Env -> IO ()
+closing env@Env{..} = do
+    let loop = do
+            nxt <- lookupTQueue _queue
+            case nxt of
+                Nothing -> return ()
+                Just msg ->
+                    case msg of
+                        Arrived pkg -> do
+                            s <- readTVar _state
+                            let sm = submitPackage pkg $ _proc s
+                            nxt_proc <- runTransition env sm
+                            modifyTVar' _state $ updateProc nxt_proc
+                        _ -> loop
+    connClose _conn
+    atomically $ do
+        loop
+        s <- readTVar _state
+        _ <- runTransition env $ abort $ _proc s
+        return ()
+
+    atomically $ do
+        end <- isEmptyTQueue _jobQueue
+        unless end retry
+
+    State _ retid rutid  wutid <- readTVarIO _state
+    traverse_ killThread retid
+    traverse_ killThread rutid
+    traverse_ killThread wutid
+
+    atomically $ putTMVar _disposed ()
+
+--------------------------------------------------------------------------------
+raiseException :: Exception e => e -> Msg -> IO ()
+raiseException e _ = throwIO e
 
 --------------------------------------------------------------------------------
 -- | Main Production execution model entry point.
 newExecutionModel :: Settings -> HostName -> Int -> IO Production
 newExecutionModel setts host port = do
     gen       <- newGenerator
-    mailbox   <- newTChanIO
-    pkg_queue <- newTChanIO
-    job_queue <- newTChanIO
+    queue     <- newTQueueIO
+    pkg_queue <- newTQueueIO
+    job_queue <- newTQueueIO
     conn      <- newConnection setts host port
     var       <- newTVarIO $ emptyState setts gen
-    let mkMgr = manager setts conn var mailbox pkg_queue job_queue
+    nxt_sub   <- newTVarIO (atomically . writeTQueue queue)
+    disposed  <- newEmptyTMVarIO
+    let env = Env setts queue pkg_queue job_queue var nxt_sub conn disposed
         handler res =
             case res of
-                Left _ -> do
-                    _ <- forkFinally mkMgr handler
-                    return ()
+                Left e -> do
+                    atomically $ writeTVar (_nextSubmit env) (raiseException e)
+                    closing env
+                    _settingsLog setts (Error $ UnexpectedException e)
                 _ -> return ()
-    _ <- forkFinally mkMgr handler
-    return $ Prod mailbox
+    _ <- forkFinally (bootstrap env) handler
+    return $ Prod nxt_sub $ do
+        closed <- connIsClosed conn
+        unless closed retry
+        readTMVar disposed
 
 --------------------------------------------------------------------------------
-lookupTChan :: TChan a -> STM (Maybe a)
-lookupTChan chan = do
-    end <- isEmptyTChan chan
-    if end then return Nothing else fmap Just $ readTChan chan
+lookupTQueue :: TQueue a -> STM (Maybe a)
+lookupTQueue queue = do
+    end <- isEmptyTQueue queue
+    if end then return Nothing else fmap Just $ readTQueue queue

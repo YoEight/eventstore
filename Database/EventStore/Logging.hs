@@ -12,6 +12,7 @@
 module Database.EventStore.Logging where
 
 --------------------------------------------------------------------------------
+import Control.Exception
 import Data.Word
 
 --------------------------------------------------------------------------------
@@ -32,6 +33,7 @@ data ErrorMessage
     | WrongPackageFraming
     | PackageParsingError String
       -- ^ Indicates parsing error message.
+    | UnexpectedException SomeException
     deriving Show
 
 --------------------------------------------------------------------------------
