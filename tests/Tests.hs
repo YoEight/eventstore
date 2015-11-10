@@ -1,5 +1,6 @@
-{-# LANGUAGE GADTs             #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Tests
@@ -15,6 +16,7 @@
 module Tests where
 
 --------------------------------------------------------------------------------
+import Control.Exception
 import Data.Maybe (catMaybes)
 
 --------------------------------------------------------------------------------
@@ -44,6 +46,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Update persistent sub" $ updatePersistentTest conn
     , testCase "Delete persistent sub" $ deletePersistentTest conn
     , testCase "Connect persistent sub" $ connectToPersistentTest conn
+    , testCase "Shutdown connection" $ shutdownTest conn
     ]
 
 --------------------------------------------------------------------------------
@@ -173,6 +176,12 @@ subscribeTest conn = do
 
     nxt_js <- loop (0 :: Int)
     assertEqual "Events should be equal" jss (catMaybes nxt_js)
+    unsubscribe sub
+    let action = do
+            _ <- nextEvent sub
+            return False
+    res <- catch action $ \(_ :: SubscriptionClosed) -> return True
+    assertBool "Should have raised an exception" res
 
 --------------------------------------------------------------------------------
 subscribeFromTest :: Connection -> IO ()
@@ -205,6 +214,12 @@ subscribeFromTest conn = do
                 _ -> fail "Can't deserialized event"
 
     loop alljss
+    unsubscribe sub
+    let action = do
+            _ <- nextEvent sub
+            return False
+    res <- catch action $ \(_ :: SubscriptionClosed) -> return True
+    assertBool "Should have raised an exception" res
 
 --------------------------------------------------------------------------------
 setStreamMetadataTest :: Connection -> IO ()
@@ -268,3 +283,23 @@ connectToPersistentTest conn = do
     case resolvedEventDataAsJson r of
         Just js_evt -> assertEqual "event should match" js js_evt
         _           -> fail "Deserialization error"
+    unsubscribe sub
+    let action = do
+            _ <- nextEvent sub
+            return False
+    res <- catch action $ \(_ :: SubscriptionClosed) -> return True
+    assertBool "Should have raised an exception" res
+
+--------------------------------------------------------------------------------
+shutdownTest :: Connection -> IO ()
+shutdownTest conn = do
+    let js     = "baz" .= True
+        evt    = createEvent "foo" Nothing $ withJson js
+        action = do
+            _ <- sendEvent conn "shutdown-test" anyStream evt
+            return False
+    shutdown conn
+    waitTillClosed conn
+    res <- catch action $ \(_ :: SomeException) -> return True
+
+    assertBool "Should have raised an exception" res

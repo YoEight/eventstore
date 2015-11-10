@@ -26,6 +26,7 @@ module Database.EventStore
     , defaultSettings
     , connect
     , shutdown
+    , waitTillClosed
       -- * Event
     , Event
     , EventData
@@ -103,6 +104,7 @@ module Database.EventStore
     , transactionRollback
     , transactionWrite
       -- * Subscription
+    , SubscriptionClosed(..)
     , Subscription
       -- * Volatile Subscription
     , S.Regular
@@ -233,6 +235,11 @@ connect :: Settings
 connect settings host port = do
     prod <- newExecutionModel settings host port
     return $ Connection prod settings
+
+--------------------------------------------------------------------------------
+-- | Waits the 'Connection' to be closed.
+waitTillClosed :: Connection -> IO ()
+waitTillClosed Connection{..} = prodWaitTillClosed _prod
 
 --------------------------------------------------------------------------------
 -- | Asynchronously closes the 'Connection'.
@@ -397,6 +404,8 @@ modifySubSM :: (S.Subscription a -> S.Subscription a)
 modifySubSM k (SubState sm r) = SubState (k sm) r
 
 --------------------------------------------------------------------------------
+-- | This exception is raised when the user tries to get the next event from a
+--   'Subscription' that is already closed.
 data SubscriptionClosed =
     SubscriptionClosed S.Running S.SubDropReason
     deriving (Show, Typeable)

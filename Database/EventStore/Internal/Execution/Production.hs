@@ -34,6 +34,7 @@ module Database.EventStore.Internal.Execution.Production
     , pushAckPersist
     , pushNakPersist
     , pushUnsubscribe
+    , prodWaitTillClosed
     ) where
 
 --------------------------------------------------------------------------------
@@ -90,10 +91,18 @@ wkUpdState (Writer tid) s = s { _writer = Just tid }
 
 --------------------------------------------------------------------------------
 -- | Hols the execution model state.
-newtype Production = Prod (TVar (Msg -> IO ()))
+data Production =
+    Prod
+    { _submit :: TVar (Msg -> IO ())
+      -- ^ The action to call when pushing new command.
+    , _waitClosed :: STM ()
+      -- ^ Action that attests the execution model has been closed successfully.
+      --   It doesn't mean the execution model hasn't been shutdown because of
+      --   some random exception.
+    }
 
 --------------------------------------------------------------------------------
--- | Main execution environment use among different transitions.
+-- | Main execution environment used among different transitions.
 data Env =
     Env
     { _setts :: Settings
@@ -116,6 +125,9 @@ data Env =
       -- ^ Indicates the action to call in order to push new commands.
     , _conn :: Connection
       -- ^ Connection to the server.
+    , _disposed :: TMVar ()
+      -- ^ Indicates when the production execution model has been shutdown and
+      --   disposed any ongoing operations.
     }
 
 --------------------------------------------------------------------------------
@@ -139,7 +151,7 @@ data Msg
 
 --------------------------------------------------------------------------------
 pushCmd :: Production -> Msg -> IO ()
-pushCmd (Prod _sender) msg = do
+pushCmd (Prod _sender _) msg = do
     push <- readTVarIO _sender
     push msg
 
@@ -226,6 +238,11 @@ pushNakPersist prod r run gid act res evts =
 -- | Unsubscribe from a subscription.
 pushUnsubscribe :: Production -> Running -> IO ()
 pushUnsubscribe prod r = pushCmd prod (Unsubscribe r)
+
+--------------------------------------------------------------------------------
+-- | Waits the execution model to close properly.
+prodWaitTillClosed :: Production -> IO ()
+prodWaitTillClosed (Prod _ disposed) = atomically disposed
 
 --------------------------------------------------------------------------------
 newtype Job = Job (IO ())
@@ -490,6 +507,7 @@ closing env@Env{..} = do
                             nxt_proc <- runTransition env sm
                             modifyTVar' _state $ updateProc nxt_proc
                         _ -> loop
+    connClose _conn
     atomically $ do
         loop
         s <- readTVar _state
@@ -498,12 +516,14 @@ closing env@Env{..} = do
 
     atomically $ do
         end <- isEmptyTQueue _jobQueue
-        when (not end) retry
+        unless end retry
 
     State _ retid rutid  wutid <- readTVarIO _state
     traverse_ killThread retid
     traverse_ killThread rutid
     traverse_ killThread wutid
+
+    atomically $ putTMVar _disposed ()
 
 --------------------------------------------------------------------------------
 raiseException :: Exception e => e -> Msg -> IO ()
@@ -520,7 +540,8 @@ newExecutionModel setts host port = do
     conn      <- newConnection setts host port
     var       <- newTVarIO $ emptyState setts gen
     nxt_sub   <- newTVarIO (atomically . writeTQueue queue)
-    let env = Env setts queue pkg_queue job_queue var nxt_sub conn
+    disposed  <- newEmptyTMVarIO
+    let env = Env setts queue pkg_queue job_queue var nxt_sub conn disposed
         handler res =
             case res of
                 Left e -> do
@@ -529,7 +550,10 @@ newExecutionModel setts host port = do
                     _settingsLog setts (Error $ UnexpectedException e)
                 _ -> return ()
     _ <- forkFinally (bootstrap env) handler
-    return $ Prod nxt_sub
+    return $ Prod nxt_sub $ do
+        closed <- connIsClosed conn
+        unless closed retry
+        readTMVar disposed
 
 --------------------------------------------------------------------------------
 lookupTQueue :: TQueue a -> STM (Maybe a)
