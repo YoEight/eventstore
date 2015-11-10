@@ -421,7 +421,10 @@ newDriver setts gen = Driver $ go (initState gen)
             msg <- maybeDecodeMessage packageData
             _   <- queryPersistentAction packageCorrelation _model
             let nxt_m  = confirmedAction packageCorrelation _model
-                nxt_st = st { _model = nxt_m }
+                nxt_rg = H.delete packageCorrelation _reg
+                nxt_st = st { _model = nxt_m
+                            , _reg   = nxt_rg
+                            }
                 evt    = ConfirmedAction packageCorrelation g n c
             case em $ fd msg of
                 Just e  -> return (k $ Left e, Driver $ go nxt_st)
