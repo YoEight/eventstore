@@ -146,8 +146,8 @@ data Msg
           Text Text PersistentSubscriptionSettings
     | DeletePersist (Either PersistActionException ConfirmedAction -> IO ())
           Text Text
-    | AckPersist (IO ()) Running Text [UUID]
-    | NakPersist (IO ()) Running Text NakAction (Maybe Text) [UUID]
+    | AckPersist Running [UUID]
+    | NakPersist Running NakAction (Maybe Text) [UUID]
 
 --------------------------------------------------------------------------------
 pushCmd :: Production -> Msg -> IO ()
@@ -218,21 +218,19 @@ pushDeletePersist prod k g n = pushCmd prod (DeletePersist k g n)
 
 --------------------------------------------------------------------------------
 -- | Acknowledges a set of events has been successfully handled.
-pushAckPersist :: Production -> IO () -> Running -> Text -> [UUID] -> IO ()
-pushAckPersist prod r run gid evts = pushCmd prod (AckPersist r run gid evts)
+pushAckPersist :: Production -> Running -> [UUID] -> IO ()
+pushAckPersist prod run evts = pushCmd prod (AckPersist run evts)
 
 --------------------------------------------------------------------------------
 -- | Acknowledges a set of events hasn't been handled successfully.
 pushNakPersist :: Production
-               -> IO ()
                -> Running
-               -> Text
                -> NakAction
                -> Maybe Text
                -> [UUID]
                -> IO ()
-pushNakPersist prod r run gid act res evts =
-    pushCmd prod (NakPersist r run gid act res evts)
+pushNakPersist prod run act res evts =
+    pushCmd prod (NakPersist run act res evts)
 
 --------------------------------------------------------------------------------
 -- | Unsubscribe from a subscription.
@@ -476,14 +474,14 @@ cruising env@Env{..} = do
                 new_proc <- runTransition env sm
                 modifyTVar' _state $ updateProc new_proc
             cruising env
-        AckPersist r run gid evts -> do
-            let sm = ackPersist r run gid evts $ _proc s
+        AckPersist run evts -> do
+            let sm = ackPersist (return ()) run evts $ _proc s
             atomically $ do
                 new_proc <- runTransition env sm
                 modifyTVar' _state $ updateProc new_proc
             cruising env
-        NakPersist r run gid act res evts -> do
-            let sm = nakPersist r run gid act res evts $ _proc s
+        NakPersist run act res evts -> do
+            let sm = nakPersist (return ()) run act res evts $ _proc s
             atomically $ do
                 new_proc <- runTransition env sm
                 modifyTVar' _state $ updateProc new_proc
