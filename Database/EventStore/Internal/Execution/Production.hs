@@ -414,11 +414,7 @@ cruising env@Env{..} = do
     case msg of
         Stopped w e ->
             case fromException e of
-                Just (_ :: ConnectionException) -> do
-                    atomically $ writeTVar _nextSubmit (raiseException e)
-                    closing env
-                    let err = Error $ UnexpectedException $ toException e
-                    _settingsLog _setts err
+                Just (_ :: ConnectionException) -> throwIO e
                 _ -> do
                     w' <- spawn env (wkConstr w)
                     atomically $ modifyTVar' _state $ wkUpdState w'
@@ -505,7 +501,10 @@ closing env@Env{..} = do
                             nxt_proc <- runTransition env sm
                             modifyTVar' _state $ updateProc nxt_proc
                         _ -> loop
-    connClose _conn
+
+    -- If the connection is already closed, it will throw an exception. We just
+    -- make sure it doesn't interfere with the cleaning process.
+    _ <- try $ connClose _conn :: (IO (Either ConnectionException ()))
     atomically $ do
         loop
         s <- readTVar _state

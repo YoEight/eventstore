@@ -138,12 +138,20 @@ getHandle Connection{..} = do
             Online u hdl -> do
                 putTMVar _var s
                 return $ Just (u, hdl)
-            Closed -> throwSTM ClosedConnection
+            Closed -> putTMVar _var s >> throwSTM ClosedConnection
     case r of
         Nothing -> do
-            st@(Online u hdl) <- newState _setts _host _port
-            atomically $ putTMVar _var st
-            return (u, hdl)
+            res <- newState _setts _host _port
+            case res of
+                Left e -> do
+                    let AtMost n = s_retry _setts
+                    _settingsLog _setts $ Error $ MaxAttemptConnectionReached n
+                    atomically $ putTMVar _var Closed
+                    throwIO e
+                Right st -> do
+                    let Online u hdl = st
+                    atomically $ putTMVar _var st
+                    return (u, hdl)
         Just t -> return t
 
 --------------------------------------------------------------------------------
@@ -177,26 +185,24 @@ execute conn i = do
             Recv siz -> B.hGet h siz
 
 --------------------------------------------------------------------------------
-newState :: Settings -> HostName -> Int -> IO State
+newState :: Settings -> HostName -> Int -> IO (Either ConnectionException State)
 newState sett host port =
     case s_retry sett of
         AtMost n ->
             let loop i = do
                     _settingsLog sett (Info $ Connecting i)
-                    catch (connect sett host port) $ \(_ :: SomeException) -> do
+                    let action = fmap Right $ connect sett host port
+                    catch action $ \(_ :: SomeException) -> do
                         threadDelay delay
                         if n <= i
-                            then do
-                                _settingsLog sett
-                                             $ Error
-                                             $ MaxAttemptConnectionReached i
-                                throwIO $ MaxAttempt host port n
+                            then return $ Left $  MaxAttempt host port n
                             else loop (i + 1) in
              loop 1
         KeepRetrying ->
             let endlessly i = do
                     _settingsLog sett (Info $ Connecting i)
-                    catch (connect sett host port) $ \(_ :: SomeException) ->
+                    let action = fmap Right $ connect sett host port
+                    catch action $ \(_ :: SomeException) ->
                         threadDelay delay >> endlessly (i + 1) in
              endlessly (1 :: Int)
   where
