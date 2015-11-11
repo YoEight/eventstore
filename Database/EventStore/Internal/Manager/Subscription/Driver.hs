@@ -189,11 +189,10 @@ deletePersist c g s (Driver k) =
 --   driver internal state.
 ackPersist :: r
            -> Running
-           -> Text   -- ^ Subscription id.
            -> [UUID] -- ^ Event ids.
            -> Driver r
            -> (Package, Driver r)
-ackPersist r i sid evts (Driver k) = k (Cmd $ PersistAck r i sid evts)
+ackPersist r i evts (Driver k) = k (Cmd $ PersistAck r i evts)
 
 --------------------------------------------------------------------------------
 -- | Given a persistent subscription, indicates a set of event haven't been
@@ -201,14 +200,13 @@ ackPersist r i sid evts (Driver k) = k (Cmd $ PersistAck r i sid evts)
 --   internal state.
 nakPersist :: r
            -> Running
-           -> Text       -- ^ Subscription id.
            -> NakAction
            -> Maybe Text -- ^ Reason.
            -> [UUID]     -- ^ Event ids.
            -> Driver r
            -> (Package, Driver r)
-nakPersist r i sid na mt evts (Driver k) =
-    k (Cmd $ PersistNak r i sid na mt evts)
+nakPersist r i na mt evts (Driver k) =
+    k (Cmd $ PersistNak r i na mt evts)
 
 --------------------------------------------------------------------------------
 -- | Unsubscribe from a subscription.
@@ -300,22 +298,20 @@ data Cmd r
       --   final value. It hols a group name, a stream name and a persistent
       --   action.
 
-    | PersistAck r Running Text [UUID]
+    | PersistAck r Running [UUID]
       -- ^ Acks a set of Event 'UUID' to notify those events have been correctly
-      --   handled. It holds a 'Running' subscription, a subscription id and a
-      --   set of `UUID` representing event id. When the ack would be confirmed
-      --   the driver will return the supplied final value.
+      --   handled. It holds a 'Running' subscription and a set of `UUID`
+      --   representing event id. When the ack would be confirmed the driver
+      --   will return the supplied final value.
     | PersistNak r
                  Running
-                 Text
                  NakAction
                  (Maybe Text)
                  [UUID]
-       -- ^ Naks a set of Event 'UUID' to notify those events haven't been
-       --   handled correctly. it holds a 'Running' subscription, a
-       --   subscription id, a 'NakAction', an optional reason and a set of
-       --   event ids. When the nak would be confirmed, the driver will return
-       --   the provided final value.
+      -- ^ Naks a set of Event 'UUID' to notify those events haven't been
+      --   handled correctly. it holds a 'Running' subscription, a 'NakAction',
+      --   an optional reason and a set of event ids. When the nak would be
+      --   confirmed, the driver will return the provided final value.
 
 --------------------------------------------------------------------------------
 -- | Driver internal state.
@@ -460,16 +456,16 @@ newDriver setts gen = Driver $ go (initState gen)
                                     , _gen   = nxt_g
                                     , _reg   = H.insert u cmd _reg } in
                 (pkg, Driver $ go nxt_st)
-            PersistAck _ run sid evts ->
-                let u      = runningUUID run
-                    pkg    = createAckPackage setts u sid evts
-                    nxt_st = st { _reg = H.insert u cmd _reg } in
-                (pkg, Driver $ go nxt_st)
-            PersistNak _ run sid na r evts ->
-                let u      = runningUUID run
-                    pkg    = createNakPackage setts u sid na r evts
-                    nxt_st = st { _reg = H.insert u cmd _reg } in
-                (pkg, Driver $ go nxt_st)
+            PersistAck _ run evts ->
+                let RunningPersist _ _ _ _ sid _ _ = run
+                    u   = runningUUID run
+                    pkg = createAckPackage setts u sid evts in
+                (pkg, Driver $ go st)
+            PersistNak _ run na r evts ->
+                let RunningPersist _ _ _ _ sid _ _ = run
+                    u   = runningUUID run
+                    pkg = createNakPackage setts u sid na r evts  in
+                (pkg, Driver $ go st)
     go st Abort = (H.elems $ _reg st) >>= _F
       where
         _F (ConnectReg k _ _)           = [k $ Dropped SubAborted]

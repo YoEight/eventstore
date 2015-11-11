@@ -93,10 +93,10 @@ data SubscriptionCmd r
                     Text
       -- ^ Deletes a persistent subscription.
 
-    | AckPersist r Sub.Running Text [UUID]
+    | AckPersist r Sub.Running [UUID]
       -- ^ Acknowledges a set of events has been successfully handled.
 
-    | NakPersist r Sub.Running Text Sub.NakAction (Maybe Text) [UUID]
+    | NakPersist r Sub.Running Sub.NakAction (Maybe Text) [UUID]
       -- ^ Acknowledges a set of events hasn't been handled successfully.
 
 --------------------------------------------------------------------------------
@@ -154,22 +154,21 @@ deletePersistent c g s (Processor k) =
 
 --------------------------------------------------------------------------------
 -- | Acknowledges a set of events has been successfully handled.
-ackPersist :: r -> Sub.Running -> Text -> [UUID] -> Processor r -> Transition r
-ackPersist r run gid evts (Processor k) =
-    k $ Cmd $ SubscriptionCmd $ AckPersist r run gid evts
+ackPersist :: r -> Sub.Running -> [UUID] -> Processor r -> Transition r
+ackPersist r run evts (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ AckPersist r run evts
 
 --------------------------------------------------------------------------------
 -- | Acknowledges a set of events hasn't been handled successfully.
 nakPersist :: r
            -> Sub.Running
-           -> Text
            -> Sub.NakAction
            -> Maybe Text
            -> [UUID]
            -> Processor r
            -> Transition r
-nakPersist r run gid act res evts (Processor k) =
-    k $ Cmd $ SubscriptionCmd $ NakPersist r run gid act res evts
+nakPersist r run act res evts (Processor k) =
+    k $ Cmd $ SubscriptionCmd $ NakPersist r run act res evts
 
 --------------------------------------------------------------------------------
 -- | Registers a new 'Operation'.
@@ -306,13 +305,13 @@ handle = go
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Transmit pkg $ Await nxt
-            AckPersist r run gid evts ->
-                let (pkg, nxt_drv) = Sub.ackPersist r run gid evts _subDriver
+            AckPersist r run evts ->
+                let (pkg, nxt_drv) = Sub.ackPersist r run evts _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in
                 Transmit pkg $ Await nxt
-            NakPersist r run gid act res evts ->
-                let (pkg, nxt_drv) = Sub.nakPersist r run gid act res evts
+            NakPersist r run act res evts ->
+                let (pkg, nxt_drv) = Sub.nakPersist r run act res evts
                                      _subDriver
                     nxt_st         = st { _subDriver = nxt_drv }
                     nxt            = Processor $ go nxt_st in

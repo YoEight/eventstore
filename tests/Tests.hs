@@ -274,15 +274,29 @@ deletePersistentTest conn = do
 connectToPersistentTest :: Connection -> IO ()
 connectToPersistentTest conn = do
     let def = defaultPersistentSubscriptionSettings
-        js  = [ "baz" .= True ]
-        evt = createEvent "foo" Nothing $ withJson js
+        js1 = "baz" .= True
+        js2 = "foo" .= True
+        jss  = [ js1
+               , js2
+               ]
+        evts = fmap (createEvent "foo" Nothing . withJson) jss
     _   <- createPersistentSubscription conn "group" "connect-sub" def >>= wait
-    sub <- connectToPersistentSubscription conn "group" "connect-sub" 10
-    _   <- sendEvent conn "connect-sub" anyStream evt >>= wait
+    _   <- sendEvents conn "connect-sub" anyStream evts >>= wait
+    sub <- connectToPersistentSubscription conn "group" "connect-sub" 1
     r   <- nextEvent sub
     case resolvedEventDataAsJson r of
-        Just js_evt -> assertEqual "event should match" js js_evt
+        Just js_evt -> assertEqual "event 1 should match" js1 js_evt
         _           -> fail "Deserialization error"
+
+    notifyEventsProcessed sub [resolvedEventOriginalId r]
+
+    r2 <- nextEvent sub
+    case resolvedEventDataAsJson r2 of
+        Just js_evt -> assertEqual "event 2 should match" js2 js_evt
+        _           -> fail "Deserialization error"
+
+    notifyEventsProcessed sub [resolvedEventOriginalId r2]
+
     unsubscribe sub
     let action = do
             _ <- nextEvent sub

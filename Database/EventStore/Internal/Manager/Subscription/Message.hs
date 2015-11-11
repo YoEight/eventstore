@@ -316,7 +316,7 @@ _connectToPersistentSubscription sub_id stream_id all_fly_msgs =
 data PersistentSubscriptionAckEvents =
     PersistentSubscriptionAckEvents
     { psaeId              :: Required 1 (Value Text)
-    , psaeProcessedEvtIds :: Required 2 (Value ByteString)
+    , psaeProcessedEvtIds :: Repeated 2 (Value ByteString)
     } deriving (Generic, Show)
 
 --------------------------------------------------------------------------------
@@ -325,7 +325,7 @@ instance Encode PersistentSubscriptionAckEvents
 --------------------------------------------------------------------------------
 -- | 'PersistentSubscriptionAckEvents' smart constructor.
 persistentSubscriptionAckEvents :: Text
-                                -> ByteString
+                                -> [ByteString]
                                 -> PersistentSubscriptionAckEvents
 persistentSubscriptionAckEvents sub_id evt_ids =
     PersistentSubscriptionAckEvents
@@ -348,7 +348,7 @@ data NakAction
 data PersistentSubscriptionNakEvents =
     PersistentSubscriptionNakEvents
     { psneId              :: Required 1 (Value Text)
-    , psneProcessedEvtIds :: Required 2 (Value ByteString)
+    , psneProcessedEvtIds :: Repeated 2 (Value ByteString)
     , psneMsg             :: Optional 3 (Value Text)
     , psneAction          :: Required 4 (Enumeration NakAction)
     } deriving (Generic, Show)
@@ -359,7 +359,7 @@ instance Encode PersistentSubscriptionNakEvents
 --------------------------------------------------------------------------------
 -- | 'PersistentSubscriptionNakEvents' smart constructor.
 persistentSubscriptionNakEvents :: Text
-                                -> ByteString
+                                -> [ByteString]
                                 -> Maybe Text
                                 -> NakAction
                                 -> PersistentSubscriptionNakEvents

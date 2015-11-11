@@ -382,7 +382,7 @@ _nextEventMaybe Subscription{..} = do
 notifyEventsProcessed :: Subscription S.Persistent -> [UUID] -> IO ()
 notifyEventsProcessed Subscription{..} evts = do
     run <- atomically $ readTMVar _subRun
-    pushAckPersist _subProd (return ()) run (S._perGroup _subInner) evts
+    pushAckPersist _subProd run evts
 
 --------------------------------------------------------------------------------
 -- | Acknowledges those event ids have failed to be processed successfully.
@@ -393,7 +393,7 @@ notifyEventsFailed :: Subscription S.Persistent
                    -> IO ()
 notifyEventsFailed Subscription{..} act res evts = do
     run <- atomically $ readTMVar _subRun
-    pushNakPersist _subProd (return ()) run (S._perGroup _subInner) act res evts
+    pushNakPersist _subProd run act res evts
 
 --------------------------------------------------------------------------------
 -- | Modifies 'SubState' internal state machine, letting any 'SubDropReason'

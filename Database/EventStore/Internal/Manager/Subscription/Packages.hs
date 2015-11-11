@@ -13,7 +13,6 @@
 module Database.EventStore.Internal.Manager.Subscription.Packages where
 
 --------------------------------------------------------------------------------
-import Data.Foldable
 import Data.Int
 
 --------------------------------------------------------------------------------
@@ -103,7 +102,7 @@ createAckPackage Settings{..} corr sid eids =
     , packageCred        = s_credentials
     }
   where
-    bytes = toStrict $ foldMap toByteString eids
+    bytes = fmap (toStrict . toByteString) eids
     msg   = persistentSubscriptionAckEvents sid bytes
 
 --------------------------------------------------------------------------------
@@ -123,7 +122,7 @@ createNakPackage Settings{..} corr sid act txt eids =
     , packageCred        = s_credentials
     }
   where
-    bytes = toStrict $ foldMap toByteString eids
+    bytes = fmap (toStrict . toByteString) eids
     msg   = persistentSubscriptionNakEvents sid bytes txt act
 
 --------------------------------------------------------------------------------
