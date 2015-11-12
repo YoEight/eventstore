@@ -149,26 +149,26 @@ expVersionInt32 (Exact i)   = i
 
 --------------------------------------------------------------------------------
 -- | This write should not conflict with anything and should always succeed.
-anyStream :: ExpectedVersion
-anyStream = Any
+anyVersion :: ExpectedVersion
+anyVersion = Any
 
 --------------------------------------------------------------------------------
 -- | The stream being written to should not yet exist. If it does exist
 --   treat that as a concurrency problem.
-noStream :: ExpectedVersion
-noStream = NoStream
+noStreamVersion :: ExpectedVersion
+noStreamVersion = NoStream
 
 --------------------------------------------------------------------------------
 -- | The stream should exist and should be empty. If it does not exist or
 --   is not empty, treat that as a concurrency problem.
-emptyStream :: ExpectedVersion
-emptyStream = EmptyStream
+emptyStreamVersion :: ExpectedVersion
+emptyStreamVersion = EmptyStream
 
 --------------------------------------------------------------------------------
 -- | States that the last event written to the stream should have a
 --   sequence number matching your expected value.
-exactStream :: Int32 -> ExpectedVersion
-exactStream i
+exactEventVersion :: Int32 -> ExpectedVersion
+exactEventVersion i
     | i < 0     = error $ "expected version must be >= 0, but is " ++ show i
     | otherwise = Exact i
 

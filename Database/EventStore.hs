@@ -169,10 +169,10 @@ module Database.EventStore
       -- * Misc
     , DropReason(..)
     , ExpectedVersion
-    , anyStream
-    , noStream
-    , emptyStream
-    , exactStream
+    , anyVersion
+    , noStreamVersion
+    , emptyStreamVersion
+    , exactEventVersion
       -- * Re-export
     , module Control.Concurrent.Async
     , (<>)

@@ -55,7 +55,7 @@ writeEventTest conn = do
     let js  = [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
 
-    as <- sendEvent conn "write-event-test" anyStream evt
+    as <- sendEvent conn "write-event-test" anyVersion evt
     _  <- wait as
     return ()
 
@@ -64,7 +64,7 @@ readEventTest :: Connection -> IO ()
 readEventTest conn = do
     let js  = [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
-    as <- sendEvent conn "read-event-test" anyStream evt
+    as <- sendEvent conn "read-event-test" anyVersion evt
     _  <- wait as
     bs <- readEvent conn "read-event-test" 0 False
     rs <- wait bs
@@ -84,8 +84,8 @@ deleteStreamTest :: Connection -> IO ()
 deleteStreamTest conn = do
     let js  = [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
-    _ <- sendEvent conn "delete-stream-test" anyStream evt >>= wait
-    _ <- deleteStream conn "delete-stream-test" anyStream Nothing
+    _ <- sendEvent conn "delete-stream-test" anyVersion evt >>= wait
+    _ <- deleteStream conn "delete-stream-test" anyVersion Nothing
     return ()
 
 --------------------------------------------------------------------------------
@@ -93,7 +93,7 @@ transactionTest :: Connection -> IO ()
 transactionTest conn = do
     let js  = [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
-    t  <- startTransaction conn "transaction-test" anyStream >>= wait
+    t  <- startTransaction conn "transaction-test" anyVersion >>= wait
     _  <- transactionWrite t [evt] >>= wait
     rs <- readEvent conn "transaction-test" 0 False >>= wait
     case rs of
@@ -121,7 +121,7 @@ readStreamEventForwardTest conn = do
               , [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-    _  <- sendEvents conn "read-forward-test" anyStream evts >>= wait
+    _  <- sendEvents conn "read-forward-test" anyVersion evts >>= wait
     rs <- readStreamEventsForward conn "read-forward-test" 0 10 False >>= wait
     case rs of
         ReadSuccess sl -> do
@@ -138,7 +138,7 @@ readStreamEventBackwardTest conn = do
               , [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-    _  <- sendEvents conn "read-backward-test" anyStream evts >>= wait
+    _  <- sendEvents conn "read-backward-test" anyVersion evts >>= wait
     rs <- readStreamEventsBackward conn "read-backward-test" 2 10 False >>= wait
     case rs of
         ReadSuccess sl -> do
@@ -168,7 +168,7 @@ subscribeTest conn = do
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     sub  <- subscribe conn "subscribe-test" False
-    _    <- sendEvents conn "subscribe-test" anyStream evts >>= wait
+    _    <- sendEvents conn "subscribe-test" anyVersion evts >>= wait
     let loop 3 = return []
         loop i = do
             e <- nextEvent sub
@@ -197,9 +197,9 @@ subscribeFromTest conn = do
         alljss = jss ++ jss2
         evts   = fmap (createEvent "foo" Nothing . withJson) jss
         evts2  = fmap (createEvent "foo" Nothing . withJson) jss2
-    _   <- sendEvents conn "subscribe-from-test" anyStream evts >>= wait
+    _   <- sendEvents conn "subscribe-from-test" anyVersion evts >>= wait
     sub <- subscribeFrom conn "subscribe-from-test" False Nothing (Just 1)
-    _   <- sendEvents conn "subscribe-from-test" anyStream evts2 >>= wait
+    _   <- sendEvents conn "subscribe-from-test" anyVersion evts2 >>= wait
 
     let loop [] = do
             m <- nextEventMaybe sub
@@ -225,14 +225,14 @@ subscribeFromTest conn = do
 setStreamMetadataTest :: Connection -> IO ()
 setStreamMetadataTest conn = do
     let metadata = buildStreamMetadata $ setCustomProperty "foo" (1 :: Int)
-    _ <- setStreamMetadata conn "set-metadata-test" anyStream metadata >>= wait
+    _ <- setStreamMetadata conn "set-metadata-test" anyVersion metadata >>= wait
     return ()
 
 --------------------------------------------------------------------------------
 getStreamMetadataTest :: Connection -> IO ()
 getStreamMetadataTest conn = do
     let metadata = buildStreamMetadata $ setCustomProperty "foo" (1 :: Int)
-    _ <- setStreamMetadata conn "get-metadata-test" anyStream metadata >>= wait
+    _ <- setStreamMetadata conn "get-metadata-test" anyVersion metadata >>= wait
     r <- getStreamMetadata conn "get-metadata-test" >>= wait
     case r of
         StreamMetadataResult _ _ m ->
@@ -281,7 +281,7 @@ connectToPersistentTest conn = do
                ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     _   <- createPersistentSubscription conn "group" "connect-sub" def >>= wait
-    _   <- sendEvents conn "connect-sub" anyStream evts >>= wait
+    _   <- sendEvents conn "connect-sub" anyVersion evts >>= wait
     sub <- connectToPersistentSubscription conn "group" "connect-sub" 1
     r   <- nextEvent sub
     case resolvedEventDataAsJson r of
@@ -310,7 +310,7 @@ shutdownTest conn = do
     let js     = "baz" .= True
         evt    = createEvent "foo" Nothing $ withJson js
         action = do
-            _ <- sendEvent conn "shutdown-test" anyStream evt
+            _ <- sendEvent conn "shutdown-test" anyVersion evt
             return False
     shutdown conn
     waitTillClosed conn
