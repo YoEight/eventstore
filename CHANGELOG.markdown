@@ -4,6 +4,8 @@
 * Implement integration tests.
 * Rename every `ExpectedVersion` smart constructors.
 * Improve internal and public documentation.
+* Improve failure reports when the connection dropped.
+* Implement more robust internal connection.
 
 0.8.0.0
 -------
