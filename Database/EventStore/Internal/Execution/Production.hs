@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE DeriveDataTypeable        #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
@@ -23,6 +24,7 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Execution.Production
     ( Production
+    , ServerConnectionError(..)
     , newExecutionModel
     , pushOperation
     , shutdownExecutionModel
@@ -44,8 +46,10 @@ import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
 import Control.Monad.Fix
+import Data.IORef
 import Data.Int
 import Data.Foldable
+import Data.Typeable
 import Text.Printf
 
 --------------------------------------------------------------------------------
@@ -78,10 +82,16 @@ data Worker
     deriving Show
 
 --------------------------------------------------------------------------------
-wkConstr :: Worker -> (ThreadId -> Worker)
-wkConstr (Reader _) = Reader
-wkConstr (Runner _) = Runner
-wkConstr (Writer _) = Writer
+-- | Raised when the server responded in an unexpected way.
+data ServerConnectionError
+    = WrongPackageFraming
+      -- ^ TCP package sent by the server had a wrong framing.
+    | PackageParsingError String
+      -- ^ Server sent a malformed TCP package.
+    deriving (Show, Typeable)
+
+--------------------------------------------------------------------------------
+instance Exception ServerConnectionError
 
 --------------------------------------------------------------------------------
 wkUpdState :: Worker -> State -> State
@@ -90,7 +100,7 @@ wkUpdState (Runner tid) s = s { _runner = Just tid }
 wkUpdState (Writer tid) s = s { _writer = Just tid }
 
 --------------------------------------------------------------------------------
--- | Hols the execution model state.
+-- | Holds the execution model state.
 data Production =
     Prod
     { _submit :: TVar (Msg -> IO ())
@@ -123,7 +133,7 @@ data Env =
       -- ^ Holds manager thread state.
     , _nextSubmit :: TVar (Msg -> IO ())
       -- ^ Indicates the action to call in order to push new commands.
-    , _conn :: Connection
+    , _connRef :: IORef Connection
       -- ^ Connection to the server.
     , _disposed :: TMVar ()
       -- ^ Indicates when the production execution model has been shutdown and
@@ -271,12 +281,12 @@ reader :: Settings -> TQueue Msg -> Connection -> IO ()
 reader sett queue c = forever $ do
     header_bs <- connRecv c 4
     case runGet getLengthPrefix header_bs of
-        Left _              -> _settingsLog sett (Error WrongPackageFraming)
+        Left _              -> throwIO WrongPackageFraming
         Right length_prefix -> connRecv c length_prefix >>= parsePackage
   where
     parsePackage bs =
         case runGet getPackage bs of
-            Left e    -> _settingsLog sett (Error $ PackageParsingError e)
+            Left e    -> throwIO $ PackageParsingError e
             Right pkg -> do
                 atomically $ writeTQueue queue (Arrived pkg)
                 let cmd  = packageCmd pkg
@@ -360,16 +370,20 @@ runner job_queue = forever $ do
 -- | Spawns a new thread worker.
 spawn :: Env -> (ThreadId -> Worker) -> IO Worker
 spawn Env{..} mk = do
-    tid <- mfix $ \tid ->
+    conn <- readIORef _connRef
+    tid  <- mfix $ \tid ->
         let worker = mk tid
             action =
                 case worker of
-                    Reader _ -> reader _setts _queue _conn
+                    Reader _ -> reader _setts _queue conn
                     Runner _ -> runner _jobQueue
-                    Writer _ -> writer _setts _pkgQueue _conn in
+                    Writer _ -> writer _setts _pkgQueue conn in
         forkFinally action $ \r ->
             case r of
-                Left e -> atomically $ writeTQueue _queue (Stopped worker e)
+                Left e ->
+                    case asyncExceptionFromException e of
+                        Just ThreadKilled -> return ()
+                        _ ->  atomically $ writeTQueue _queue (Stopped worker e)
                 _      -> return ()
     return $ mk tid
 
@@ -412,26 +426,14 @@ cruising env@Env{..} = do
     msg <- atomically $ readTQueue _queue
     s   <- readTVarIO _state
     case msg of
-        Stopped w e ->
-            case fromException e of
-                Just (_ :: ConnectionException) -> do
-                    atomically $ writeTVar _nextSubmit (raiseException e)
-                    closing env
-                    let err = Error $ UnexpectedException $ toException e
-                    _settingsLog _setts err
-                _ -> do
-                    w' <- spawn env (wkConstr w)
-                    atomically $ modifyTVar' _state $ wkUpdState w'
-                    cruising env
+        Stopped _ e -> throwIO e
         Arrived pkg -> do
             let sm = submitPackage pkg $ _proc s
             atomically $ do
                 new_proc <- runTransition env sm
                 modifyTVar' _state $ updateProc new_proc
             cruising env
-        Shutdown -> do
-            atomically $ writeTVar _nextSubmit (raiseException ClosedConnection)
-            closing env
+        Shutdown -> throwIO ClosedConnection
         NewOperation k op -> do
             let sm = newOperation k op $ _proc s
             atomically $ do
@@ -505,7 +507,11 @@ closing env@Env{..} = do
                             nxt_proc <- runTransition env sm
                             modifyTVar' _state $ updateProc nxt_proc
                         _ -> loop
-    connClose _conn
+
+    -- If the connection is already closed, it will throw an exception. We just
+    -- make sure it doesn't interfere with the cleaning process.
+    conn <- readIORef _connRef
+    _    <- try $ connClose conn :: (IO (Either ConnectionException ()))
     atomically $ do
         loop
         s <- readTVar _state
@@ -521,8 +527,6 @@ closing env@Env{..} = do
     traverse_ killThread rutid
     traverse_ killThread wutid
 
-    atomically $ putTMVar _disposed ()
-
 --------------------------------------------------------------------------------
 raiseException :: Exception e => e -> Msg -> IO ()
 raiseException e _ = throwIO e
@@ -536,17 +540,27 @@ newExecutionModel setts host port = do
     pkg_queue <- newTQueueIO
     job_queue <- newTQueueIO
     conn      <- newConnection setts host port
+    conn_ref  <- newIORef conn
     var       <- newTVarIO $ emptyState setts gen
     nxt_sub   <- newTVarIO (atomically . writeTQueue queue)
     disposed  <- newEmptyTMVarIO
-    let env = Env setts queue pkg_queue job_queue var nxt_sub conn disposed
-        handler res =
+    let env = Env setts queue pkg_queue job_queue var nxt_sub conn_ref disposed
+        handler res = do
+            closing env
             case res of
                 Left e -> do
-                    atomically $ writeTVar (_nextSubmit env) (raiseException e)
-                    closing env
                     _settingsLog setts (Error $ UnexpectedException e)
-                _ -> return ()
+                    case fromException e of
+                        Just (_ :: ConnectionException) -> do
+                            atomically $ writeTVar (_nextSubmit env)
+                                                   (raiseException e)
+                            atomically $ putTMVar disposed ()
+                        _ -> do new_conn <- newConnection setts host port
+                                writeIORef conn_ref new_conn
+                                _ <- forkFinally (bootstrap env) handler
+                                return ()
+
+                _ -> atomically $ putTMVar disposed ()
     _ <- forkFinally (bootstrap env) handler
     return $ Prod nxt_sub $ do
         closed <- connIsClosed conn

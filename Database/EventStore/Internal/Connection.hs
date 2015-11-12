@@ -19,7 +19,6 @@ module Database.EventStore.Internal.Connection
     , HostName
     , connUUID
     , connClose
-    , connFlush
     , connSend
     , connRecv
     , connIsClosed
@@ -31,7 +30,6 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import qualified Data.ByteString as B
-import           Data.Foldable
 import           Data.Typeable
 import           System.IO
 
@@ -48,7 +46,7 @@ import Database.EventStore.Logging
 -- | Type of connection issue that can arise during the communication with the
 --   server.
 data ConnectionException
-    = MaxAttempt HostName Int Int
+    = MaxAttemptConnectionReached HostName Int Int
       -- ^ The max reconnection attempt threshold has been reached. Holds a
       --   'HostName', the port used and the given threshold.
     | ClosedConnection
@@ -60,11 +58,10 @@ instance Exception ConnectionException
 
 --------------------------------------------------------------------------------
 data In a where
-    Id       :: In UUID
-    Close    :: In ()
-    Flush    :: In ()
-    Send     :: B.ByteString -> In ()
-    Recv     :: Int -> In B.ByteString
+    Id    :: In UUID
+    Close :: In ()
+    Send  :: B.ByteString -> In ()
+    Recv  :: Int -> In B.ByteString
 
 --------------------------------------------------------------------------------
 -- | Internal representation of a connection with the server.
@@ -103,11 +100,6 @@ connClose :: Connection -> IO ()
 connClose conn = execute conn Close
 
 --------------------------------------------------------------------------------
--- | Flushes the current buffer.
-connFlush :: Connection -> IO ()
-connFlush conn = execute conn Flush
-
---------------------------------------------------------------------------------
 -- | Writes 'ByteString' into the buffer.
 connSend :: Connection -> B.ByteString -> IO ()
 connSend conn b = execute conn (Send b)
@@ -127,76 +119,67 @@ connIsClosed Connection{..} = do
         _      -> return False
 
 --------------------------------------------------------------------------------
--- | Get a new 'Handle' and a 'UUID' from the 'Connection'. It handle automatic
---   connection when the 'Connection' State is 'Offline.'
-getHandle :: Connection -> IO (UUID, Handle)
-getHandle Connection{..} = do
-    r <- atomically $ do
-        s <- takeTMVar _var
-        case s of
-            Offline -> return Nothing
-            Online u hdl -> do
-                putTMVar _var s
-                return $ Just (u, hdl)
-            Closed -> throwSTM ClosedConnection
-    case r of
-        Nothing -> do
-            st@(Online u hdl) <- newState _setts _host _port
-            atomically $ putTMVar _var st
-            return (u, hdl)
-        Just t -> return t
-
---------------------------------------------------------------------------------
-closeHandle :: Connection -> IO ()
-closeHandle Connection{..} = do
-    r <- atomically $ do
-        s <- takeTMVar _var
-        case s of
-            Online _ hdl -> do
-                putTMVar _var Closed
-                return $ Just hdl
-            _ -> putTMVar _var Closed >> return Nothing
-    traverse_ hClose r
-
---------------------------------------------------------------------------------
 -- | Main connection logic. It will automatically reconnect to the server when
 --   a exception occured while the 'Handle' is accessed.
 execute :: forall a. Connection -> In a -> IO a
-execute conn i = do
-    let catcher e =
-            case fromException e of
-                Just (_ :: ConnectionException) -> throwIO e
-                _                               -> execute conn i
-    (u, h) <- getHandle conn
-    handle catcher $
-        case i of
-            Id       -> return u
-            Close    -> closeHandle conn
-            Flush    -> hFlush h
-            Send b   -> B.hPut h b
-            Recv siz -> B.hGet h siz
+execute Connection{..} i = do
+    res <- atomically $ do
+        s <- takeTMVar _var
+        case s of
+            Offline      -> return $ Right Nothing
+            Online u hdl -> return $ Right $ Just (u, hdl)
+            Closed       -> return $ Left ClosedConnection
+    case i of
+        Close ->
+            case res of
+                Left _ -> atomically $ putTMVar _var Closed
+                Right Nothing       -> atomically $ putTMVar _var Closed
+                Right (Just (_, h)) -> do
+                    hClose h
+                    atomically $ putTMVar _var Closed
+        other ->
+            case res of
+                Left e -> do
+                    atomically $ putTMVar _var Closed
+                    throwIO e
+                Right alt -> do
+                    sres <- case alt of
+                        Nothing     -> newState _setts _host _port
+                        Just (u, h) -> return $ Right $ Online u h
+                    case sres of
+                        Left e -> do
+                            atomically $ putTMVar _var Closed
+                            throwIO e
+                        Right s -> do
+                            atomically $ putTMVar _var s
+                            let Online u h = s
+                            case other of
+                                Id       -> return u
+                                Send b   -> B.hPut h b >> hFlush h
+                                Recv siz -> B.hGet h siz
+                                Close    -> error "impossible execute"
 
 --------------------------------------------------------------------------------
-newState :: Settings -> HostName -> Int -> IO State
+newState :: Settings -> HostName -> Int -> IO (Either ConnectionException State)
 newState sett host port =
     case s_retry sett of
         AtMost n ->
             let loop i = do
                     _settingsLog sett (Info $ Connecting i)
-                    catch (connect sett host port) $ \(_ :: SomeException) -> do
+                    let action = fmap Right $ connect sett host port
+                    catch action $ \(_ :: SomeException) -> do
                         threadDelay delay
                         if n <= i
-                            then do
-                                _settingsLog sett
-                                             $ Error
-                                             $ MaxAttemptConnectionReached i
-                                throwIO $ MaxAttempt host port n
+                            then return $
+                                   Left $
+                                   MaxAttemptConnectionReached host port n
                             else loop (i + 1) in
              loop 1
         KeepRetrying ->
             let endlessly i = do
                     _settingsLog sett (Info $ Connecting i)
-                    catch (connect sett host port) $ \(_ :: SomeException) ->
+                    let action = fmap Right $ connect sett host port
+                    catch action $ \(_ :: SomeException) ->
                         threadDelay delay >> endlessly (i + 1) in
              endlessly (1 :: Int)
   where
