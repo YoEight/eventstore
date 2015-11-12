@@ -94,6 +94,62 @@ data ServerConnectionError
 instance Exception ServerConnectionError
 
 --------------------------------------------------------------------------------
+-- | Used to determine if we hit the end of the queue.
+data Slot a = Slot !a | End
+
+--------------------------------------------------------------------------------
+-- | A 'TQueue' that can be cycled.
+newtype CycleQueue a = CycleQueue (TQueue (Slot a))
+
+--------------------------------------------------------------------------------
+-- | Creates an empty 'CycleQueue'.
+newCycleQueue :: IO (CycleQueue a)
+newCycleQueue = fmap CycleQueue newTQueueIO
+
+--------------------------------------------------------------------------------
+-- | Gets an element from the 'CycleQueue'.
+readCycleQueue :: CycleQueue a -> STM a
+readCycleQueue (CycleQueue q) = do
+    Slot a <- readTQueue q
+    return a
+
+--------------------------------------------------------------------------------
+-- | Writes an element to the 'CycleQueue'.
+writeCycleQueue :: CycleQueue a -> a -> STM ()
+writeCycleQueue (CycleQueue q) a = writeTQueue q (Slot a)
+
+--------------------------------------------------------------------------------
+-- | Empties a 'CycleQueue'.
+emptyCycleQueue :: CycleQueue a -> STM ()
+emptyCycleQueue (CycleQueue q) = writeTQueue q End >> go
+  where
+    go = do
+        s <- readTQueue q
+        case s of
+            End -> return ()
+            _   -> go
+
+--------------------------------------------------------------------------------
+-- | Updates a 'CycleQueue'.
+updateCycleQueue :: CycleQueue a -> (a -> STM (Maybe a)) -> STM ()
+updateCycleQueue (CycleQueue q) k = writeTQueue q End >> go
+  where
+    go = do
+        s <- readTQueue q
+        case s of
+            End    -> return ()
+            Slot a -> do
+                r <- k a
+                case r of
+                    Nothing -> go
+                    Just a' -> writeTQueue q (Slot a') >> go
+
+--------------------------------------------------------------------------------
+-- | Indicates if a 'CycleQueue' is empty.
+isEmptyCycleQueue :: CycleQueue a -> STM Bool
+isEmptyCycleQueue (CycleQueue q) = isEmptyTQueue q
+
+--------------------------------------------------------------------------------
 wkUpdState :: Worker -> State -> State
 wkUpdState (Reader tid) s = s { _reader = Just tid }
 wkUpdState (Runner tid) s = s { _runner = Just tid }
@@ -117,15 +173,15 @@ data Env =
     Env
     { _setts :: Settings
       -- ^ Global settings reference.
-    , _queue :: TQueue Msg
+    , _queue :: CycleQueue Msg
       -- ^ That queue ties the user, the reader thread and the manager thread.
       --   The user and the reader push new messages onto the queue while the
       --   manager dequeue and handles one message at the time.
-    , _pkgQueue :: TQueue Package
+    , _pkgQueue :: CycleQueue Package
       -- ^ That queue ties the writer thread with the manager thread. The writer
       --   dequeue packages from that queue and sends those to the server. While
       --   the manager pushes new packages on every new submitted operation.
-    , _jobQueue :: TQueue Job
+    , _jobQueue :: CycleQueue Job
       -- ^ That queue ties the runner thread with the manager thread. The runner
       --   dequeues IO action from it while the manager pushes new command
       --   finalizers as those arrived.
@@ -277,7 +333,7 @@ updateProc p s = s { _proc = p }
 --------------------------------------------------------------------------------
 -- | Reader thread. Keeps reading 'Package' from the connection.
 --------------------------------------------------------------------------------
-reader :: Settings -> TQueue Msg -> Connection -> IO ()
+reader :: Settings -> CycleQueue Msg -> Connection -> IO ()
 reader sett queue c = forever $ do
     header_bs <- connRecv c 4
     case runGet getLengthPrefix header_bs of
@@ -288,7 +344,7 @@ reader sett queue c = forever $ do
         case runGet getPackage bs of
             Left e    -> throwIO $ PackageParsingError e
             Right pkg -> do
-                atomically $ writeTQueue queue (Arrived pkg)
+                atomically $ writeCycleQueue queue (Arrived pkg)
                 let cmd  = packageCmd pkg
                     uuid = packageCorrelation pkg
                 _settingsLog sett $ Info $ PackageReceived cmd uuid
@@ -296,9 +352,9 @@ reader sett queue c = forever $ do
 --------------------------------------------------------------------------------
 -- | Writer thread, writes incoming 'Package's
 --------------------------------------------------------------------------------
-writer :: Settings -> TQueue Package -> Connection -> IO ()
+writer :: Settings -> CycleQueue Package -> Connection -> IO ()
 writer setts pkg_queue conn = forever $ do
-    pkg <- atomically $ readTQueue pkg_queue
+    pkg <- atomically $ readCycleQueue pkg_queue
     connSend conn $ runPut $ putPackage pkg
     let cmd  = packageCmd pkg
         uuid = packageCorrelation pkg
@@ -361,9 +417,9 @@ getUUID = do
 --------------------------------------------------------------------------------
 -- Runner thread. Keeps running job comming from the Manager thread.
 --------------------------------------------------------------------------------
-runner :: TQueue Job -> IO ()
+runner :: CycleQueue Job -> IO ()
 runner job_queue = forever $ do
-    Job j <- atomically $ readTQueue job_queue
+    Job j <- atomically $ readCycleQueue job_queue
     j
 
 --------------------------------------------------------------------------------
@@ -383,7 +439,8 @@ spawn Env{..} mk = do
                 Left e ->
                     case asyncExceptionFromException e of
                         Just ThreadKilled -> return ()
-                        _ ->  atomically $ writeTQueue _queue (Stopped worker e)
+                        _ ->  atomically $ writeCycleQueue _queue
+                                         $ Stopped worker e
                 _      -> return ()
     return $ mk tid
 
@@ -395,10 +452,10 @@ runTransition Env{..} = go
   where
     go (Produce j nxt) = do
         let job = Job j
-        writeTQueue _jobQueue job
+        writeCycleQueue _jobQueue job
         go nxt
     go (Transmit pkg nxt) = do
-        writeTQueue _pkgQueue pkg
+        writeCycleQueue _pkgQueue pkg
         go nxt
     go (Await new_proc) = return new_proc
 
@@ -423,7 +480,7 @@ bootstrap env@Env{..} = do
 --   we managed to reconnect to it, we consider everything is fine.
 cruising :: Env -> IO ()
 cruising env@Env{..} = do
-    msg <- atomically $ readTQueue _queue
+    msg <- atomically $ readCycleQueue _queue
     s   <- readTVarIO _state
     case msg of
         Stopped _ e -> throwIO e
@@ -495,37 +552,49 @@ cruising env@Env{..} = do
 --   can't reconnect.
 closing :: Env -> IO ()
 closing env@Env{..} = do
-    let loop = do
-            nxt <- lookupTQueue _queue
-            case nxt of
-                Nothing -> return ()
-                Just msg ->
-                    case msg of
-                        Arrived pkg -> do
-                            s <- readTVar _state
-                            let sm = submitPackage pkg $ _proc s
-                            nxt_proc <- runTransition env sm
-                            modifyTVar' _state $ updateProc nxt_proc
-                        _ -> loop
+    State _ retid rutid  wutid <- readTVarIO _state
+    -- We kill reader and writer threads to avoid in fly package in the cleaning
+    -- phase.
+    traverse_ killThread retid
+    traverse_ killThread wutid
+
+    -- Discards every 'Package' that was about to be sent.
+    atomically $ emptyCycleQueue _pkgQueue
+
+    -- Takes care of 'Package's that have already arrived. Just in case those
+    -- are completing or moving forward ongoing operations. Every ongoing
+    -- request is kept for later reconnection. Some transient operations like
+    -- Ack, Nak or Unsubscribe are just discard.
+    atomically $ updateCycleQueue _queue $ \nxt ->
+        case nxt of
+            Arrived pkg -> do
+                s <- readTVar _state
+                let sm = submitPackage pkg $ _proc s
+                nxt_proc <- runTransition env sm
+                modifyTVar' _state $ updateProc nxt_proc
+                return Nothing
+            Shutdown -> return Nothing
+            AckPersist _ _ -> return Nothing
+            NakPersist _ _ _ _ -> return Nothing
+            Unsubscribe _ -> return Nothing
+            Stopped _ _ -> return Nothing
+            _ -> return $ Just nxt
 
     -- If the connection is already closed, it will throw an exception. We just
     -- make sure it doesn't interfere with the cleaning process.
     conn <- readIORef _connRef
     _    <- try $ connClose conn :: (IO (Either ConnectionException ()))
     atomically $ do
-        loop
         s <- readTVar _state
         _ <- runTransition env $ abort $ _proc s
         return ()
 
+    -- Waits the runner thread to deal with its jobs list.
     atomically $ do
-        end <- isEmptyTQueue _jobQueue
+        end <- isEmptyCycleQueue _jobQueue
         unless end retry
 
-    State _ retid rutid  wutid <- readTVarIO _state
-    traverse_ killThread retid
     traverse_ killThread rutid
-    traverse_ killThread wutid
 
 --------------------------------------------------------------------------------
 raiseException :: Exception e => e -> Msg -> IO ()
@@ -536,13 +605,13 @@ raiseException e _ = throwIO e
 newExecutionModel :: Settings -> HostName -> Int -> IO Production
 newExecutionModel setts host port = do
     gen       <- newGenerator
-    queue     <- newTQueueIO
-    pkg_queue <- newTQueueIO
-    job_queue <- newTQueueIO
+    queue     <- newCycleQueue
+    pkg_queue <- newCycleQueue
+    job_queue <- newCycleQueue
     conn      <- newConnection setts host port
     conn_ref  <- newIORef conn
     var       <- newTVarIO $ emptyState setts gen
-    nxt_sub   <- newTVarIO (atomically . writeTQueue queue)
+    nxt_sub   <- newTVarIO (atomically . writeCycleQueue queue)
     disposed  <- newEmptyTMVarIO
     let env = Env setts queue pkg_queue job_queue var nxt_sub conn_ref disposed
         handler res = do
@@ -551,10 +620,9 @@ newExecutionModel setts host port = do
                 Left e -> do
                     _settingsLog setts (Error $ UnexpectedException e)
                     case fromException e of
-                        Just (_ :: ConnectionException) -> do
-                            atomically $ writeTVar (_nextSubmit env)
-                                                   (raiseException e)
-                            atomically $ putTMVar disposed ()
+                        Just (_ :: ConnectionException) -> atomically $ do
+                            writeTVar nxt_sub (raiseException e)
+                            putTMVar disposed ()
                         _ -> do new_conn <- newConnection setts host port
                                 writeIORef conn_ref new_conn
                                 _ <- forkFinally (bootstrap env) handler
@@ -566,9 +634,3 @@ newExecutionModel setts host port = do
         closed <- connIsClosed conn
         unless closed retry
         readTMVar disposed
-
---------------------------------------------------------------------------------
-lookupTQueue :: TQueue a -> STM (Maybe a)
-lookupTQueue queue = do
-    end <- isEmptyTQueue queue
-    if end then return Nothing else fmap Just $ readTQueue queue
