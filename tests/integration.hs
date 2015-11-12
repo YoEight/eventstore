@@ -30,7 +30,7 @@ main = do
     let setts = defaultSettings
                 { s_credentials = Just $ credentials "admin" "changeit"
                 , s_reconnect_delay_secs = 1
---                 , s_logger = Just logger
+                -- , s_logger = Just logger
                 }
     conn <- connect setts "127.0.0.1" 1113
     let tree = tests conn

@@ -17,6 +17,7 @@ module Database.EventStore
     ( -- * Connection
       Connection
     , ConnectionException(..)
+    , ServerConnectionError(..)
     , Credentials
     , Settings(..)
     , Retry

@@ -27,14 +27,7 @@ data Log
 
 --------------------------------------------------------------------------------
 -- | Classifies error-like log messages.
-data ErrorMessage
-    = MaxAttemptConnectionReached Int
-      -- ^ Indicates max attempt value.
-    | WrongPackageFraming
-    | PackageParsingError String
-      -- ^ Indicates parsing error message.
-    | UnexpectedException SomeException
-    deriving Show
+data ErrorMessage = UnexpectedException SomeException deriving Show
 
 --------------------------------------------------------------------------------
 -- | Classifies info-like log messages.
