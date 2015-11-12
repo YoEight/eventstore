@@ -1,3 +1,10 @@
+0.9.0.0
+-------
+* Rewrite entirely the internals.
+* Implement integration tests.
+* Rename every `ExpectedVersion` smart constructors.
+* Improve internal and public documentation.
+
 0.8.0.0
 -------
 * Implement competing consumers.
