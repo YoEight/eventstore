@@ -99,6 +99,7 @@ module Database.EventStore
     , timeSpanTotalMillis
       -- * Transaction
     , Transaction
+    , TransactionId
     , startTransaction
     , transactionId
     , transactionCommit
@@ -106,7 +107,10 @@ module Database.EventStore
     , transactionWrite
       -- * Subscription
     , SubscriptionClosed(..)
+    , SubscriptionId
     , Subscription
+    , S.Running(..)
+    , S.SubDropReason(..)
       -- * Volatile Subscription
     , S.Regular
     , subscribe
@@ -131,6 +135,7 @@ module Database.EventStore
     , PersistentSubscriptionSettings(..)
     , SystemConsumerStrategy(..)
     , NakAction(..)
+    , S.PersistActionException(..)
     , notifyEventsProcessed
     , notifyEventsFailed
     , defaultPersistentSubscriptionSettings
@@ -139,7 +144,7 @@ module Database.EventStore
     , deletePersistentSubscription
     , connectToPersistentSubscription
      -- * Results
-    , Slice
+    , Slice(..)
     , AllSlice
     , Op.DeleteResult(..)
     , WriteResult(..)
@@ -153,11 +158,6 @@ module Database.EventStore
     , ResolvedEvent(..)
     , OperationError(..)
     , StreamName(..)
-    , sliceEvents
-    , sliceDirection
-    , sliceEOS
-    , sliceFrom
-    , sliceNext
     , isEventResolvedLink
     , resolvedEventOriginal
     , resolvedEventDataAsJson
@@ -451,7 +451,7 @@ data Transaction =
     }
 
 --------------------------------------------------------------------------------
--- | The id of the transaction. This can be used to recover a transaction later
+-- | The id of a 'Transaction'.
 newtype TransactionId =
     TransactionId { _unTransId :: Int64 }
     deriving (Eq, Ord, Show)

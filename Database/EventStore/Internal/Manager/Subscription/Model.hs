@@ -64,36 +64,55 @@ data PendingAction =
 type Register a = H.HashMap UUID a
 
 --------------------------------------------------------------------------------
--- | Represents a 'Subscription' which is about to be
---   confirmed.
+-- | Represents a 'Subscription' which is about to be confirmed.
 data Pending
     = PendingReg Text Bool
-      --         |    |--- Stream name.
-      --         |-------- Resolve Link TOS.
+      -- ^ Related to regular subscription. In order of appearance:
+      --
+      --   * Stream name.
+      --
+      --   * Resolve Link TOS.
     | PendingPersist Text Text Int32
-      --             |    |    |----- Buffer size.
-      --             |    |---------- Stream name.
-      --             |--------------- Group name.
+      -- ^ Related to persistent subscription. In order of appearance:
+      --
+      --   * Group name.
+      --
+      --   * Stream name.
+      --
+      --   * Buffer size.
+      deriving Show
 
 --------------------------------------------------------------------------------
--- | Represents a running 'Subscription'. Gathers useful information.
+-- | Represents a running subscription. Gathers useful information.
 data Running
     = RunningReg UUID Text Bool Int64 (Maybe Int32)
-      --         |    |    |    |     |------------- Last event number.
-      --         |    |    |    |------------------- Last commit position.
-      --         |    |    |------------------------ Resolve Link TOS.
-      --         |    |----------------------------- Stream name.
-      --         |---------------------------------- Sub. id.
+      -- ^ Related regular subscription. In order of appearance:
+      --
+      --   * Subscription id.
+      --
+      --   * Stream name.
+      --
+      --   * Resolve Link TOS.
+      --
+      --   * Last commit position.
+      --
+      --   * Last event number.
     | RunningPersist UUID Text Text Int32 Text Int64 (Maybe Int32)
-      --             |    |    |    |     |    |     |------------- Last event
-      --             |    |    |    |     |    |                    number.
-      --             |    |    |    |     |    |------------------- Last commit
-      --             |    |    |    |     |                         position
-      --             |    |    |    |     |------------------------ Sub. id.
-      --             |    |    |    |------------------------------ buffer size.
-      --             |    |    |----------------------------------- Stream name.
-      --             |    |---------------------------------------- Group name.
-      --             |--------------------------------------------- Sub. id.
+      -- ^ Related to persistent subscription. In order of appearance:
+      --
+      --   * Subscription id.
+      --
+      --   * Group name.
+      --
+      --   * Stream name.
+      --
+      --   * Buffer size.
+      --
+      --   * Persistence subscription id.
+      --
+      --   * Last commit position.
+      --
+      --   * Last event number.
       deriving Show
 
 --------------------------------------------------------------------------------
