@@ -136,6 +136,10 @@ module Database.EventStore
     , SystemConsumerStrategy(..)
     , NakAction(..)
     , S.PersistActionException(..)
+    , acknowledge
+    , acknowledgeEvents
+    , failed
+    , eventsFailed
     , notifyEventsProcessed
     , notifyEventsFailed
     , defaultPersistentSubscriptionSettings
@@ -384,6 +388,37 @@ notifyEventsProcessed :: Subscription S.Persistent -> [UUID] -> IO ()
 notifyEventsProcessed Subscription{..} evts = do
     run <- atomically $ readTMVar _subRun
     pushAckPersist _subProd run evts
+
+--------------------------------------------------------------------------------
+-- | Acknowledges that 'ResolvedEvent' has been successfully processed.
+acknowledge :: Subscription S.Persistent -> ResolvedEvent -> IO ()
+acknowledge sub e = notifyEventsProcessed sub [resolvedEventOriginalId e]
+
+--------------------------------------------------------------------------------
+-- | Acknowledges those 'ResolvedEvent's have been successfully processed.
+acknowledgeEvents :: Subscription S.Persistent -> [ResolvedEvent] -> IO ()
+acknowledgeEvents sub = notifyEventsProcessed sub . fmap resolvedEventOriginalId
+
+--------------------------------------------------------------------------------
+-- | Mark a message that has failed processing. The server will take action
+--   based upon the action parameter.
+failed :: Subscription S.Persistent
+       -> ResolvedEvent
+       -> NakAction
+       -> Maybe Text
+       -> IO ()
+failed sub e a r = notifyEventsFailed sub a r [resolvedEventOriginalId e]
+
+--------------------------------------------------------------------------------
+-- | Mark messages that have failed processing. The server will take action
+--   based upon the action parameter.
+eventsFailed :: Subscription S.Persistent
+             -> [ResolvedEvent]
+             -> NakAction
+             -> Maybe Text
+             -> IO ()
+eventsFailed sub evts a r =
+    notifyEventsFailed sub a r $ fmap resolvedEventOriginalId evts
 
 --------------------------------------------------------------------------------
 -- | Acknowledges those event ids have failed to be processed successfully.
