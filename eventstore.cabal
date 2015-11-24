@@ -10,7 +10,7 @@ name:                eventstore
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.9.0.0
+version:             0.9.1.0
 
 tested-with: GHC >= 7.8.3 && < 7.11
 
@@ -46,6 +46,9 @@ build-type:          Simple
 -- README.
 extra-source-files:  README.md
                      CHANGELOG.markdown
+                     .gitignore
+                     .travis.yml
+                     eventstore-test-setup.sh
 
 -- Constraint on the version of Cabal needed to build this package.
 cabal-version:       >=1.10
