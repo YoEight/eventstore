@@ -1,3 +1,8 @@
+0.9.1.0
+-------
+* Introduce convinient persistent subscription functions.
+* Add multi GHC version testing.
+
 0.9.0.0
 -------
 * Rewrite entirely the internals.
