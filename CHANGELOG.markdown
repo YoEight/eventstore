@@ -1,3 +1,7 @@
+0.9.1.1
+-------
+* Fix stackage integration.
+
 0.9.1.0
 -------
 * Introduce convinient persistent subscription functions.

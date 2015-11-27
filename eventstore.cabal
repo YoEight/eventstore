@@ -10,7 +10,7 @@ name:                eventstore
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.9.1.0
+version:             0.9.1.1
 
 tested-with: GHC >= 7.8.3 && < 7.11
 
@@ -128,6 +128,8 @@ test-suite integration-tests
     default-language: Haskell2010
     hs-source-dirs: tests
     main-is: integration.hs
+
+    other-modules: Tests
 
     ghc-options: -Wall
 
