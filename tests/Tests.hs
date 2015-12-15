@@ -52,7 +52,7 @@ tests conn = testGroup "EventStore actions tests"
 --------------------------------------------------------------------------------
 writeEventTest :: Connection -> IO ()
 writeEventTest conn = do
-    let js  = [ "baz" .= True ]
+    let js  = object [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
 
     as <- sendEvent conn "write-event-test" anyVersion evt
@@ -62,7 +62,7 @@ writeEventTest conn = do
 --------------------------------------------------------------------------------
 readEventTest :: Connection -> IO ()
 readEventTest conn = do
-    let js  = [ "baz" .= True ]
+    let js  = object [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
     as <- sendEvent conn "read-event-test" anyVersion evt
     _  <- wait as
@@ -82,7 +82,7 @@ readEventTest conn = do
 --------------------------------------------------------------------------------
 deleteStreamTest :: Connection -> IO ()
 deleteStreamTest conn = do
-    let js  = [ "baz" .= True ]
+    let js  = object [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
     _ <- sendEvent conn "delete-stream-test" anyVersion evt >>= wait
     _ <- deleteStream conn "delete-stream-test" anyVersion Nothing
@@ -91,7 +91,7 @@ deleteStreamTest conn = do
 --------------------------------------------------------------------------------
 transactionTest :: Connection -> IO ()
 transactionTest conn = do
-    let js  = [ "baz" .= True ]
+    let js  = object [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
     t  <- startTransaction conn "transaction-test" anyVersion >>= wait
     _  <- transactionWrite t [evt] >>= wait
@@ -116,9 +116,9 @@ transactionTest conn = do
 --------------------------------------------------------------------------------
 readStreamEventForwardTest :: Connection -> IO ()
 readStreamEventForwardTest conn = do
-    let jss = [ [ "baz" .= True]
-              , [ "foo" .= False]
-              , [ "bar" .= True]
+    let jss = [ object [ "baz" .= True]
+              , object [ "foo" .= False]
+              , object [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     _  <- sendEvents conn "read-forward-test" anyVersion evts >>= wait
@@ -133,9 +133,9 @@ readStreamEventForwardTest conn = do
 --------------------------------------------------------------------------------
 readStreamEventBackwardTest :: Connection -> IO ()
 readStreamEventBackwardTest conn = do
-    let jss = [ [ "baz" .= True]
-              , [ "foo" .= False]
-              , [ "bar" .= True]
+    let jss = [ object [ "baz" .= True]
+              , object [ "foo" .= False]
+              , object [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     _  <- sendEvents conn "read-backward-test" anyVersion evts >>= wait
@@ -162,9 +162,9 @@ readAllEventsBackwardTest conn = do
 --------------------------------------------------------------------------------
 subscribeTest :: Connection -> IO ()
 subscribeTest conn = do
-    let jss = [ [ "baz" .= True]
-              , [ "foo" .= False]
-              , [ "bar" .= True]
+    let jss = [ object [ "baz" .= True]
+              , object [ "foo" .= False]
+              , object [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     sub  <- subscribe conn "subscribe-test" False
@@ -186,13 +186,13 @@ subscribeTest conn = do
 --------------------------------------------------------------------------------
 subscribeFromTest :: Connection -> IO ()
 subscribeFromTest conn = do
-    let jss = [ [ "1" .= (1 :: Int)]
-              , [ "2" .= (2 :: Int)]
-              , [ "3" .= (3 :: Int)]
+    let jss = [ object [ "1" .= (1 :: Int)]
+              , object [ "2" .= (2 :: Int)]
+              , object [ "3" .= (3 :: Int)]
               ]
-        jss2 = [ [ "4" .= (4 :: Int)]
-               , [ "5" .= (5 :: Int)]
-               , [ "6" .= (6 :: Int)]
+        jss2 = [ object [ "4" .= (4 :: Int)]
+               , object [ "5" .= (5 :: Int)]
+               , object [ "6" .= (6 :: Int)]
                ]
         alljss = jss ++ jss2
         evts   = fmap (createEvent "foo" Nothing . withJson) jss
@@ -274,8 +274,8 @@ deletePersistentTest conn = do
 connectToPersistentTest :: Connection -> IO ()
 connectToPersistentTest conn = do
     let def = defaultPersistentSubscriptionSettings
-        js1 = "baz" .= True
-        js2 = "foo" .= True
+        js1 = object ["baz" .= True]
+        js2 = object ["foo" .= True]
         jss  = [ js1
                , js2
                ]
@@ -307,7 +307,7 @@ connectToPersistentTest conn = do
 --------------------------------------------------------------------------------
 shutdownTest :: Connection -> IO ()
 shutdownTest conn = do
-    let js     = "baz" .= True
+    let js     = object ["baz" .= True]
         evt    = createEvent "foo" Nothing $ withJson js
         action = do
             _ <- sendEvent conn "shutdown-test" anyVersion evt

@@ -1,3 +1,7 @@
+0.9.1.2
+-------
+* Increase aeson upper bound to <0.11
+
 0.9.1.1
 -------
 * Fix stackage integration.
