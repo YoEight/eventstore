@@ -1,3 +1,7 @@
+0.9.1.3
+-------
+* Increase cereal upper bound to <0.6
+
 0.9.1.2
 -------
 * Increase aeson upper bound to <0.11
