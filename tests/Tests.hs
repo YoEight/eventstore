@@ -46,6 +46,7 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Update persistent sub" $ updatePersistentTest conn
     , testCase "Delete persistent sub" $ deletePersistentTest conn
     , testCase "Connect persistent sub" $ connectToPersistentTest conn
+    , testCase "MaxAge metadata test" $ maxAgeTest conn
     , testCase "Shutdown connection" $ shutdownTest conn
     ]
 
@@ -303,6 +304,22 @@ connectToPersistentTest conn = do
             return False
     res <- catch action $ \(_ :: SubscriptionClosed) -> return True
     assertBool "Should have raised an exception" res
+
+--------------------------------------------------------------------------------
+maxAgeTest :: Connection -> IO ()
+maxAgeTest conn = do
+    let timespan = timeSpanFromDays 1
+        metadata = buildStreamMetadata $ setMaxAge timespan
+        evt = createEvent "foo" Nothing
+              $ withJson (object ["type" .= (3 :: Int)])
+    _ <- sendEvent conn "test-max-age" anyVersion evt >>= wait
+    _ <- setStreamMetadata conn "test-max-age" anyVersion metadata >>= wait
+    r <- getStreamMetadata conn "test-max-age" >>= wait
+    case r of
+        StreamMetadataResult _ _ m ->
+            assertEqual "Should have equal timespan" (Just timespan)
+            (streamMetadataMaxAge m)
+        _ -> fail "Stream test-max-age doesn't exist"
 
 --------------------------------------------------------------------------------
 shutdownTest :: Connection -> IO ()

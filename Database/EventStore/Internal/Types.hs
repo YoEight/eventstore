@@ -1,8 +1,9 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE DeriveDataTypeable  #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Types
@@ -87,38 +88,53 @@ createEvent = Event
 -- | Holds event data.
 data EventData
     = Json A.Value (Maybe A.Value)
+    | Binary ByteString (Maybe ByteString)
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- | Maps 'Event' inner data type to an 'Int32' understandable by the server.
 eventDataType :: EventData -> Int32
 eventDataType (Json _ _) = 1
+eventDataType _          = 0
 
 --------------------------------------------------------------------------------
--- | Maps 'Event' inner metadata type to an 'Int32' understandable by the server.
+-- | Maps 'Event' inner metadata type to an 'Int32' understandable by the
+--   server.
 eventMetadataType :: EventData -> Int32
 eventMetadataType _ = 0
 
 --------------------------------------------------------------------------------
--- | Creates a event using JSON format
+-- | Creates an event using JSON format
 withJson :: ToJSON a => a -> EventData
 withJson value = Json (toJSON value) Nothing
 
 --------------------------------------------------------------------------------
--- | Create a event with metadata using JSON format
+-- | Creates an event using a binary format.
+withBinary :: ByteString -> EventData
+withBinary bs = Binary bs Nothing
+
+--------------------------------------------------------------------------------
+-- | Creates an event with metadata using JSON format.
 withJsonAndMetadata :: (ToJSON a, ToJSON b) => a -> b -> EventData
 withJsonAndMetadata value metadata =
     Json (toJSON value) (Just $ toJSON metadata)
 
 --------------------------------------------------------------------------------
+-- | Creates an event with metadata using binary format.
+withBinaryAndMetadata :: ByteString -> ByteString -> EventData
+withBinaryAndMetadata value metadata = Binary value (Just metadata)
+
+--------------------------------------------------------------------------------
 -- | Serializes 'EventData''s data to a raw 'ByteString'.
 eventDataBytes :: EventData -> ByteString
-eventDataBytes (Json value _) = toStrict $ A.encode value
+eventDataBytes (Json value _)   = toStrict $ A.encode value
+eventDataBytes (Binary value _) = value
 
 --------------------------------------------------------------------------------
 -- | Serializes 'EventData' metadata to a raw 'ByteString'.
 eventMetadataBytes :: EventData -> Maybe ByteString
-eventMetadataBytes (Json _ meta_m) = fmap (toStrict . A.encode) meta_m
+eventMetadataBytes (Json _ meta_m)   = fmap (toStrict . A.encode) meta_m
+eventMetadataBytes (Binary _ meta_m) = meta_m
 
 --------------------------------------------------------------------------------
 -- Expected Version
@@ -648,14 +664,17 @@ streamACLJSON StreamACL{..} =
 -- | Serialized a 'StreamMetadata' to 'Value' for serialization purpose.
 streamMetadataJSON :: StreamMetadata -> A.Value
 streamMetadataJSON StreamMetadata{..} =
-    A.object $ [ p_maxAge         .= streamMetadataMaxAge
+    A.object $ [ p_maxAge         .= fmap toInt64 streamMetadataMaxAge
                , p_maxCount       .= streamMetadataMaxCount
                , p_truncateBefore .= streamMetadataTruncateBefore
-               , p_cacheControl   .= streamMetadataCacheControl
+               , p_cacheControl   .= fmap toInt64 streamMetadataCacheControl
                , p_acl            .= streamACLJSON streamMetadataACL
                ] ++ custPairs
   where
     custPairs = customMetaToPairs streamMetadataCustom
+
+    toInt64 :: TimeSpan -> Int64
+    toInt64 = truncate . timeSpanTotalSeconds
 
 --------------------------------------------------------------------------------
 -- Stream ACL Properties
@@ -755,11 +774,16 @@ parseStreamMetadata :: A.Value -> Parser StreamMetadata
 parseStreamMetadata (A.Object m) =
     StreamMetadata                    <$>
     m A..: p_maxCount                 <*>
-    m A..: p_maxAge                   <*>
+    parseTimeSpan p_maxAge            <*>
     m A..: p_truncateBefore           <*>
-    m A..: p_cacheControl             <*>
+    parseTimeSpan p_cacheControl      <*>
     (m A..: p_acl >>= parseStreamACL) <*>
     pure (keepUserProperties m)
+  where
+    parseTimeSpan ::  Text -> Parser (Maybe TimeSpan)
+    parseTimeSpan prop = do
+        (secs :: Maybe Int64) <- m A..: prop
+        return $ fmap (timeSpanFromSeconds . realToFrac) secs
 parseStreamMetadata _ = mzero
 
 --------------------------------------------------------------------------------
