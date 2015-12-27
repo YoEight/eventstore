@@ -34,6 +34,8 @@ module Database.EventStore
     , createEvent
     , withJson
     , withJsonAndMetadata
+    , withBinary
+    , withBinaryAndMetadata
      -- * Read Operations
     , StreamMetadataResult(..)
     , readEvent
@@ -96,6 +98,10 @@ module Database.EventStore
     , timeSpanFromMinutes
     , timeSpanFromHours
     , timeSpanFromDays
+    , timeSpanTotalDays
+    , timeSpanTotalHours
+    , timeSpanTotalMinutes
+    , timeSpanTotalSeconds
     , timeSpanTotalMillis
       -- * Transaction
     , Transaction

@@ -27,18 +27,19 @@ module Database.EventStore.Internal.TimeSpan
     , timeSpanFromMinutes
     , timeSpanFromHours
     , timeSpanFromDays
+    , timeSpanTotalDays
+    , timeSpanTotalHours
+    , timeSpanTotalMinutes
+    , timeSpanTotalSeconds
     , timeSpanTotalMillis
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Applicative
 import Data.Int
 import Data.Monoid
 import Prelude
 
 --------------------------------------------------------------------------------
-import Data.Aeson
-import Data.Attoparsec.Text
 import Data.Text.Lazy (unpack)
 import Data.Text.Lazy.Builder
 
@@ -49,66 +50,6 @@ newtype TimeSpan = TimeSpan Int64 deriving (Eq, Ord)
 --------------------------------------------------------------------------------
 instance Show TimeSpan where
     show = unpack . toLazyText . timeSpanBuilder
-
---------------------------------------------------------------------------------
-instance ToJSON TimeSpan where
-    toJSON = toJSON . toLazyText . timeSpanBuilder
-
---------------------------------------------------------------------------------
-instance FromJSON TimeSpan where
-    parseJSON (String s) =
-        case parseOnly parseTimeSpan s of
-            Left e   -> fail e
-            Right ts -> return ts
-    parseJSON _ = empty
-
---------------------------------------------------------------------------------
--- | Determines weither a number is positive or negative.
-parseFormatLiteral :: Parser FormatLiteral
-parseFormatLiteral = do
-    c <- peekChar'
-    case c of
-        '-' -> fmap (const Negative) anyChar
-        _   -> return Positive
-
---------------------------------------------------------------------------------
-parseDays :: Parser Int64
-parseDays = option 0 (decimal <* char '.')
-
---------------------------------------------------------------------------------
-parseHours :: Parser Int64
-parseHours = decimal <* char ':'
-
---------------------------------------------------------------------------------
-parseMinutes :: Parser Int64
-parseMinutes = parseHours
-
---------------------------------------------------------------------------------
-parseSeconds :: Parser Int64
-parseSeconds = decimal
-
---------------------------------------------------------------------------------
-parseMillis :: Parser Int64
-parseMillis = option 0 (char '.' >> decimal)
-
---------------------------------------------------------------------------------
-parseBaseTimeSpan :: Parser TimeSpan
-parseBaseTimeSpan =
-    timeSpanDaysHoursMinsSecsMillis <$>
-    parseDays                       <*>
-    parseHours                      <*>
-    parseMinutes                    <*>
-    parseSeconds                    <*>
-    parseMillis
-
---------------------------------------------------------------------------------
-parseTimeSpan :: Parser TimeSpan
-parseTimeSpan = do
-    lit             <- parseFormatLiteral
-    ts@(TimeSpan i) <- parseBaseTimeSpan
-    case lit of
-        Negative -> return $ TimeSpan $ negate i
-        Positive -> return ts
 
 --------------------------------------------------------------------------------
 millisPerSecond :: Int64
@@ -145,6 +86,22 @@ ticksPerHour = ticksPerMinute * 60
 --------------------------------------------------------------------------------
 ticksPerDay :: Int64
 ticksPerDay = ticksPerHour * 24
+
+--------------------------------------------------------------------------------
+daysPerTick :: Double
+daysPerTick = 1 / (realToFrac ticksPerDay)
+
+--------------------------------------------------------------------------------
+hoursPerTick :: Double
+hoursPerTick = 1 / (realToFrac ticksPerHour)
+
+--------------------------------------------------------------------------------
+minutesPerTick :: Double
+minutesPerTick = 1 / (realToFrac ticksPerMinute)
+
+--------------------------------------------------------------------------------
+secondsPerTick :: Double
+secondsPerTick = 1 / (realToFrac ticksPerSecond)
 
 --------------------------------------------------------------------------------
 millisPerTick :: Double
@@ -274,13 +231,37 @@ timeSpanFromDays i = interval i millisPerDay
 
 --------------------------------------------------------------------------------
 -- | Gets the value of the current 'TimeSpan' structure expressed in whole and
+--   fractional days.
+timeSpanTotalDays :: TimeSpan -> Double
+timeSpanTotalDays (TimeSpan i) = (realToFrac i) * daysPerTick
+
+--------------------------------------------------------------------------------
+-- | Gets the value of the current 'TimeSpan' structure expressed in whole and
+--   fractional hours.
+timeSpanTotalHours :: TimeSpan -> Double
+timeSpanTotalHours (TimeSpan i) = (realToFrac i) * hoursPerTick
+
+--------------------------------------------------------------------------------
+-- | Gets the value of the current 'TimeSpan' structure expressed in whole and
+--   fractional minutes.
+timeSpanTotalMinutes :: TimeSpan -> Double
+timeSpanTotalMinutes (TimeSpan i) = (realToFrac i) * minutesPerTick
+
+--------------------------------------------------------------------------------
+-- | Gets the value of the current 'TimeSpan' structure expressed in whole and
+--   fractional seconds.
+timeSpanTotalSeconds :: TimeSpan -> Double
+timeSpanTotalSeconds (TimeSpan i) = (realToFrac i) * secondsPerTick
+
+--------------------------------------------------------------------------------
+-- | Gets the value of the current 'TimeSpan' structure expressed in whole and
 --   fractional milliseconds.
-timeSpanTotalMillis :: TimeSpan -> Int64
+timeSpanTotalMillis :: TimeSpan -> Double
 timeSpanTotalMillis (TimeSpan i) =
     let tmp = (realToFrac i) * millisPerTick in
-    if tmp > (realToFrac maxMillis) then maxMillis
-    else if tmp < (realToFrac minMillis) then minMillis
-         else truncate tmp
+    if tmp > (realToFrac maxMillis) then realToFrac maxMillis
+    else if tmp < (realToFrac minMillis) then realToFrac minMillis
+         else tmp
 
 --------------------------------------------------------------------------------
 data FormatLiteral = Positive | Negative
@@ -353,6 +334,6 @@ timeSpanBuilder (TimeSpan ticks) =
 interval :: Double -> Int64 -> TimeSpan
 interval value scale =
     let tmp    = value * (realToFrac scale)
-        millis = tmp * (if value >= 0 then 0.5 else (-0.5))
+        millis = tmp + (if value >= 0 then 0.5 else (-0.5))
         res    = truncate (millis * (realToFrac ticksPerMillisecond)) in
     TimeSpan res

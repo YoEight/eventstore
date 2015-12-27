@@ -1,3 +1,12 @@
+0.10.0.0
+--------
+* Fix $maxAge and $cacheControl TimeSpan metadata serialization.
+* Fix `timeSpanFrom*` functions.
+* Implement `timeSpanTotalDays`, `timeSpanTotalHours`, `timeSpanTotalMinutes` and `timeSpanTotalSeconds`.
+* Add `withBinary` and `withBinaryAndMetadata`.
+* Remove useless `TimeSpan` `ToJSON` and `FromJSON` instances.
+* Drop `attoparsec` dependency.
+
 0.9.1.3
 -------
 * Increase cereal upper bound to <0.6

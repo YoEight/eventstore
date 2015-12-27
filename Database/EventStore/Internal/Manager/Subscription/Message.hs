@@ -132,14 +132,22 @@ _createPersistentSubscription group stream sett =
     , cpsStreamId          = putField stream
     , cpsResolveLinkTos    = putField $ psSettingsResolveLinkTos sett
     , cpsStartFrom         = putField $ psSettingsStartFrom sett
-    , cpsMsgTimeout        = putField $ ms $ psSettingsMsgTimeout sett
+    , cpsMsgTimeout        = putField
+                             . fromIntegral
+                             . (truncate :: Double -> Int64)
+                             . timeSpanTotalMillis
+                             $ psSettingsMsgTimeout sett
     , cpsRecordStats       = putField $ psSettingsExtraStats sett
     , cpsLiveBufSize       = putField $ psSettingsLiveBufSize sett
     , cpsReadBatchSize     = putField $ psSettingsReadBatchSize sett
     , cpsBufSize           = putField $ psSettingsHistoryBufSize sett
     , cpsMaxRetryCount     = putField $ psSettingsMaxRetryCount sett
     , cpsPreferRoundRobin  = putField False
-    , cpsChkPtAfterTime    = putField $ ms $ psSettingsCheckPointAfter sett
+    , cpsChkPtAfterTime    = putField
+                             . fromIntegral
+                             . (truncate :: Double -> Int64)
+                             . timeSpanTotalMillis
+                             $ psSettingsCheckPointAfter sett
     , cpsChkPtMaxCount     = putField $ psSettingsMaxCheckPointCount sett
     , cpsChkPtMinCount     = putField $ psSettingsMinCheckPointCount sett
     , cpsSubMaxCount       = putField $ psSettingsMaxSubsCount sett
@@ -147,7 +155,6 @@ _createPersistentSubscription group stream sett =
     }
   where
     strText = strategyText $ psSettingsNamedConsumerStrategy sett
-    ms      = fromIntegral . timeSpanTotalMillis
 
 --------------------------------------------------------------------------------
 instance Encode CreatePersistentSubscription
@@ -246,14 +253,22 @@ _updatePersistentSubscription group stream sett =
     , upsStreamId          = putField stream
     , upsResolveLinkTos    = putField $ psSettingsResolveLinkTos sett
     , upsStartFrom         = putField $ psSettingsStartFrom sett
-    , upsMsgTimeout        = putField $ ms $ psSettingsMsgTimeout sett
+    , upsMsgTimeout        = putField
+                             . fromIntegral
+                             . (truncate :: Double -> Int64)
+                             . timeSpanTotalMillis
+                             $ psSettingsMsgTimeout sett
     , upsRecordStats       = putField $ psSettingsExtraStats sett
     , upsLiveBufSize       = putField $ psSettingsLiveBufSize sett
     , upsReadBatchSize     = putField $ psSettingsReadBatchSize sett
     , upsBufSize           = putField $ psSettingsHistoryBufSize sett
     , upsMaxRetryCount     = putField $ psSettingsMaxRetryCount sett
     , upsPreferRoundRobin  = putField False
-    , upsChkPtAfterTime    = putField $ ms $ psSettingsCheckPointAfter sett
+    , upsChkPtAfterTime    = putField
+                             . fromIntegral
+                             . (truncate :: Double -> Int64)
+                             . timeSpanTotalMillis
+                             $ psSettingsCheckPointAfter sett
     , upsChkPtMaxCount     = putField $ psSettingsMaxCheckPointCount sett
     , upsChkPtMinCount     = putField $ psSettingsMinCheckPointCount sett
     , upsSubMaxCount       = putField $ psSettingsMaxSubsCount sett
@@ -261,7 +276,6 @@ _updatePersistentSubscription group stream sett =
     }
   where
     strText = strategyText $ psSettingsNamedConsumerStrategy sett
-    ms      = fromIntegral . timeSpanTotalMillis
 
 --------------------------------------------------------------------------------
 instance Encode UpdatePersistentSubscription
