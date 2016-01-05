@@ -1,3 +1,8 @@
+0.10.0.1
+--------
+* Bump async version.
+
+
 0.10.0.0
 --------
 * Fix $maxAge and $cacheControl TimeSpan metadata serialization.
