@@ -1,3 +1,7 @@
+0.10.0.2
+--------
+* Bump aeson version.
+
 0.10.0.1
 --------
 * Bump async version.
