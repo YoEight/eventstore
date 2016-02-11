@@ -16,6 +16,7 @@ That driver supports:
   * Authenticated communication with EventStore server.
   * Read stream metadata (ACL and custom properties).
   * Write stream metadata (ACL and custom properties).
+  * Cluster Connection.
 
 Not implemented yet
 ===================
@@ -41,7 +42,7 @@ $ cabal install eventstore
 $ git clone https://github.com/YoEight/eventstore.git
 $ cd eventstore
 $ cabal install --only-dependencies
-$ cabal configure 
+$ cabal configure
 $ cabal install
 ```
 
@@ -60,40 +61,41 @@ How to use
 ```haskell
 {-# LANGUAGE OverloadedStrings #-} -- That library uses `Text` pervasively. This pragma permits to use
                                    -- String literal when a Text is needed.
-module Main where                                   
+module Main where
 
 import Data.Aeson
 -- It requires to have `aeson` package installed. Note that EventStore doesn't constraint you to JSON
 -- format but putting common use aside, by doing so you'll be able to use some interesting EventStore
 -- features like its Complex Event Processing (CEP) capabality.
-                                   
+
 import Database.EventStore
 -- Note that import also re-exports 'Control.Concurrent.Async' module, allowing the use of 'wait'
--- function for instance.
+-- function for instance. There are also 'NonEmpty' data constructor and 'nonEmpty' function from
+-- 'Data.List.NonEmpty'.
 
 main :: IO ()
 main = do
-    -- A common pattern with an EventStore connection is to create a single instance only and pass it 
-    -- wherever you need it (it's threadsafe). It's very important to not consider an EventStore connection like 
+    -- A common pattern with an EventStore connection is to create a single instance only and pass it
+    -- wherever you need it (it's threadsafe). It's very important to not consider an EventStore connection like
     -- its regular SQL counterpart. An EventStore connection will try its best to reconnect
     -- automatically to the server if the connection dropped. Of course that behavior can be tuned
     -- through some settings.
-    conn <- connect defaultSettings "127.0.0.1" 1113
+    conn <- connect defaultSettings (Static "127.0.0.1" 1113)
     let js  = "isHaskellTheBest" .= True -- (.=) comes from Data.Aeson module.
         evt = createEvent "programming" Nothing (withJson js)
-    
-    -- Appends an event to a stream named `languages`.    
+
+    -- Appends an event to a stream named `languages`.
     as <- sendEvent conn "languages" anyVersion evt
-    
-    -- EventStore interactions are fundamentally asynchronous. Nothing requires you to wait 
+
+    -- EventStore interactions are fundamentally asynchronous. Nothing requires you to wait
     -- for the completion of an operation, but it's good to know if something went wrong.
     _ <- wait as
-    
-    -- Again, if you decide to `shutdown` an EventStore connection, it means your application is 
+
+    -- Again, if you decide to `shutdown` an EventStore connection, it means your application is
     -- about to terminate.
     shutdown conn
-    
-    -- Make sure the EventStore connection completes every ongoing operation. For instance, if 
+
+    -- Make sure the EventStore connection completes every ongoing operation. For instance, if
     -- at the moment we call `shutdown` and some operations (or subscriptions) were still pending,
     -- the connection aborted all of them.
     waitTillClosed conn
@@ -104,6 +106,6 @@ That library was tested on Linux and OSX Yosemite.
 
 Contributions and bug reports are welcome!
 
-BSD3 License 
+BSD3 License
 
 -Yorick Laupa

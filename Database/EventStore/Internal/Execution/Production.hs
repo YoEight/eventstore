@@ -60,6 +60,7 @@ import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Connection
+import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Manager.Subscription hiding
     ( submitPackage
@@ -602,13 +603,13 @@ raiseException e _ = throwIO e
 
 --------------------------------------------------------------------------------
 -- | Main Production execution model entry point.
-newExecutionModel :: Settings -> HostName -> Int -> IO Production
-newExecutionModel setts host port = do
+newExecutionModel :: Settings -> Discovery -> IO Production
+newExecutionModel setts disc = do
     gen       <- newGenerator
     queue     <- newCycleQueue
     pkg_queue <- newCycleQueue
     job_queue <- newCycleQueue
-    conn      <- newConnection setts host port
+    conn      <- newConnection setts disc
     conn_ref  <- newIORef conn
     var       <- newTVarIO $ emptyState setts gen
     nxt_sub   <- newTVarIO (atomically . writeCycleQueue queue)
@@ -623,7 +624,7 @@ newExecutionModel setts host port = do
                         Just (_ :: ConnectionException) -> atomically $ do
                             writeTVar nxt_sub (raiseException e)
                             putTMVar disposed ()
-                        _ -> do new_conn <- newConnection setts host port
+                        _ -> do new_conn <- newConnection setts disc
                                 writeIORef conn_ref new_conn
                                 _ <- forkFinally (bootstrap env) handler
                                 return ()

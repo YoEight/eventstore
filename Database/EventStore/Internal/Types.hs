@@ -525,16 +525,23 @@ data Settings
 
 --------------------------------------------------------------------------------
 -- | Default global settings.
+--   s_heartbeatInterval    = 750 ms
+--   s_heartbeatTimeout     = 1500 ms
+--   s_requireMaster        = True
+--   s_credentials          = Nothing
+--   s_retry                = 'atMost' 3
+--   s_reconnect_delay_secs = 3
+--   s_logger               = Nothing
 defaultSettings :: Settings
-defaultSettings = Settings
-                  { s_heartbeatInterval    = msDiffTime 750  -- 750ms
-                  , s_heartbeatTimeout     = msDiffTime 1500 -- 1500ms
-                  , s_requireMaster        = True
-                  , s_credentials          = Nothing
-                  , s_retry                = atMost 3
-                  , s_reconnect_delay_secs = 3
-                  , s_logger               = Nothing
-                  }
+defaultSettings  = Settings
+                   { s_heartbeatInterval    = msDiffTime 750  -- 750ms
+                   , s_heartbeatTimeout     = msDiffTime 1500 -- 1500ms
+                   , s_requireMaster        = True
+                   , s_credentials          = Nothing
+                   , s_retry                = atMost 3
+                   , s_reconnect_delay_secs = 3
+                   , s_logger               = Nothing
+                   }
 
 --------------------------------------------------------------------------------
 -- | Triggers the logger callback if it has been set.

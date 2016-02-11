@@ -30,6 +30,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import qualified Data.ByteString as B
+import           Data.IORef
 import           Data.Typeable
 import           System.IO
 
@@ -39,6 +40,7 @@ import Data.UUID.V4
 import Network
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
 
@@ -46,9 +48,8 @@ import Database.EventStore.Logging
 -- | Type of connection issue that can arise during the communication with the
 --   server.
 data ConnectionException
-    = MaxAttemptConnectionReached HostName Int Int
-      -- ^ The max reconnection attempt threshold has been reached. Holds a
-      --   'HostName', the port used and the given threshold.
+    = MaxAttemptConnectionReached
+      -- ^ The max reconnection attempt threshold has been reached.
     | ClosedConnection
       -- ^ Use of a close 'Connection'.
     deriving (Show, Typeable)
@@ -68,8 +69,8 @@ data In a where
 data Connection =
     Connection
     { _var   :: TMVar State
-    , _host  :: HostName
-    , _port  :: Int
+    , _last  :: IORef (Maybe EndPoint)
+    , _disc  :: Discovery
     , _setts :: Settings
     }
 
@@ -81,10 +82,11 @@ data State
 
 --------------------------------------------------------------------------------
 -- | Creates a new 'Connection'.
-newConnection :: Settings -> HostName -> Int -> IO Connection
-newConnection setts host port = do
+newConnection :: Settings -> Discovery -> IO Connection
+newConnection setts disc = do
     var <- newTMVarIO Offline
-    return $ Connection var host port setts
+    ref <- newIORef Nothing
+    return $ Connection var ref disc setts
 
 --------------------------------------------------------------------------------
 -- | Gets current 'Connection' 'UUID'.
@@ -144,7 +146,7 @@ execute Connection{..} i = do
                     throwIO e
                 Right alt -> do
                     sres <- case alt of
-                        Nothing     -> newState _setts _host _port
+                        Nothing     -> newState _setts _last _disc
                         Just (u, h) -> return $ Right $ Online u h
                     case sres of
                         Left e -> do
@@ -160,25 +162,53 @@ execute Connection{..} i = do
                                 Close    -> error "impossible execute"
 
 --------------------------------------------------------------------------------
-newState :: Settings -> HostName -> Int -> IO (Either ConnectionException State)
-newState sett host port =
+newState :: Settings
+         -> IORef (Maybe EndPoint)
+         -> Discovery
+         -> IO (Either ConnectionException State)
+newState sett ref disc =
     case s_retry sett of
         AtMost n ->
             let loop i = do
                     _settingsLog sett (Info $ Connecting i)
-                    let action = fmap Right $ connect sett host port
+                    let action = do
+                            old     <- readIORef ref
+                            ept_opt <- runDiscovery disc old
+                            case ept_opt of
+                                Nothing -> do
+                                    threadDelay delay
+                                    if n <= i
+                                        then return $
+                                             Left MaxAttemptConnectionReached
+                                        else loop (i + 1)
+                                Just ept -> do
+                                    let host = endPointIp ept
+                                        port = endPointPort ept
+                                    st <- connect sett host port
+                                    writeIORef ref (Just ept)
+                                    return $ Right st
                     catch action $ \(_ :: SomeException) -> do
                         threadDelay delay
                         if n <= i
                             then return $
-                                   Left $
-                                   MaxAttemptConnectionReached host port n
+                                 Left MaxAttemptConnectionReached
                             else loop (i + 1) in
              loop 1
         KeepRetrying ->
             let endlessly i = do
                     _settingsLog sett (Info $ Connecting i)
-                    let action = fmap Right $ connect sett host port
+                    let action = do
+                            old     <- readIORef ref
+                            ept_opt <- runDiscovery disc old
+                            case ept_opt of
+                                Nothing  -> threadDelay delay
+                                            >> endlessly (i + 1)
+                                Just ept -> do
+                                    let host = endPointIp ept
+                                        port = endPointPort ept
+                                    st <- connect sett host port
+                                    writeIORef ref (Just ept)
+                                    return $ Right st
                     catch action $ \(_ :: SomeException) ->
                         threadDelay delay >> endlessly (i + 1) in
              endlessly (1 :: Int)

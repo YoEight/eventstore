@@ -1,3 +1,8 @@
+0.11.0.0
+--------
+* Implement Cluster connection.
+* Domain can be used to connect to a server instance.
+
 0.10.0.2
 --------
 * Bump aeson version.
