@@ -16,6 +16,7 @@
 module Database.EventStore
     ( -- * Connection
       Connection
+    , ConnectionType(..)
     , ConnectionException(..)
     , ServerConnectionError(..)
     , Credentials
@@ -28,6 +29,18 @@ module Database.EventStore
     , connect
     , shutdown
     , waitTillClosed
+    , connectionSettings
+      -- * Cluster Connection
+    , ClusterSettings(..)
+    , DnsServer(..)
+    , GossipSeed
+    , gossipSeed
+    , gossipSeedWithHeader
+    , gossipSeedHost
+    , gossipSeedHeader
+    , gossipSeedPort
+    , gossipSeedClusterSettings
+    , dnsClusterSettings
       -- * Event
     , Event
     , EventData
@@ -186,6 +199,8 @@ module Database.EventStore
       -- * Re-export
     , module Control.Concurrent.Async
     , (<>)
+    , NonEmpty(..)
+    , nonEmpty
     ) where
 
 --------------------------------------------------------------------------------
@@ -193,6 +208,7 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad (when)
+import Data.ByteString (ByteString)
 import Data.Int
 import Data.Maybe
 import Data.Monoid ((<>))
@@ -200,11 +216,13 @@ import Data.Typeable
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
+import Data.List.NonEmpty(NonEmpty(..), nonEmpty)
 import Data.Text hiding (group)
 import Data.UUID
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Connection hiding (Connection)
+import           Database.EventStore.Internal.Discovery
 import qualified Database.EventStore.Internal.Manager.Subscription as S
 import           Database.EventStore.Internal.Manager.Subscription.Message
 import           Database.EventStore.Internal.Operation (OperationError(..))
@@ -219,11 +237,21 @@ import           Database.EventStore.Internal.Execution.Production
 --------------------------------------------------------------------------------
 -- Connection
 --------------------------------------------------------------------------------
+-- | Gathers every connection type handled by the client.
+data ConnectionType
+    = Static String Int
+      -- ^ HostName and Port.
+    | Cluster ClusterSettings
+    | Dns ByteString (Maybe DnsServer) Int
+      -- ^ Domain name, optional DNS server and port.
+
+--------------------------------------------------------------------------------
 -- | Represents a connection to a single EventStore node.
 data Connection
     = Connection
       { _prod     :: Production
       , _settings :: Settings
+      , _type     :: ConnectionType
       }
 
 --------------------------------------------------------------------------------
@@ -239,18 +267,24 @@ data Connection
 --   or a single thread can make many asynchronous requests. To get the most
 --   performance out of the connection it is generally recommended to use it in
 --   this way.
-connect :: Settings
-        -> String   -- ^ HostName
-        -> Int      -- ^ Port
-        -> IO Connection
-connect settings host port = do
-    prod <- newExecutionModel settings host port
-    return $ Connection prod settings
+connect :: Settings -> ConnectionType -> IO Connection
+connect settings tpe = do
+    disc <- case tpe of
+        Static host port -> return $ staticEndPointDiscovery host port
+        Cluster setts    -> clusterDnsEndPointDiscovery setts
+        Dns dom srv port -> return $ simpleDnsEndPointDiscovery dom srv port
+    prod <- newExecutionModel settings disc
+    return $ Connection prod settings tpe
 
 --------------------------------------------------------------------------------
 -- | Waits the 'Connection' to be closed.
 waitTillClosed :: Connection -> IO ()
 waitTillClosed Connection{..} = prodWaitTillClosed _prod
+
+--------------------------------------------------------------------------------
+-- | Returns a 'Connection''s 'Settings'.
+connectionSettings :: Connection -> Settings
+connectionSettings = _settings
 
 --------------------------------------------------------------------------------
 -- | Asynchronously closes the 'Connection'.
