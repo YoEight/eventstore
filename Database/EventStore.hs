@@ -95,27 +95,6 @@ module Database.EventStore
     , setACL
     , modifyACL
     , setCustomProperty
-      -- * TimeSpan
-    , TimeSpan
-    , timeSpanTicks
-    , timeSpanHoursMinsSecs
-    , timeSpanDaysHoursMinsSecs
-    , timeSpanDaysHoursMinsSecsMillis
-    , timeSpanGetTicks
-    , timeSpanGetDays
-    , timeSpanGetHours
-    , timeSpanGetMinutes
-    , timeSpanGetSeconds
-    , timeSpanGetMillis
-    , timeSpanFromSeconds
-    , timeSpanFromMinutes
-    , timeSpanFromHours
-    , timeSpanFromDays
-    , timeSpanTotalDays
-    , timeSpanTotalHours
-    , timeSpanTotalMinutes
-    , timeSpanTotalSeconds
-    , timeSpanTotalMillis
       -- * Transaction
     , Transaction
     , TransactionId
@@ -230,7 +209,6 @@ import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
 import           Database.EventStore.Internal.Stream
-import           Database.EventStore.Internal.TimeSpan
 import           Database.EventStore.Internal.Types
 import           Database.EventStore.Internal.Execution.Production
 

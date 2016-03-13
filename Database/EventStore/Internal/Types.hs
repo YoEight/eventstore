@@ -37,6 +37,7 @@ import           GHC.Generics (Generic)
 --------------------------------------------------------------------------------
 import qualified Data.Aeson          as A
 import           Data.Aeson.Types (Object, ToJSON(..), Pair, Parser, (.=))
+import           Data.DotNet.TimeSpan
 import qualified Data.HashMap.Strict as H
 import           Data.ProtocolBuffers
 import           Data.Text (Text)
@@ -46,7 +47,6 @@ import           Data.UUID (UUID, fromByteString, toByteString)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Logging
-import Database.EventStore.Internal.TimeSpan
 
 --------------------------------------------------------------------------------
 -- Exceptions
@@ -681,7 +681,7 @@ streamMetadataJSON StreamMetadata{..} =
     custPairs = customMetaToPairs streamMetadataCustom
 
     toInt64 :: TimeSpan -> Int64
-    toInt64 = truncate . timeSpanTotalSeconds
+    toInt64 = truncate . totalSeconds
 
 --------------------------------------------------------------------------------
 -- Stream ACL Properties
@@ -790,7 +790,7 @@ parseStreamMetadata (A.Object m) =
     parseTimeSpan ::  Text -> Parser (Maybe TimeSpan)
     parseTimeSpan prop = do
         (secs :: Maybe Int64) <- m A..: prop
-        return $ fmap (timeSpanFromSeconds . realToFrac) secs
+        return $ fmap (fromSeconds . realToFrac) secs
 parseStreamMetadata _ = mzero
 
 --------------------------------------------------------------------------------
@@ -1011,12 +1011,12 @@ defaultPersistentSubscriptionSettings =
     { psSettingsResolveLinkTos        = False
     , psSettingsStartFrom             = (-1)
     , psSettingsExtraStats            = False
-    , psSettingsMsgTimeout            = timeSpanFromSeconds 30
+    , psSettingsMsgTimeout            = fromSeconds 30
     , psSettingsMaxRetryCount         = 500
     , psSettingsLiveBufSize           = 500
     , psSettingsReadBatchSize         = 10
     , psSettingsHistoryBufSize        = 20
-    , psSettingsCheckPointAfter       = timeSpanFromSeconds 2
+    , psSettingsCheckPointAfter       = fromSeconds 2
     , psSettingsMinCheckPointCount    = 10
     , psSettingsMaxCheckPointCount    = 1000
     , psSettingsMaxSubsCount          = 0

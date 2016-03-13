@@ -1,3 +1,7 @@
+0.12.0.0
+--------
+* Quit using internal .NET TimeSpan for dotnet-timespan TimeSpan
+
 0.11.0.0
 --------
 * Implement Cluster connection.

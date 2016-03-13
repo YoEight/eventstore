@@ -20,11 +20,11 @@ import Data.Int
 import GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
+import Data.DotNet.TimeSpan
 import Data.ProtocolBuffers
 import Data.Text (Text)
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.TimeSpan
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -135,7 +135,7 @@ _createPersistentSubscription group stream sett =
     , cpsMsgTimeout        = putField
                              . fromIntegral
                              . (truncate :: Double -> Int64)
-                             . timeSpanTotalMillis
+                             . totalMillis
                              $ psSettingsMsgTimeout sett
     , cpsRecordStats       = putField $ psSettingsExtraStats sett
     , cpsLiveBufSize       = putField $ psSettingsLiveBufSize sett
@@ -146,7 +146,7 @@ _createPersistentSubscription group stream sett =
     , cpsChkPtAfterTime    = putField
                              . fromIntegral
                              . (truncate :: Double -> Int64)
-                             . timeSpanTotalMillis
+                             . totalMillis
                              $ psSettingsCheckPointAfter sett
     , cpsChkPtMaxCount     = putField $ psSettingsMaxCheckPointCount sett
     , cpsChkPtMinCount     = putField $ psSettingsMinCheckPointCount sett
@@ -256,7 +256,7 @@ _updatePersistentSubscription group stream sett =
     , upsMsgTimeout        = putField
                              . fromIntegral
                              . (truncate :: Double -> Int64)
-                             . timeSpanTotalMillis
+                             . totalMillis
                              $ psSettingsMsgTimeout sett
     , upsRecordStats       = putField $ psSettingsExtraStats sett
     , upsLiveBufSize       = putField $ psSettingsLiveBufSize sett
@@ -267,7 +267,7 @@ _updatePersistentSubscription group stream sett =
     , upsChkPtAfterTime    = putField
                              . fromIntegral
                              . (truncate :: Double -> Int64)
-                             . timeSpanTotalMillis
+                             . totalMillis
                              $ psSettingsCheckPointAfter sett
     , upsChkPtMaxCount     = putField $ psSettingsMaxCheckPointCount sett
     , upsChkPtMinCount     = putField $ psSettingsMinCheckPointCount sett
