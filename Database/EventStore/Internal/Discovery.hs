@@ -51,15 +51,13 @@ import Data.Aeson
 import Data.Aeson.Types
 import Data.Array.IO
 import Data.ByteString (ByteString)
+import Data.DotNet.TimeSpan
 import Data.Int
 import Data.List.NonEmpty (NonEmpty)
 import Data.UUID
 import Network.HTTP.Client
 import Network.DNS hiding (decode)
 import System.Random
-
---------------------------------------------------------------------------------
-import Database.EventStore.Internal.TimeSpan
 
 --------------------------------------------------------------------------------
 data DnsDiscoveryException
@@ -197,7 +195,7 @@ gossipSeedClusterSettings xs =
     , clusterMaxDiscoverAttempts = 10
     , clusterExternalGossipPort  = 0
     , clusterGossipSeeds         = Just xs
-    , clusterGossipTimeout       = timeSpanFromSeconds 1
+    , clusterGossipTimeout       = fromSeconds 1
     , clusterDnsServer           = Nothing
     }
 
@@ -214,7 +212,7 @@ dnsClusterSettings clusterDns = ClusterSettings{..}
     clusterMaxDiscoverAttempts = 10
     clusterExternalGossipPort  = 0
     clusterGossipSeeds         = Nothing
-    clusterGossipTimeout       = timeSpanFromSeconds 1
+    clusterGossipTimeout       = fromSeconds 1
     clusterDnsServer           = Nothing
 
 --------------------------------------------------------------------------------
@@ -341,7 +339,7 @@ tryGetGossipFrom :: ClusterSettings
                  -> IO (Maybe ClusterInfo)
 tryGetGossipFrom ClusterSettings{..} mgr seed = do
     init_req <- httpRequest (gossipEndpoint seed) "/gossip?format=json"
-    let timeout = truncate (timeSpanTotalMillis clusterGossipTimeout * 1000)
+    let timeout = truncate (totalMillis clusterGossipTimeout * 1000)
         req     = init_req { responseTimeout = Just timeout }
     resp <- httpLbs req mgr
     return $ decode $ responseBody resp
@@ -428,7 +426,7 @@ gossipCandidatesFromDns settings@ClusterSettings{..} = do
 --------------------------------------------------------------------------------
 resolveDns :: ClusterSettings -> IO (IOArray Int GossipSeed)
 resolveDns ClusterSettings{..} = do
-    let timeoutMicros = timeSpanTotalMillis clusterGossipTimeout * 1000
+    let timeoutMicros = totalMillis clusterGossipTimeout * 1000
         conf =
             case clusterDnsServer of
                 Nothing  -> defaultResolvConf

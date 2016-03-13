@@ -21,6 +21,7 @@ import Data.Maybe (catMaybes)
 
 --------------------------------------------------------------------------------
 import Data.Aeson
+import Data.DotNet.TimeSpan
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -308,7 +309,7 @@ connectToPersistentTest conn = do
 --------------------------------------------------------------------------------
 maxAgeTest :: Connection -> IO ()
 maxAgeTest conn = do
-    let timespan = timeSpanFromDays 1
+    let timespan = fromDays 1
         metadata = buildStreamMetadata $ setMaxAge timespan
         evt = createEvent "foo" Nothing
               $ withJson (object ["type" .= (3 :: Int)])
