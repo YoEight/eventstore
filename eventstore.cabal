@@ -67,7 +67,6 @@ library
                    Database.EventStore.Internal.Execution.Production
                    Database.EventStore.Internal.Generator
                    Database.EventStore.Internal.Operation
-                   Database.EventStore.Internal.Packages
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.Types

@@ -491,6 +491,17 @@ data Package
     deriving Show
 
 --------------------------------------------------------------------------------
+-- | Constructs a heartbeat response given the 'UUID' of heartbeat request.
+heartbeatResponsePackage :: UUID -> Package
+heartbeatResponsePackage uuid =
+    Package
+    { packageCmd         = 0x02
+    , packageCorrelation = uuid
+    , packageData        = ""
+    , packageCred        = Nothing
+    }
+
+--------------------------------------------------------------------------------
 -- Settings
 --------------------------------------------------------------------------------
 -- | Represents reconnection strategy.

@@ -24,7 +24,6 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Execution.Production
     ( Production
-    , ServerConnectionError(..)
     , newExecutionModel
     , pushOperation
     , shutdownExecutionModel
@@ -49,12 +48,8 @@ import Control.Monad.Fix
 import Data.IORef
 import Data.Int
 import Data.Foldable
-import Data.Typeable
-import Text.Printf
 
 --------------------------------------------------------------------------------
-import Data.Serialize.Get hiding (Done)
-import Data.Serialize.Put
 import Data.Text
 import Data.UUID
 
@@ -70,7 +65,6 @@ import Database.EventStore.Internal.Manager.Subscription hiding
     , abort
     )
 import Database.EventStore.Internal.Operation hiding (retry)
-import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Processor
 import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
@@ -81,18 +75,6 @@ data Worker
     | Runner ThreadId
     | Writer ThreadId
     deriving Show
-
---------------------------------------------------------------------------------
--- | Raised when the server responded in an unexpected way.
-data ServerConnectionError
-    = WrongPackageFraming
-      -- ^ TCP package sent by the server had a wrong framing.
-    | PackageParsingError String
-      -- ^ Server sent a malformed TCP package.
-    deriving (Show, Typeable)
-
---------------------------------------------------------------------------------
-instance Exception ServerConnectionError
 
 --------------------------------------------------------------------------------
 -- | Used to determine if we hit the end of the queue.
@@ -332,23 +314,15 @@ updateProc :: Processor (IO ()) -> State -> State
 updateProc p s = s { _proc = p }
 
 --------------------------------------------------------------------------------
--- | Reader thread. Keeps reading 'Package' from the connection.
---------------------------------------------------------------------------------
+-- | Reader thread. Keeps reading 'Package' from the server.
 reader :: Settings -> CycleQueue Msg -> Connection -> IO ()
 reader sett queue c = forever $ do
-    header_bs <- connRecv c 4
-    case runGet getLengthPrefix header_bs of
-        Left _              -> throwIO WrongPackageFraming
-        Right length_prefix -> connRecv c length_prefix >>= parsePackage
-  where
-    parsePackage bs =
-        case runGet getPackage bs of
-            Left e    -> throwIO $ PackageParsingError e
-            Right pkg -> do
-                atomically $ writeCycleQueue queue (Arrived pkg)
-                let cmd  = packageCmd pkg
-                    uuid = packageCorrelation pkg
-                _settingsLog sett $ Info $ PackageReceived cmd uuid
+    pkg <- connRecv c
+    let cmd  = packageCmd pkg
+        uuid = packageCorrelation pkg
+
+    atomically $ writeCycleQueue queue (Arrived pkg)
+    _settingsLog sett $ Info $ PackageReceived cmd uuid
 
 --------------------------------------------------------------------------------
 -- | Writer thread, writes incoming 'Package's
@@ -356,64 +330,11 @@ reader sett queue c = forever $ do
 writer :: Settings -> CycleQueue Package -> Connection -> IO ()
 writer setts pkg_queue conn = forever $ do
     pkg <- atomically $ readCycleQueue pkg_queue
-    connSend conn $ runPut $ putPackage pkg
+    connSend conn pkg
     let cmd  = packageCmd pkg
         uuid = packageCorrelation pkg
+
     _settingsLog setts $ Info $ PackageSent cmd uuid
-
---------------------------------------------------------------------------------
-getLengthPrefix :: Get Int
-getLengthPrefix = fmap fromIntegral getWord32le
-
---------------------------------------------------------------------------------
-getPackage :: Get Package
-getPackage = do
-    cmd  <- getWord8
-    flg  <- getFlag
-    col  <- getUUID
-    cred <- getCredentials flg
-    rest <- remaining
-    dta  <- getBytes rest
-
-    let pkg = Package
-              { packageCmd         = cmd
-              , packageCorrelation = col
-              , packageData        = dta
-              , packageCred        = cred
-              }
-
-    return pkg
-
---------------------------------------------------------------------------------
-getFlag :: Get Flag
-getFlag = do
-    wd <- getWord8
-    case wd of
-        0x00 -> return None
-        0x01 -> return Authenticated
-        _    -> fail $ printf "TCP: Unhandled flag value 0x%x" wd
-
---------------------------------------------------------------------------------
-getCredEntryLength :: Get Int
-getCredEntryLength = fmap fromIntegral getWord8
-
---------------------------------------------------------------------------------
-getCredentials :: Flag -> Get (Maybe Credentials)
-getCredentials None = return Nothing
-getCredentials _ = do
-    loginLen <- getCredEntryLength
-    login    <- getBytes loginLen
-    passwLen <- getCredEntryLength
-    passw    <- getBytes passwLen
-    return $ Just $ credentials login passw
-
---------------------------------------------------------------------------------
-getUUID :: Get UUID
-getUUID = do
-    bs <- getLazyByteString 16
-    case fromByteString bs of
-        Just uuid -> return uuid
-        _         -> fail "TCP: Wrong UUID format"
 
 --------------------------------------------------------------------------------
 -- Runner thread. Keeps running job comming from the Manager thread.

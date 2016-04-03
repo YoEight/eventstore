@@ -30,11 +30,14 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import qualified Data.ByteString as B
+import           Data.Foldable (for_)
 import           Data.IORef
 import           Data.Typeable
 import           System.IO
+import           Text.Printf
 
 --------------------------------------------------------------------------------
+import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
 import Network
@@ -52,6 +55,10 @@ data ConnectionException
       -- ^ The max reconnection attempt threshold has been reached.
     | ClosedConnection
       -- ^ Use of a close 'Connection'.
+    | WrongPackageFraming
+      -- ^ TCP package sent by the server had a wrong framing.
+    | PackageParsingError String
+      -- ^ Server sent a malformed TCP package.
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
@@ -61,8 +68,8 @@ instance Exception ConnectionException
 data In a where
     Id    :: In UUID
     Close :: In ()
-    Send  :: B.ByteString -> In ()
-    Recv  :: Int -> In B.ByteString
+    Send  :: Package -> In ()
+    Recv  :: In Package
 
 --------------------------------------------------------------------------------
 -- | Internal representation of a connection with the server.
@@ -102,14 +109,14 @@ connClose :: Connection -> IO ()
 connClose conn = execute conn Close
 
 --------------------------------------------------------------------------------
--- | Writes 'ByteString' into the buffer.
-connSend :: Connection -> B.ByteString -> IO ()
-connSend conn b = execute conn (Send b)
+-- | Sends 'Package' to the server.
+connSend :: Connection -> Package -> IO ()
+connSend conn pkg = execute conn (Send pkg)
 
 --------------------------------------------------------------------------------
 -- | Asks the requested amount of bytes from the 'handle'.
-connRecv :: Connection -> Int -> IO B.ByteString
-connRecv conn i = execute conn (Recv i)
+connRecv :: Connection -> IO Package
+connRecv conn = execute conn Recv
 
 --------------------------------------------------------------------------------
 -- | Returns True if the connection is in closed state.
@@ -157,8 +164,8 @@ execute Connection{..} i = do
                             let Online u h = s
                             case other of
                                 Id       -> return u
-                                Send b   -> B.hPut h b >> hFlush h
-                                Recv siz -> B.hGet h siz
+                                Send pkg -> send h pkg
+                                Recv     -> recv h
                                 Close    -> error "impossible execute"
 
 --------------------------------------------------------------------------------
@@ -232,3 +239,113 @@ regularConnection :: Settings -> Handle -> UUID -> IO State
 regularConnection sett h uuid = do
     _settingsLog sett (Info $ Connected uuid)
     return $ Online uuid h
+
+--------------------------------------------------------------------------------
+-- Binary operations
+--------------------------------------------------------------------------------
+recv :: Handle -> IO Package
+recv h = do
+    header_bs <- B.hGet h 4
+    case runGet getLengthPrefix header_bs of
+        Left _              -> throwIO WrongPackageFraming
+        Right length_prefix -> do
+            bs <- B.hGet h length_prefix
+            case runGet getPackage bs of
+                Left e    -> throwIO $ PackageParsingError e
+                Right pkg -> return pkg
+
+--------------------------------------------------------------------------------
+send :: Handle -> Package -> IO ()
+send  h pkg = B.hPut h bs >> hFlush h
+  where
+    bs = runPut $ putPackage pkg
+
+--------------------------------------------------------------------------------
+-- Serialization
+--------------------------------------------------------------------------------
+-- | Serializes a 'Package' into raw bytes.
+putPackage :: Package -> Put
+putPackage pack = do
+    putWord32le length_prefix
+    putWord8 (packageCmd pack)
+    putWord8 flag_word8
+    putLazyByteString corr_bytes
+    for_ cred_m $ \(Credentials login passw) -> do
+        putWord8 $ fromIntegral $ B.length login
+        putByteString login
+        putWord8 $ fromIntegral $ B.length passw
+        putByteString passw
+    putByteString pack_data
+  where
+    pack_data     = packageData pack
+    cred_len      = maybe 0 credSize cred_m
+    length_prefix = fromIntegral (B.length pack_data + mandatorySize + cred_len)
+    cred_m        = packageCred pack
+    flag_word8    = maybe 0x00 (const 0x01) cred_m
+    corr_bytes    = toByteString $ packageCorrelation pack
+
+--------------------------------------------------------------------------------
+credSize :: Credentials -> Int
+credSize (Credentials login passw) = B.length login + B.length passw + 2
+
+--------------------------------------------------------------------------------
+-- | The minimun size a 'Package' should have. It's basically a command byte,
+--   correlation bytes ('UUID') and a 'Flag' byte.
+mandatorySize :: Int
+mandatorySize = 18
+
+--------------------------------------------------------------------------------
+-- Parsing
+--------------------------------------------------------------------------------
+getLengthPrefix :: Get Int
+getLengthPrefix = fmap fromIntegral getWord32le
+
+--------------------------------------------------------------------------------
+getPackage :: Get Package
+getPackage = do
+    cmd  <- getWord8
+    flg  <- getFlag
+    col  <- getUUID
+    cred <- getCredentials flg
+    rest <- remaining
+    dta  <- getBytes rest
+
+    let pkg = Package
+              { packageCmd         = cmd
+              , packageCorrelation = col
+              , packageData        = dta
+              , packageCred        = cred
+              }
+
+    return pkg
+
+--------------------------------------------------------------------------------
+getFlag :: Get Flag
+getFlag = do
+    wd <- getWord8
+    case wd of
+        0x00 -> return None
+        0x01 -> return Authenticated
+        _    -> fail $ printf "TCP: Unhandled flag value 0x%x" wd
+
+--------------------------------------------------------------------------------
+getCredEntryLength :: Get Int
+getCredEntryLength = fmap fromIntegral getWord8
+
+--------------------------------------------------------------------------------
+getCredentials :: Flag -> Get (Maybe Credentials)
+getCredentials None = return Nothing
+getCredentials _ = do
+    loginLen <- getCredEntryLength
+    login    <- getBytes loginLen
+    passwLen <- getCredEntryLength
+    passw    <- getBytes passwLen
+    return $ Just $ credentials login passw
+
+--------------------------------------------------------------------------------
+getUUID :: Get UUID
+getUUID = do
+    bs <- getLazyByteString 16
+    case fromByteString bs of
+        Just uuid -> return uuid
+        _         -> fail "TCP: Wrong UUID format"
