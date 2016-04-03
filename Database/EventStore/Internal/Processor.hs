@@ -40,7 +40,6 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Operation hiding (SM(..))
-import Database.EventStore.Internal.Packages
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
