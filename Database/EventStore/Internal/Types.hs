@@ -339,8 +339,10 @@ recordedEventDataAsJson = A.decode . fromStrict . recordedEventData
 
 --------------------------------------------------------------------------------
 -- | Converts a raw 'Int64' into an 'UTCTime'
+-- fromIntegral should be a no-op in GHC and allow eventstore to compile w GHCJS
+-- GHCJS maps CTime to Int32 (cf PR https://github.com/YoEight/eventstore/pull/47)
 toUTC :: Int64 -> UTCTime
-toUTC = posixSecondsToUTCTime . (/1000) . realToFrac . CTime
+toUTC = posixSecondsToUTCTime . (/1000) . realToFrac . CTime . fromIntegral
 
 --------------------------------------------------------------------------------
 -- | Constructs a 'RecordedEvent' from an 'EventRecord'.
