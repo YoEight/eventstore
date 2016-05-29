@@ -4,23 +4,7 @@ EventStore Haskell TCP client
 [![Join the chat at https://gitter.im/YoEight/eventstore](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/YoEight/eventstore?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 [![Build Status](https://travis-ci.org/YoEight/eventstore.svg?branch=master)](https://travis-ci.org/YoEight/eventstore)
 
-That driver supports:
-
-  * Read event(s) from regular or $all stream (forward or backward).
-  * Write event(s) to regular stream.
-  * Delete regular stream.
-  * Transactional writes to regular stream.
-  * Volatile subscriptions to regular or $all stream.
-  * Catch-up subscriptions to regular or $all stream.
-  * Competing consumers (a.k.a Persistent subscriptions) to regular stream.
-  * Authenticated communication with EventStore server.
-  * Read stream metadata (ACL and custom properties).
-  * Write stream metadata (ACL and custom properties).
-  * Cluster Connection.
-
-Not implemented yet
-===================
-  * Secured connection with the server (SSL).
+That driver supports 100% of EventStore features !
 
 Requirements
 ============

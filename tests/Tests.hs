@@ -170,6 +170,7 @@ subscribeTest conn = do
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     sub  <- subscribe conn "subscribe-test" False
+    _    <- waitConfirmation sub
     _    <- sendEvents conn "subscribe-test" anyVersion evts >>= wait
     let loop 3 = return []
         loop i = do
@@ -201,6 +202,7 @@ subscribeFromTest conn = do
         evts2  = fmap (createEvent "foo" Nothing . withJson) jss2
     _   <- sendEvents conn "subscribe-from-test" anyVersion evts >>= wait
     sub <- subscribeFrom conn "subscribe-from-test" False Nothing (Just 1)
+    _   <- waitConfirmation sub
     _   <- sendEvents conn "subscribe-from-test" anyVersion evts2 >>= wait
 
     let loop [] = do
@@ -285,6 +287,7 @@ connectToPersistentTest conn = do
     _   <- createPersistentSubscription conn "group" "connect-sub" def >>= wait
     _   <- sendEvents conn "connect-sub" anyVersion evts >>= wait
     sub <- connectToPersistentSubscription conn "group" "connect-sub" 1
+    _   <- waitConfirmation sub
     r   <- nextEvent sub
     case resolvedEventDataAsJson r of
         Just js_evt -> assertEqual "event 1 should match" js1 js_evt

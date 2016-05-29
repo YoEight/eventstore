@@ -14,9 +14,8 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Connection
-    ( Connection
+    ( InternalConnection
     , ConnectionException(..)
-    , HostName
     , connUUID
     , connClose
     , connSend
@@ -33,14 +32,13 @@ import qualified Data.ByteString as B
 import           Data.Foldable (for_)
 import           Data.IORef
 import           Data.Typeable
-import           System.IO
 import           Text.Printf
 
 --------------------------------------------------------------------------------
 import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
-import Network
+import Network.Connection
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Discovery
@@ -73,55 +71,57 @@ data In a where
 
 --------------------------------------------------------------------------------
 -- | Internal representation of a connection with the server.
-data Connection =
-    Connection
-    { _var   :: TMVar State
-    , _last  :: IORef (Maybe EndPoint)
-    , _disc  :: Discovery
-    , _setts :: Settings
+data InternalConnection =
+    InternalConnection
+    { _var    :: TMVar State
+    , _last   :: IORef (Maybe EndPoint)
+    , _disc   :: Discovery
+    , _setts  :: Settings
+    , _ctx    :: ConnectionContext
     }
 
 --------------------------------------------------------------------------------
 data State
     = Offline
-    | Online !UUID !Handle
+    | Online !UUID !Connection
     | Closed
 
 --------------------------------------------------------------------------------
--- | Creates a new 'Connection'.
-newConnection :: Settings -> Discovery -> IO Connection
+-- | Creates a new 'InternalConnection'.
+newConnection :: Settings -> Discovery -> IO InternalConnection
 newConnection setts disc = do
+    ctx <- initConnectionContext
     var <- newTMVarIO Offline
     ref <- newIORef Nothing
-    return $ Connection var ref disc setts
+    return $ InternalConnection var ref disc setts ctx
 
 --------------------------------------------------------------------------------
--- | Gets current 'Connection' 'UUID'.
-connUUID :: Connection -> IO UUID
+-- | Gets current 'InternalConnection' 'UUID'.
+connUUID :: InternalConnection -> IO UUID
 connUUID conn = execute conn Id
 
 --------------------------------------------------------------------------------
--- | Closes the 'Connection'. It will not retry to reconnect after that call. it
---   means a new 'Connection' has to be created. 'ClosedConnection' exception
---   will be raised if the same 'Connection' object is used after a 'connClose'
---   call.
-connClose :: Connection -> IO ()
+-- | Closes the 'InternalConnection'. It will not retry to reconnect after that
+--   call. it means a new 'InternalConnection' has to be created.
+--   'ClosedConnection' exception will be raised if the same
+--   'InternalConnection' object is used after a 'connClose' call.
+connClose :: InternalConnection -> IO ()
 connClose conn = execute conn Close
 
 --------------------------------------------------------------------------------
 -- | Sends 'Package' to the server.
-connSend :: Connection -> Package -> IO ()
+connSend :: InternalConnection -> Package -> IO ()
 connSend conn pkg = execute conn (Send pkg)
 
 --------------------------------------------------------------------------------
 -- | Asks the requested amount of bytes from the 'handle'.
-connRecv :: Connection -> IO Package
+connRecv :: InternalConnection -> IO Package
 connRecv conn = execute conn Recv
 
 --------------------------------------------------------------------------------
 -- | Returns True if the connection is in closed state.
-connIsClosed :: Connection -> STM Bool
-connIsClosed Connection{..} = do
+connIsClosed :: InternalConnection -> STM Bool
+connIsClosed InternalConnection{..} = do
     r <- readTMVar _var
     case r of
         Closed -> return True
@@ -130,21 +130,21 @@ connIsClosed Connection{..} = do
 --------------------------------------------------------------------------------
 -- | Main connection logic. It will automatically reconnect to the server when
 --   a exception occured while the 'Handle' is accessed.
-execute :: forall a. Connection -> In a -> IO a
-execute Connection{..} i = do
+execute :: forall a. InternalConnection -> In a -> IO a
+execute InternalConnection{..} i = do
     res <- atomically $ do
         s <- takeTMVar _var
         case s of
             Offline      -> return $ Right Nothing
-            Online u hdl -> return $ Right $ Just (u, hdl)
+            Online u con -> return $ Right $ Just (u, con)
             Closed       -> return $ Left ClosedConnection
     case i of
         Close ->
             case res of
                 Left _ -> atomically $ putTMVar _var Closed
-                Right Nothing       -> atomically $ putTMVar _var Closed
-                Right (Just (_, h)) -> do
-                    hClose h
+                Right Nothing         -> atomically $ putTMVar _var Closed
+                Right (Just (_, con)) -> do
+                    connectionClose con
                     atomically $ putTMVar _var Closed
         other ->
             case res of
@@ -153,7 +153,7 @@ execute Connection{..} i = do
                     throwIO e
                 Right alt -> do
                     sres <- case alt of
-                        Nothing     -> newState _setts _last _disc
+                        Nothing     -> newState _setts _ctx _last _disc
                         Just (u, h) -> return $ Right $ Online u h
                     case sres of
                         Left e -> do
@@ -161,19 +161,20 @@ execute Connection{..} i = do
                             throwIO e
                         Right s -> do
                             atomically $ putTMVar _var s
-                            let Online u h = s
+                            let Online u con = s
                             case other of
                                 Id       -> return u
-                                Send pkg -> send h pkg
-                                Recv     -> recv h
+                                Send pkg -> send con pkg
+                                Recv     -> recv con
                                 Close    -> error "impossible execute"
 
 --------------------------------------------------------------------------------
 newState :: Settings
+         -> ConnectionContext
          -> IORef (Maybe EndPoint)
          -> Discovery
          -> IO (Either ConnectionException State)
-newState sett ref disc =
+newState sett ctx ref disc =
     case s_retry sett of
         AtMost n ->
             let loop i = do
@@ -191,7 +192,7 @@ newState sett ref disc =
                                 Just ept -> do
                                     let host = endPointIp ept
                                         port = endPointPort ept
-                                    st <- connect sett host port
+                                    st <- connect sett ctx host port
                                     writeIORef ref (Just ept)
                                     return $ Right st
                     catch action $ \(_ :: SomeException) -> do
@@ -213,7 +214,7 @@ newState sett ref disc =
                                 Just ept -> do
                                     let host = endPointIp ept
                                         port = endPointPort ept
-                                    st <- connect sett host port
+                                    st <- connect sett ctx host port
                                     writeIORef ref (Just ept)
                                     return $ Right st
                     catch action $ \(_ :: SomeException) ->
@@ -227,36 +228,31 @@ secs :: Int
 secs = 1000000
 
 --------------------------------------------------------------------------------
-connect :: Settings -> HostName -> Int -> IO State
-connect sett host port = do
-    hdl <- connectTo host (PortNumber $ fromIntegral port)
-    hSetBuffering hdl NoBuffering
+connect :: Settings -> ConnectionContext -> String -> Int -> IO State
+connect sett ctx host port = do
+    let params = ConnectionParams host (fromIntegral port) (s_ssl sett) Nothing
+    conn <- connectTo ctx params
     uuid <- nextRandom
-    regularConnection sett hdl uuid
-
---------------------------------------------------------------------------------
-regularConnection :: Settings -> Handle -> UUID -> IO State
-regularConnection sett h uuid = do
     _settingsLog sett (Info $ Connected uuid)
-    return $ Online uuid h
+    return $ Online uuid conn
 
 --------------------------------------------------------------------------------
 -- Binary operations
 --------------------------------------------------------------------------------
-recv :: Handle -> IO Package
-recv h = do
-    header_bs <- B.hGet h 4
+recv :: Connection -> IO Package
+recv con = do
+    header_bs <- connectionGet con 4
     case runGet getLengthPrefix header_bs of
         Left _              -> throwIO WrongPackageFraming
         Right length_prefix -> do
-            bs <- B.hGet h length_prefix
+            bs <- connectionGet con length_prefix
             case runGet getPackage bs of
                 Left e    -> throwIO $ PackageParsingError e
                 Right pkg -> return pkg
 
 --------------------------------------------------------------------------------
-send :: Handle -> Package -> IO ()
-send  h pkg = B.hPut h bs >> hFlush h
+send :: Connection -> Package -> IO ()
+send  con pkg = connectionPut con bs
   where
     bs = runPut $ putPackage pkg
 
