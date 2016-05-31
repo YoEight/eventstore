@@ -104,11 +104,10 @@ library
                      , bytestring >=0.10.4   && <0.11
                      , cereal     >=0.4      && <0.6
                      , containers >=0.5      && <0.6
-                     , network    ==2.6.*
                      , protobuf   >=0.2      && <0.3
                      , random     ==1.*
                      , text       >=1.1.1    && <1.3
-                     , time       >=1.4      && <1.6
+                     , time       >=1.4      && <1.7
                      , uuid       ==1.3.*
                      , unordered-containers
                      , stm
@@ -117,6 +116,7 @@ library
                      , array
                      , http-client
                      , dotnet-timespan
+                     , connection ==0.2.*
 
   -- Directories containing source files.
   -- hs-source-dirs:
@@ -144,4 +144,5 @@ test-suite integration-tests
                    text,
                    stm,
                    time,
-                   dotnet-timespan
+                   dotnet-timespan,
+                   connection

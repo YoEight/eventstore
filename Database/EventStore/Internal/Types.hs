@@ -44,6 +44,7 @@ import           Data.Text (Text)
 import           Data.Time
 import           Data.Time.Clock.POSIX
 import           Data.UUID (UUID, fromByteString, toByteString)
+import           Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Logging
@@ -534,6 +535,7 @@ data Settings
       , s_retry                :: Retry
       , s_reconnect_delay_secs :: Int -- ^ In seconds
       , s_logger               :: Maybe (Log -> IO ())
+      , s_ssl                  :: Maybe TLSSettings
       }
 
 --------------------------------------------------------------------------------
@@ -554,7 +556,13 @@ defaultSettings  = Settings
                    , s_retry                = atMost 3
                    , s_reconnect_delay_secs = 3
                    , s_logger               = Nothing
+                   , s_ssl                  = Nothing
                    }
+
+--------------------------------------------------------------------------------
+-- | Default SSL settings based on 'defaultSettings'.
+defaultSSLSettings :: TLSSettings -> Settings
+defaultSSLSettings tls = defaultSettings { s_ssl = Just tls }
 
 --------------------------------------------------------------------------------
 -- | Triggers the logger callback if it has been set.

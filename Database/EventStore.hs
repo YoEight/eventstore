@@ -25,6 +25,7 @@ module Database.EventStore
     , keepRetrying
     , credentials
     , defaultSettings
+    , defaultSSLSettings
     , connect
     , shutdown
     , waitTillClosed
@@ -108,6 +109,7 @@ module Database.EventStore
     , Subscription
     , S.Running(..)
     , S.SubDropReason(..)
+    , waitConfirmation
       -- * Volatile Subscription
     , S.Regular
     , subscribe
@@ -179,6 +181,7 @@ module Database.EventStore
     , (<>)
     , NonEmpty(..)
     , nonEmpty
+    , TLSSettings
     ) where
 
 --------------------------------------------------------------------------------
@@ -191,6 +194,7 @@ import Data.Int
 import Data.Maybe
 import Data.Monoid ((<>))
 import Data.Typeable
+import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async
@@ -199,7 +203,7 @@ import Data.Text hiding (group)
 import Data.UUID
 
 --------------------------------------------------------------------------------
-import           Database.EventStore.Internal.Connection hiding (Connection)
+import           Database.EventStore.Internal.Connection
 import           Database.EventStore.Internal.Discovery
 import qualified Database.EventStore.Internal.Manager.Subscription as S
 import           Database.EventStore.Internal.Manager.Subscription.Message
@@ -383,6 +387,13 @@ nextEvent sub = atomically $ do
 -- | Non blocking version of 'nextEvent'.
 nextEventMaybe :: Subscription a -> IO (Maybe ResolvedEvent)
 nextEventMaybe = atomically . _nextEventMaybe
+
+--------------------------------------------------------------------------------
+-- | Waits until the `Subscription` has been confirmed.
+waitConfirmation :: Subscription a -> IO ()
+waitConfirmation s = atomically $ do
+    _ <- readTMVar $ _subRun s
+    return ()
 
 --------------------------------------------------------------------------------
 _nextEventMaybe :: Subscription a -> STM (Maybe ResolvedEvent)

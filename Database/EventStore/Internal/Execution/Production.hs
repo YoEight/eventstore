@@ -172,7 +172,7 @@ data Env =
       -- ^ Holds manager thread state.
     , _nextSubmit :: TVar (Msg -> IO ())
       -- ^ Indicates the action to call in order to push new commands.
-    , _connRef :: IORef Connection
+    , _connRef :: IORef InternalConnection
       -- ^ Connection to the server.
     , _disposed :: TMVar ()
       -- ^ Indicates when the production execution model has been shutdown and
@@ -315,7 +315,7 @@ updateProc p s = s { _proc = p }
 
 --------------------------------------------------------------------------------
 -- | Reader thread. Keeps reading 'Package' from the server.
-reader :: Settings -> CycleQueue Msg -> Connection -> IO ()
+reader :: Settings -> CycleQueue Msg -> InternalConnection -> IO ()
 reader sett queue c = forever $ do
     pkg <- connRecv c
     let cmd  = packageCmd pkg
@@ -327,7 +327,7 @@ reader sett queue c = forever $ do
 --------------------------------------------------------------------------------
 -- | Writer thread, writes incoming 'Package's
 --------------------------------------------------------------------------------
-writer :: Settings -> CycleQueue Package -> Connection -> IO ()
+writer :: Settings -> CycleQueue Package -> InternalConnection -> IO ()
 writer setts pkg_queue conn = forever $ do
     pkg <- atomically $ readCycleQueue pkg_queue
     connSend conn pkg
