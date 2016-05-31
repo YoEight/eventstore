@@ -1,3 +1,8 @@
+0.13.0.0
+--------
+* Implement SSL Connection
+* Implement `waitConfirmation` function
+
 0.12.0.0
 --------
 * Quit using internal .NET TimeSpan for dotnet-timespan TimeSpan
