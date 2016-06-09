@@ -1,3 +1,7 @@
+0.13.0.1
+--------
+* Bump protobuf version
+
 0.13.0.0
 --------
 * Implement SSL Connection
