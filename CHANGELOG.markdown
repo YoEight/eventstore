@@ -1,3 +1,7 @@
+0.13.1.2
+--------
+* Restrain `http-client` package version.
+
 0.13.1.1
 --------
 * Typo on `streamExists` implementation.
