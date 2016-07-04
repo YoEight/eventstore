@@ -1,3 +1,7 @@
+0.13.1.0
+--------
+* Add `streamExists` `ExpectedVersion` smart constructor.
+
 0.13.0.1
 --------
 * Bump protobuf version
