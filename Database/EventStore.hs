@@ -176,6 +176,7 @@ module Database.EventStore
     , noStreamVersion
     , emptyStreamVersion
     , exactEventVersion
+    , streamExists
       -- * Re-export
     , module Control.Concurrent.Async
     , (<>)

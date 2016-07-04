@@ -154,6 +154,7 @@ data ExpectedVersion
     | NoStream
     | EmptyStream
     | Exact Int32
+    | StreamExists
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -161,8 +162,9 @@ data ExpectedVersion
 expVersionInt32 :: ExpectedVersion -> Int32
 expVersionInt32 Any         = -2
 expVersionInt32 NoStream    = -1
-expVersionInt32 EmptyStream = 0
+expVersionInt32 EmptyStream = -1
 expVersionInt32 (Exact i)   = i
+expVersionInt32 StreamExists = -4
 
 --------------------------------------------------------------------------------
 -- | This write should not conflict with anything and should always succeed.
@@ -188,6 +190,12 @@ exactEventVersion :: Int32 -> ExpectedVersion
 exactEventVersion i
     | i < 0     = error $ "expected version must be >= 0, but is " ++ show i
     | otherwise = Exact i
+
+--------------------------------------------------------------------------------
+-- | The stream should exist. If it or a metadata stream does not exist treat
+--   that as a concurrency problem.
+streamExists :: ExpectedVersion
+streamExists = streamExists
 
 --------------------------------------------------------------------------------
 -- EventStore Messages
