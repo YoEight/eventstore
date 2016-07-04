@@ -1,3 +1,11 @@
+0.13.1.1
+--------
+* Typo on `streamExists` implementation.
+
+0.13.1.0
+--------
+* Add `streamExists` `ExpectedVersion` smart constructor.
+
 0.13.0.1
 --------
 * Bump protobuf version
