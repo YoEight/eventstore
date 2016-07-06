@@ -1,3 +1,7 @@
+0.13.1.3
+--------
+* Bump `http-client` version.
+
 0.13.1.2
 --------
 * Restrain `http-client` package version.
