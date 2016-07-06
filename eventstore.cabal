@@ -114,7 +114,7 @@ library
                      , semigroups >=0.5
                      , dns
                      , array
-                     , http-client >=0.4 && <0.5
+                     , http-client== 0.5.*
                      , dotnet-timespan
                      , connection ==0.2.*
 
