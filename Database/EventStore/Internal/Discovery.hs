@@ -82,7 +82,7 @@ emptyEndPoint = EndPoint "" 0
 
 --------------------------------------------------------------------------------
 httpRequest :: EndPoint -> String -> IO Request
-httpRequest (EndPoint ip p) path = parseUrl url
+httpRequest (EndPoint ip p) path = parseUrlThrow url
   where
     url = "http://" ++ ip ++ ":" ++ show p ++ path
 
@@ -340,7 +340,7 @@ tryGetGossipFrom :: ClusterSettings
 tryGetGossipFrom ClusterSettings{..} mgr seed = do
     init_req <- httpRequest (gossipEndpoint seed) "/gossip?format=json"
     let timeout = truncate (totalMillis clusterGossipTimeout * 1000)
-        req     = init_req { responseTimeout = Just timeout }
+        req     = init_req { responseTimeout = responseTimeoutMicro timeout }
     resp <- httpLbs req mgr
     return $ decode $ responseBody resp
 
