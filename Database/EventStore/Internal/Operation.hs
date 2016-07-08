@@ -26,9 +26,9 @@ import Data.Typeable
 import Data.ProtocolBuffers
 import Data.Text
 import Data.UUID
-import Data.Word
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
@@ -55,7 +55,7 @@ data OperationError
     | StreamDeleted Text                        -- ^ Stream
     | InvalidTransaction
     | AccessDenied StreamName                   -- ^ Stream
-    | InvalidServerResponse Word8 Word8         -- ^ Expected, Found
+    | InvalidServerResponse Command Command     -- ^ Expected, Found
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason
     | InvalidOperation Text
@@ -79,7 +79,7 @@ data SM o a
     | FreshId (UUID -> SM o a)
       -- ^ Asks for an unused 'UUID'.
     | forall rq rp. (Encode rq, Decode rp) =>
-      SendPkg Word8 Word8 rq (rp -> SM o a)
+      SendPkg Command Command rq (rp -> SM o a)
       -- ^ Send a request message given a command and an expected command.
       --   response. It also carries a callback to call when response comes in.
     | Failure (Maybe OperationError)
@@ -128,7 +128,7 @@ retry = Failure Nothing
 --------------------------------------------------------------------------------
 -- | Sends a request to the server given a command request and response. It
 --   returns the expected deserialized message.
-send :: (Encode rq, Decode rp) => Word8 -> Word8 -> rq -> SM o rp
+send :: (Encode rq, Decode rp) => Command -> Command -> rq -> SM o rp
 send ci co rq = SendPkg ci co rq Return
 
 --------------------------------------------------------------------------------
@@ -189,5 +189,5 @@ serverError = failure . ServerError
 
 --------------------------------------------------------------------------------
 -- | Raises 'InvalidServerResponse' exception.
-invalidServerResponse :: Word8 -> Word8 -> SM o a
+invalidServerResponse :: Command -> Command -> SM o a
 invalidServerResponse expe got = failure $ InvalidServerResponse expe got

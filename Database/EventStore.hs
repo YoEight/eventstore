@@ -170,6 +170,7 @@ module Database.EventStore
     , positionStart
     , positionEnd
       -- * Misc
+    , Command
     , DropReason(..)
     , ExpectedVersion
     , anyVersion
@@ -204,6 +205,7 @@ import Data.Text hiding (group)
 import Data.UUID
 
 --------------------------------------------------------------------------------
+import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Connection
 import           Database.EventStore.Internal.Discovery
 import qualified Database.EventStore.Internal.Manager.Subscription as S

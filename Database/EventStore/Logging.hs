@@ -17,11 +17,12 @@ module Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
 import Control.Exception
-import Data.Word
-import Numeric
 
 --------------------------------------------------------------------------------
 import Data.UUID
+
+--------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 
 --------------------------------------------------------------------------------
 -- | Logging main data structure.
@@ -45,9 +46,9 @@ data InfoMessage
       -- ^ Indicates connection 'UUID'.
     | Disconnected UUID
       -- ^ Indicates connection 'UUID'
-    | PackageSent Word8 UUID
+    | PackageSent Command UUID
       -- ^ Indicates a package has been sent.
-    | PackageReceived Word8 UUID
+    | PackageReceived Command UUID
       -- ^ Indicates the client's received a package from the server.
 
 --------------------------------------------------------------------------------
@@ -61,12 +62,6 @@ instance Show InfoMessage where
     show (Disconnected u) =
         "Disconnected [" ++ show u ++ "]"
     show (PackageSent cmd u)  =
-        "Package send 0x" ++ padding (showHex cmd "") ++ " [" ++ show u ++ "]"
+        "Package send " ++ show cmd ++ " [" ++ show u ++ "]"
     show (PackageReceived cmd u) =
-        "Package received 0x" ++
-        padding (showHex cmd "") ++ " [" ++ show u ++ "]"
-
---------------------------------------------------------------------------------
-padding :: String -> String
-padding [x] = ['0',x]
-padding xs  = xs
+        "Package received " ++ show cmd ++ " [" ++ show u ++ "]"

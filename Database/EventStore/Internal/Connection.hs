@@ -41,6 +41,7 @@ import Data.UUID.V4
 import Network.Connection
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
@@ -263,7 +264,7 @@ send  con pkg = connectionPut con bs
 putPackage :: Package -> Put
 putPackage pack = do
     putWord32le length_prefix
-    putWord8 (packageCmd pack)
+    putWord8 (cmdWord8 $ packageCmd pack)
     putWord8 flag_word8
     putLazyByteString corr_bytes
     for_ cred_m $ \(Credentials login passw) -> do
@@ -307,7 +308,7 @@ getPackage = do
     dta  <- getBytes rest
 
     let pkg = Package
-              { packageCmd         = cmd
+              { packageCmd         = Command cmd
               , packageCorrelation = col
               , packageData        = dta
               , packageCred        = cred

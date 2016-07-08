@@ -22,15 +22,13 @@ module Database.EventStore.Internal.Manager.Operation.Model
     ) where
 
 --------------------------------------------------------------------------------
-import Data.Word
-
---------------------------------------------------------------------------------
 import qualified Data.HashMap.Strict  as H
 import           Data.ProtocolBuffers
 import           Data.Serialize
 import           Data.UUID
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
@@ -41,7 +39,7 @@ data Elem r =
     forall a resp. Decode resp =>
     Elem
     { _opOp   :: Operation a
-    , _opCmd  :: Word8
+    , _opCmd  :: Command
     , _opCont :: resp -> SM a ()
     , _opCb   :: Either OperationError a -> r
     }

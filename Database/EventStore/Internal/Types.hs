@@ -47,6 +47,7 @@ import           Data.UUID (UUID, fromByteString, toByteString)
 import           Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
@@ -494,7 +495,7 @@ credentials = Credentials
 -- | Represents a package exchanged between the client and the server.
 data Package
     = Package
-      { packageCmd         :: !Word8
+      { packageCmd         :: !Command
       , packageCorrelation :: !UUID
       , packageData        :: !ByteString
       , packageCred        :: !(Maybe Credentials)
