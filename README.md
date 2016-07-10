@@ -8,6 +8,7 @@ That driver supports 100% of EventStore features !
 
 Requirements
 ============
+  * 64bits system
   * GHC        >= 7.8.3
   * Cabal      >= 1.18
   * EventStore >= 3.0.0 (>= 3.1.0 if you want competing consumers)
