@@ -18,12 +18,11 @@ module Database.EventStore.Internal.Operation.Catchup
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Monad
 import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import Data.Text (Text)
+import ClassyPrelude
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription (Checkpoint(..))

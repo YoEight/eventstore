@@ -22,8 +22,8 @@ module Database.EventStore.Internal.Operation.DeleteStream
 import Data.Maybe
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.ProtocolBuffers
-import Data.Text
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation

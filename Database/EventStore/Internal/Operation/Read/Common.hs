@@ -16,21 +16,15 @@
 module Database.EventStore.Internal.Operation.Read.Common where
 
 --------------------------------------------------------------------------------
-import Control.Applicative
-import Data.Foldable
+import Data.Foldable (foldMap)
 import Data.Int
-import Data.Monoid
-import Data.Traversable
 
 --------------------------------------------------------------------------------
-import Data.Text
+import ClassyPrelude
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
-
---------------------------------------------------------------------------------
-import Prelude
 
 --------------------------------------------------------------------------------
 -- | Enumeration detailing the possible outcomes of reading a stream.

@@ -16,19 +16,15 @@ module Database.EventStore.Internal.Manager.Subscription.Packages where
 import Data.Int
 
 --------------------------------------------------------------------------------
-import Data.ByteString.Lazy (toStrict)
+import ClassyPrelude
 import Data.ProtocolBuffers
 import Data.Serialize
-import Data.Text
 import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription.Message
 import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Types
-
---------------------------------------------------------------------------------
-import Prelude
 
 --------------------------------------------------------------------------------
 -- | Creates a regular subscription connection 'Package'.

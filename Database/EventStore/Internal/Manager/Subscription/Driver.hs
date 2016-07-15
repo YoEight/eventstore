@@ -37,18 +37,14 @@ module Database.EventStore.Internal.Manager.Subscription.Driver
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Exception
 import Data.Int
 import Data.Maybe
-import Data.Typeable
 
 --------------------------------------------------------------------------------
-import           Data.ByteString
-import qualified Data.HashMap.Strict as H
-import           Data.Serialize
-import           Data.ProtocolBuffers
-import           Data.Text
-import           Data.UUID
+import ClassyPrelude
+import Data.Serialize
+import Data.ProtocolBuffers
+import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
@@ -321,14 +317,14 @@ data State r =
       -- ^ Subscription model.
     , _gen :: !Generator
       -- ^ 'UUID' generator.
-    , _reg :: !(H.HashMap UUID (Cmd r))
+    , _reg :: !(HashMap UUID (Cmd r))
       -- ^ Holds ongoing commands. When stored, it means an action hasn't been
       --   confirmed yet.
     }
 
 --------------------------------------------------------------------------------
 initState :: Generator -> State r
-initState gen = State newModel gen H.empty
+initState gen = State newModel gen mempty
 
 --------------------------------------------------------------------------------
 -- | Subscription driver state machine.
@@ -341,7 +337,7 @@ newDriver setts gen = Driver $ go (initState gen)
   where
     go :: forall a. State r -> In r a -> a
     go st@State{..} (Pkg Package{..}) = do
-        elm <- H.lookup packageCorrelation _reg
+        elm <- lookup packageCorrelation _reg
         case packageCmd of
             0xC2 -> do
                 _   <- querySubscription packageCorrelation _model
@@ -398,7 +394,7 @@ newDriver setts gen = Driver $ go (initState gen)
                     nxt_m   = unsubscribed run _model
                     dreason = toSubDropReason reason
                     evt     = Dropped dreason
-                    nxt_reg = H.delete packageCorrelation _reg
+                    nxt_reg = deleteMap packageCorrelation _reg
                     nxt_st  = st { _model = nxt_m
                                  , _reg   = nxt_reg }
                 case elm of
@@ -417,7 +413,7 @@ newDriver setts gen = Driver $ go (initState gen)
             msg <- maybeDecodeMessage packageData
             _   <- queryPersistentAction packageCorrelation _model
             let nxt_m  = confirmedAction packageCorrelation _model
-                nxt_rg = H.delete packageCorrelation _reg
+                nxt_rg = deleteMap packageCorrelation _reg
                 nxt_st = st { _model = nxt_m
                             , _reg   = nxt_rg
                             }
@@ -435,7 +431,7 @@ newDriver setts gen = Driver $ go (initState gen)
                     nxt_m      = connectReg s tos u _model
                     nxt_st     = st { _model = nxt_m
                                     , _gen   = nxt_g
-                                    , _reg   = H.insert u cmd _reg } in
+                                    , _reg   = insertMap u cmd _reg } in
                 (pkg, Driver $ go nxt_st)
             ConnectPersist _ gn n b ->
                 let (u, nxt_g) = nextUUID _gen
@@ -443,7 +439,7 @@ newDriver setts gen = Driver $ go (initState gen)
                     nxt_m      = connectPersist gn n b u _model
                     nxt_st     = st { _model = nxt_m
                                     , _gen   = nxt_g
-                                    , _reg   = H.insert u cmd _reg } in
+                                    , _reg   = insertMap u cmd _reg } in
                 (pkg, Driver $ go nxt_st)
             Unsubscribe r ->
                 let pkg    = createUnsubscribePackage setts $ runningUUID r in
@@ -454,7 +450,7 @@ newDriver setts gen = Driver $ go (initState gen)
                     nxt_m      = persistAction gn n u a _model
                     nxt_st     = st { _model = nxt_m
                                     , _gen   = nxt_g
-                                    , _reg   = H.insert u cmd _reg } in
+                                    , _reg   = insertMap u cmd _reg } in
                 (pkg, Driver $ go nxt_st)
             PersistAck _ run evts ->
                 let RunningPersist _ _ _ _ sid _ _ = run
@@ -466,7 +462,7 @@ newDriver setts gen = Driver $ go (initState gen)
                     u   = runningUUID run
                     pkg = createNakPackage setts u sid na r evts  in
                 (pkg, Driver $ go st)
-    go st Abort = (H.elems $ _reg st) >>= _F
+    go st Abort = (fmap snd $ mapToList $ _reg st) >>= _F
       where
         _F (ConnectReg k _ _)           = [k $ Dropped SubAborted]
         _F (ConnectPersist k _ _ _)     = [k $ Dropped SubAborted]

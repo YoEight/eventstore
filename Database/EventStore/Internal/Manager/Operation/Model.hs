@@ -22,10 +22,10 @@ module Database.EventStore.Internal.Manager.Operation.Model
     ) where
 
 --------------------------------------------------------------------------------
-import qualified Data.HashMap.Strict  as H
-import           Data.ProtocolBuffers
-import           Data.Serialize
-import           Data.UUID
+import ClassyPrelude
+import Data.ProtocolBuffers
+import Data.Serialize
+import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
@@ -50,13 +50,13 @@ data State r =
     State
     { _gen :: Generator
       -- ^ 'UUID' generator.
-    , _pending :: H.HashMap UUID (Elem r)
+    , _pending :: HashMap UUID (Elem r)
       -- ^ Contains all running 'Operation's.
     }
 
 --------------------------------------------------------------------------------
 initState :: Generator -> State r
-initState g = State g H.empty
+initState g = State g mempty
 
 --------------------------------------------------------------------------------
 -- | Type of requests handled by the model.
@@ -112,7 +112,7 @@ runOperation :: Settings
              -> Transition r
 runOperation setts cb op start init_st = go init_st start
   where
-    go st (Return _) = Await $ Model $ handle setts st
+    go st (Return _) = Await $ Model $ execute setts st
     go st (Yield a n) = Produce (cb $ Right a) (go st n)
     go st (FreshId k) =
         let (new_id, nxt_gen) = nextUUID $ _gen st
@@ -127,50 +127,50 @@ runOperation setts cb op start init_st = go init_st start
                   , packageCred        = s_credentials setts
                   }
             elm    = Elem op co k cb
-            ps     = H.insert new_uuid elm $ _pending st
+            ps     = insertMap new_uuid elm $ _pending st
             nxt_st = st { _pending = ps
                         , _gen     = nxt_gen
                         } in
-        Transmit pkg (Await $ Model $ handle setts nxt_st)
+        Transmit pkg (Await $ Model $ execute setts nxt_st)
     go st (Failure m) =
         case m of
-            Just e -> Produce (cb $ Left e) (Await $ Model $ handle setts st)
+            Just e -> Produce (cb $ Left e) (Await $ Model $ execute setts st)
             _      -> runOperation setts cb op op st
 
 --------------------------------------------------------------------------------
 runPackage :: Settings -> State r -> Package -> Maybe (Transition r)
 runPackage setts st Package{..} = do
-    Elem op resp_cmd cont cb <- H.lookup packageCorrelation $ _pending st
-    let nxt_ps = H.delete packageCorrelation $ _pending st
+    Elem op resp_cmd cont cb <- lookup packageCorrelation $ _pending st
+    let nxt_ps = deleteMap packageCorrelation $ _pending st
         nxt_st = st { _pending = nxt_ps }
     if resp_cmd /= packageCmd
         then
             let r = cb $ Left $ InvalidServerResponse resp_cmd packageCmd in
-            return $ Produce r (Await $ Model $ handle setts nxt_st)
+            return $ Produce r (Await $ Model $ execute setts nxt_st)
         else
             case runGet decodeMessage packageData of
                 Left e  ->
                     let r = cb $ Left $ ProtobufDecodingError e in
-                    return $ Produce r (Await $ Model $ handle setts nxt_st)
+                    return $ Produce r (Await $ Model $ execute setts nxt_st)
                 Right m -> return $ runOperation setts cb op (cont m) nxt_st
 
 --------------------------------------------------------------------------------
 abortOperations :: Settings -> State r -> Transition r
-abortOperations setts init_st = go init_st $ H.toList $ _pending init_st
+abortOperations setts init_st = go init_st $ mapToList $ _pending init_st
   where
     go st ((key, Elem _ _ _ k):xs) =
-        let ps     = H.delete key $ _pending st
+        let ps     = deleteMap key $ _pending st
             nxt_st = st { _pending = ps } in
         Produce (k $ Left Aborted) $ go nxt_st xs
-    go st [] = Await $ Model $ handle setts st
+    go st [] = Await $ Model $ execute setts st
 
 --------------------------------------------------------------------------------
 -- | Creates a new 'Operation' model state-machine.
 newModel :: Settings -> Generator -> Model r
-newModel setts g = Model $ handle setts $ initState g
+newModel setts g = Model $ execute setts $ initState g
 
 --------------------------------------------------------------------------------
-handle :: Settings -> State r -> Request r -> Maybe (Transition r)
-handle setts st (New op cb) = Just $ runOperation setts cb op op st
-handle setts st (Pkg pkg)   = runPackage setts st pkg
-handle setts st Abort       = Just $ abortOperations setts st
+execute :: Settings -> State r -> Request r -> Maybe (Transition r)
+execute setts st (New op cb) = Just $ runOperation setts cb op op st
+execute setts st (Pkg pkg)   = runPackage setts st pkg
+execute setts st Abort       = Just $ abortOperations setts st

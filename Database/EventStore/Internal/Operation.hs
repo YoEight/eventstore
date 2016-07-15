@@ -17,23 +17,14 @@
 module Database.EventStore.Internal.Operation where
 
 --------------------------------------------------------------------------------
-import Control.Applicative
-import Control.Exception
-import Control.Monad
-import Data.Typeable
-
---------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.ProtocolBuffers
-import Data.Text
 import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
-
---------------------------------------------------------------------------------
-import Prelude
 
 --------------------------------------------------------------------------------
 -- | Operation result sent by the server.
