@@ -21,12 +21,10 @@ module Database.EventStore.Internal.Operation.StreamMetadata
 
 --------------------------------------------------------------------------------
 import Data.Int
-import Data.Monoid ((<>))
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.Aeson (decode)
-import Data.ByteString.Lazy (fromStrict)
-import Data.Text (Text)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation

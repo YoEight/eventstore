@@ -25,16 +25,10 @@ module Database.EventStore.Internal.Connection
     ) where
 
 --------------------------------------------------------------------------------
-import           Control.Concurrent
-import           Control.Concurrent.STM
-import           Control.Exception
-import qualified Data.ByteString as B
-import           Data.Foldable (for_)
-import           Data.IORef
-import           Data.Typeable
-import           Text.Printf
+import Text.Printf
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
@@ -262,28 +256,28 @@ send  con pkg = connectionPut con bs
 --------------------------------------------------------------------------------
 -- | Serializes a 'Package' into raw bytes.
 putPackage :: Package -> Put
-putPackage pack = do
+putPackage pkg = do
     putWord32le length_prefix
-    putWord8 (cmdWord8 $ packageCmd pack)
+    putWord8 (cmdWord8 $ packageCmd pkg)
     putWord8 flag_word8
     putLazyByteString corr_bytes
     for_ cred_m $ \(Credentials login passw) -> do
-        putWord8 $ fromIntegral $ B.length login
+        putWord8 $ fromIntegral $ olength login
         putByteString login
-        putWord8 $ fromIntegral $ B.length passw
+        putWord8 $ fromIntegral $ olength passw
         putByteString passw
     putByteString pack_data
   where
-    pack_data     = packageData pack
+    pack_data     = packageData pkg
     cred_len      = maybe 0 credSize cred_m
-    length_prefix = fromIntegral (B.length pack_data + mandatorySize + cred_len)
-    cred_m        = packageCred pack
+    length_prefix = fromIntegral (olength pack_data + mandatorySize + cred_len)
+    cred_m        = packageCred pkg
     flag_word8    = maybe 0x00 (const 0x01) cred_m
-    corr_bytes    = toByteString $ packageCorrelation pack
+    corr_bytes    = toByteString $ packageCorrelation pkg
 
 --------------------------------------------------------------------------------
 credSize :: Credentials -> Int
-credSize (Credentials login passw) = B.length login + B.length passw + 2
+credSize (Credentials login passw) = olength login + olength passw + 2
 
 --------------------------------------------------------------------------------
 -- | The minimun size a 'Package' should have. It's basically a command byte,

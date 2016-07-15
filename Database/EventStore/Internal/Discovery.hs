@@ -34,25 +34,14 @@ module Database.EventStore.Internal.Discovery
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Applicative
-import Control.Exception
-import Control.Monad
-import Data.Foldable (toList)
-import Data.IORef
-import Data.List (sortBy)
 import Data.Maybe
-import Data.Ord
-import Data.Typeable
-import GHC.Generics hiding (from, to)
-import Prelude
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Array.IO
-import Data.ByteString (ByteString)
 import Data.DotNet.TimeSpan
-import Data.Int
 import Data.List.NonEmpty (NonEmpty)
 import Data.UUID
 import Network.HTTP.Client
@@ -501,16 +490,3 @@ forRangeFirst from to k = do
         | otherwise  = do
               res <- k cur
               if isJust res then return res else loop len (cur + 1)
-
---------------------------------------------------------------------------------
--- | Taken from base >= 4.8 because prior base don't have it.
--- Sort a list by comparing the results of a key function applied to each
--- element.  @sortOn f@ is equivalent to @sortBy . comparing f@, but has the
--- performance advantage of only evaluating @f@ once for each element in the
--- input list.  This is called the decorate-sort-undecorate paradigm, or
--- Schwartzian transform.
---
--- @since 4.8.0.0
-sortOn :: Ord b => (a -> b) -> [a] -> [a]
-sortOn f =
-  map snd . sortBy (comparing fst) . map (\x -> let y = f x in y `seq` (y, x))

@@ -18,30 +18,18 @@
 module Database.EventStore.Internal.Types where
 
 --------------------------------------------------------------------------------
+import Data.Maybe
 import Data.Monoid (Endo(..))
+import Foreign.C.Types (CTime(..))
 
 --------------------------------------------------------------------------------
-import           Control.Applicative
-import           Control.Exception
-import           Control.Monad (mzero)
-import           Data.ByteString (ByteString)
-import           Data.ByteString.Lazy (fromStrict, toStrict)
-import           Data.Int
-import           Data.Maybe
-import qualified Data.Set as S
-import           Data.Typeable
-import           Data.Word
-import           Foreign.C.Types (CTime(..))
-import           GHC.Generics (Generic)
-
---------------------------------------------------------------------------------
-import qualified Data.Aeson          as A
+import           ClassyPrelude hiding (Builder)
+import qualified Data.Aeson as A
 import           Data.Aeson.Types (Object, ToJSON(..), Pair, Parser, (.=))
 import           Data.DotNet.TimeSpan
-import qualified Data.HashMap.Strict as H
+import           Data.HashMap.Strict (filterWithKey)
 import           Data.ProtocolBuffers
-import           Data.Text (Text)
-import           Data.Time
+import           Data.Time (NominalDiffTime)
 import           Data.Time.Clock.POSIX
 import           Data.UUID (UUID, fromByteString, toByteString)
 import           Network.Connection (TLSSettings)
@@ -298,14 +286,14 @@ data Position
 
 --------------------------------------------------------------------------------
 instance Eq Position where
-    Position ac ap == Position bc bp = ac == bc && ap == bp
+    Position ac aap == Position bc bp = ac == bc && aap == bp
 
 --------------------------------------------------------------------------------
 instance Ord Position where
-    compare (Position ac ap) (Position bc bp) =
-        if ac < bc || (ac == bc && ap < bp)
+    compare (Position ac aap) (Position bc bp) =
+        if ac < bc || (ac == bc && aap < bp)
         then LT
-        else if ac > bc || (ac == bc && ap > bp)
+        else if ac > bc || (ac == bc && aap > bp)
              then GT
              else EQ
 
@@ -645,7 +633,7 @@ data StreamMetadata
 --------------------------------------------------------------------------------
 -- | Gets a custom property value from metadata.
 getCustomPropertyValue :: StreamMetadata -> Text -> Maybe A.Value
-getCustomPropertyValue s k = H.lookup k obj
+getCustomPropertyValue s k = lookup k obj
   where
     obj = streamMetadataCustom s
 
@@ -676,13 +664,13 @@ emptyStreamMetadata = StreamMetadata
                       , streamMetadataTruncateBefore = Nothing
                       , streamMetadataCacheControl   = Nothing
                       , streamMetadataACL            = emptyStreamACL
-                      , streamMetadataCustom         = H.empty
+                      , streamMetadataCustom         = mempty
                       }
 
 --------------------------------------------------------------------------------
 -- | Maps an 'Object' to a list of 'Pair' to ease the 'StreamMetadata'.
 customMetaToPairs :: Object -> [Pair]
-customMetaToPairs = fmap go . H.toList
+customMetaToPairs = fmap go . mapToList
   where
     go (k,v) = k .= v
 
@@ -770,21 +758,21 @@ p_acl = "$acl"
 --------------------------------------------------------------------------------
 -- | Gathers every internal metadata properties into a 'Set'. It used to safely
 --   'StreamMetadata' in JSON.
-internalMetaProperties :: S.Set Text
+internalMetaProperties :: Set Text
 internalMetaProperties =
-    S.fromList [ p_maxAge
-               , p_maxCount
-               , p_truncateBefore
-               , p_cacheControl
-               , p_acl
-               ]
+    setFromList [ p_maxAge
+                , p_maxCount
+                , p_truncateBefore
+                , p_cacheControl
+                , p_acl
+                ]
 
 --------------------------------------------------------------------------------
 -- | Only keeps the properties the users has set.
 keepUserProperties :: Object -> Object
-keepUserProperties = H.filterWithKey go
+keepUserProperties = filterWithKey go
   where
-    go k _ = not $ S.member k internalMetaProperties
+    go k _ = notMember k internalMetaProperties
 
 --------------------------------------------------------------------------------
 -- | Parses a 'NominalDiffTime' from an 'Object' given a JSON property.
@@ -940,7 +928,7 @@ modifyACL b = Endo $ \s ->
 setCustomProperty :: ToJSON a => Text -> a -> StreamMetadataBuilder
 setCustomProperty k v = Endo $ \s ->
     let m  = streamMetadataCustom s
-        m' = H.insert k (toJSON v) m in
+        m' = insertMap k (toJSON v) m in
      s { streamMetadataCustom = m' }
 
 --------------------------------------------------------------------------------

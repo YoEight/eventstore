@@ -37,9 +37,8 @@ module Database.EventStore.Internal.Manager.Subscription.Model
 import Data.Int
 
 --------------------------------------------------------------------------------
-import qualified Data.HashMap.Strict as H
-import           Data.Text
-import           Data.UUID
+import ClassyPrelude
+import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Types
@@ -61,7 +60,7 @@ data PendingAction =
     }
 
 --------------------------------------------------------------------------------
-type Register a = H.HashMap UUID a
+type Register a = HashMap UUID a
 
 --------------------------------------------------------------------------------
 -- | Represents a 'Subscription' which is about to be confirmed.
@@ -247,7 +246,7 @@ data State =
 
 --------------------------------------------------------------------------------
 emptyState :: State
-emptyState = State H.empty H.empty H.empty
+emptyState = State mempty mempty mempty
 
 --------------------------------------------------------------------------------
 -- | Subscription operations state machine. Keeps every information related to
@@ -268,12 +267,12 @@ modelHandle s (Execute e) =
             case c of
                 ConnectReg n tos ->
                     let p      = PendingReg n tos
-                        nxt_ps = H.insert u p $ _stPending s
+                        nxt_ps = insertMap u p $ _stPending s
                         nxt_s  = s { _stPending = nxt_ps } in
                     Model $ modelHandle nxt_s
                 ConnectPersist g n b ->
                     let p      = PendingPersist g n b
-                        nxt_ps = H.insert u p $ _stPending s
+                        nxt_ps = insertMap u p $ _stPending s
                         nxt_s  = s { _stPending = nxt_ps } in
                     Model $ modelHandle nxt_s
         Confirmed c ->
@@ -281,38 +280,38 @@ modelHandle s (Execute e) =
                 ConfirmedConnection u tpe ->
                     case tpe of
                         RegularMeta lc le ->
-                            case H.lookup u $ _stPending s of
+                            case lookup u $ _stPending s of
                               Just (PendingReg n tos) ->
                                   let r      = RunningReg u n tos lc le
-                                      nxt_rs = H.insert u r $ _stRunning s
+                                      nxt_rs = insertMap u r $ _stRunning s
                                       nxt_s  = s { _stRunning = nxt_rs } in
                                   Model $ modelHandle nxt_s
                               _ -> Model $ modelHandle s
                         PersistMeta sb lc le ->
-                            case H.lookup u $ _stPending s of
+                            case lookup u $ _stPending s of
                                 Just (PendingPersist g n b) ->
                                     let r      = RunningPersist u g n b sb lc le
-                                        nxt_rs = H.insert u r $ _stRunning s
+                                        nxt_rs = insertMap u r $ _stRunning s
                                         nxt_s  = s { _stRunning = nxt_rs } in
                                     Model $ modelHandle nxt_s
                                 _ -> Model $ modelHandle s
                 ConfirmedPersistAction u ->
-                    case H.lookup u $ _stAction s of
+                    case lookup u $ _stAction s of
                         Just (PendingAction{}) ->
-                            let nxt_as = H.delete u $ _stAction s
+                            let nxt_as = deleteMap u $ _stAction s
                                 nxt_s  = s { _stAction = nxt_as } in
                             Model $ modelHandle nxt_s
                         _ -> Model $ modelHandle s
         Unsubscribed u ->
-            let nxt_ps = H.delete u $ _stRunning s
+            let nxt_ps = deleteMap u $ _stRunning s
                 nxt_s  = s { _stRunning = nxt_ps } in
             Model $ modelHandle nxt_s
         PersistAction g n u t ->
             let a      = PendingAction g n t
-                nxt_as = H.insert u a $ _stAction s
+                nxt_as = insertMap u a $ _stAction s
                 nxt_s  = s { _stAction = nxt_as } in
             Model $ modelHandle nxt_s
 modelHandle s (Query q) =
     case q of
-        QuerySub u    -> H.lookup u $ _stRunning s
-        QueryAction u -> H.lookup u $ _stAction s
+        QuerySub u    -> lookup u $ _stRunning s
+        QueryAction u -> lookup u $ _stAction s

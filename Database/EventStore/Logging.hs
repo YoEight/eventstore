@@ -19,6 +19,7 @@ module Database.EventStore.Logging
 import Control.Exception
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.UUID
 
 --------------------------------------------------------------------------------

@@ -39,18 +39,12 @@ module Database.EventStore.Internal.Execution.Production
     ) where
 
 --------------------------------------------------------------------------------
-import Prelude hiding (take)
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Exception
-import Control.Monad
+import Control.Exception (AsyncException(..), asyncExceptionFromException)
 import Control.Monad.Fix
-import Data.IORef
 import Data.Int
-import Data.Foldable
 
 --------------------------------------------------------------------------------
-import Data.Text
+import ClassyPrelude
 import Data.UUID
 
 --------------------------------------------------------------------------------
@@ -64,7 +58,7 @@ import Database.EventStore.Internal.Manager.Subscription hiding
     , nakPersist
     , abort
     )
-import Database.EventStore.Internal.Operation hiding (retry)
+import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Processor
 import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
@@ -514,7 +508,7 @@ closing env@Env{..} = do
     -- Waits the runner thread to deal with its jobs list.
     atomically $ do
         end <- isEmptyCycleQueue _jobQueue
-        unless end retry
+        unless end retrySTM
 
     traverse_ killThread rutid
 
@@ -554,5 +548,5 @@ newExecutionModel setts disc = do
     _ <- forkFinally (bootstrap env) handler
     return $ Prod nxt_sub $ do
         closed <- connIsClosed conn
-        unless closed retry
+        unless closed retrySTM
         readTMVar disposed

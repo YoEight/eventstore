@@ -15,14 +15,12 @@
 module Database.EventStore.Internal.Manager.Subscription.Message where
 
 --------------------------------------------------------------------------------
-import Data.ByteString (ByteString)
 import Data.Int
-import GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
+import ClassyPrelude hiding (group)
 import Data.DotNet.TimeSpan
 import Data.ProtocolBuffers
-import Data.Text (Text)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Types
