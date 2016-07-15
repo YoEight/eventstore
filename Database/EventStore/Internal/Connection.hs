@@ -65,6 +65,14 @@ data In a where
     Recv  :: In Package
 
 --------------------------------------------------------------------------------
+-- | Represents connection logic action to carry out.
+data Status a where
+    Noop :: Status ()
+    WithConnection :: UUID -> Connection -> In a -> Status a
+    CreateConnection :: In a -> Status a
+    Errored :: ConnectionException -> Status a
+
+--------------------------------------------------------------------------------
 -- | Internal representation of a connection with the server.
 data InternalConnection =
     InternalConnection
@@ -123,113 +131,115 @@ connIsClosed InternalConnection{..} = do
         _      -> return False
 
 --------------------------------------------------------------------------------
+-- Connection Logic
+--------------------------------------------------------------------------------
+onlineLogic :: forall a. TMVar State
+            -> UUID
+            -> Connection
+            -> In a
+            -> STM (Status a)
+onlineLogic var uuid conn input =
+    let status = WithConnection uuid conn input
+        state =
+            case input of
+                Close -> Closed
+                _ -> Online uuid conn in
+    status <$ putTMVar var state
+
+--------------------------------------------------------------------------------
+offlineLogic :: forall a. TMVar State -> In a -> STM (Status a)
+offlineLogic var Close = Noop <$ putTMVar var Closed
+offlineLogic _ other = return $ CreateConnection other
+
+--------------------------------------------------------------------------------
+closedLogic :: forall a. TMVar State -> In a -> STM (Status a)
+closedLogic var input = do
+    putTMVar var Closed
+    case input of
+        Close -> return Noop
+        _ -> return $ Errored ClosedConnection
+
+--------------------------------------------------------------------------------
+connectionLogic :: forall a. TMVar State -> In a -> STM (Status a)
+connectionLogic var input = do
+    state <- takeTMVar var
+    case state of
+        Online uuid conn -> onlineLogic var uuid conn input
+        Offline -> offlineLogic var input
+        Closed -> closedLogic var input
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+handleInput :: forall a. UUID -> Connection -> In a -> IO a
+handleInput _ conn (Send pkg) = send conn pkg
+handleInput _ conn Recv = recv conn
+handleInput uuid _ Id = return uuid
+handleInput _ conn Close = liftIO $ connectionClose conn
+
+--------------------------------------------------------------------------------
 -- | Main connection logic. It will automatically reconnect to the server when
 --   a exception occured while the 'Handle' is accessed.
 execute :: forall a. InternalConnection -> In a -> IO a
-execute InternalConnection{..} i = do
-    res <- atomically $ do
-        s <- takeTMVar _var
-        case s of
-            Offline      -> return $ Right Nothing
-            Online u con -> return $ Right $ Just (u, con)
-            Closed       -> return $ Left ClosedConnection
-    case i of
-        Close ->
-            case res of
-                Left _ -> atomically $ putTMVar _var Closed
-                Right Nothing         -> atomically $ putTMVar _var Closed
-                Right (Just (_, con)) -> do
-                    connectionClose con
-                    atomically $ putTMVar _var Closed
-        other ->
-            case res of
-                Left e -> do
-                    atomically $ putTMVar _var Closed
-                    throwIO e
-                Right alt -> do
-                    sres <- case alt of
-                        Nothing     -> newState _setts _ctx _last _disc
-                        Just (u, h) -> return $ Right $ Online u h
-                    case sres of
-                        Left e -> do
-                            atomically $ putTMVar _var Closed
-                            throwIO e
-                        Right s -> do
-                            atomically $ putTMVar _var s
-                            let Online u con = s
-                            case other of
-                                Id       -> return u
-                                Send pkg -> send con pkg
-                                Recv     -> recv con
-                                Close    -> error "impossible execute"
+execute iconn input = do
+    res <- atomically $ connectionLogic (_var iconn) input
+
+    case res of
+        Noop -> return ()
+        Errored e -> throwIO e
+        WithConnection uuid conn op -> handleInput uuid conn op
+        CreateConnection op -> do
+            (uuid, conn) <- openConnection iconn
+            atomically $ putTMVar (_var iconn) (Online uuid conn)
+            handleInput uuid conn op
 
 --------------------------------------------------------------------------------
-newState :: Settings
-         -> ConnectionContext
-         -> IORef (Maybe EndPoint)
-         -> Discovery
-         -> IO (Either ConnectionException State)
-newState sett ctx ref disc =
-    case s_retry sett of
-        AtMost n ->
-            let loop i = do
-                    _settingsLog sett (Info $ Connecting i)
-                    let action = do
-                            old     <- readIORef ref
-                            ept_opt <- runDiscovery disc old
-                            case ept_opt of
-                                Nothing -> do
-                                    threadDelay delay
-                                    if n <= i
-                                        then return $
-                                             Left MaxAttemptConnectionReached
-                                        else loop (i + 1)
-                                Just ept -> do
-                                    let host = endPointIp ept
-                                        port = endPointPort ept
-                                    st <- connect sett ctx host port
-                                    writeIORef ref (Just ept)
-                                    return $ Right st
-                    catch action $ \(_ :: SomeException) -> do
-                        threadDelay delay
-                        if n <= i
-                            then return $
-                                 Left MaxAttemptConnectionReached
-                            else loop (i + 1) in
-             loop 1
-        KeepRetrying ->
-            let endlessly i = do
-                    _settingsLog sett (Info $ Connecting i)
-                    let action = do
-                            old     <- readIORef ref
-                            ept_opt <- runDiscovery disc old
-                            case ept_opt of
-                                Nothing  -> threadDelay delay
-                                            >> endlessly (i + 1)
-                                Just ept -> do
-                                    let host = endPointIp ept
-                                        port = endPointPort ept
-                                    st <- connect sett ctx host port
-                                    writeIORef ref (Just ept)
-                                    return $ Right st
-                    catch action $ \(_ :: SomeException) ->
-                        threadDelay delay >> endlessly (i + 1) in
-             endlessly (1 :: Int)
+reachedMaxAttempt :: Retry -> Int -> Bool
+reachedMaxAttempt KeepRetrying _ = False
+reachedMaxAttempt (AtMost n) cur = n <= cur
+
+--------------------------------------------------------------------------------
+openConnection :: InternalConnection -> IO (UUID, Connection)
+openConnection InternalConnection{..} = attempt 1
   where
-    delay = s_reconnect_delay_secs sett * secs
+    delay = s_reconnect_delay_secs _setts * secs
+
+    handleFailure trialCount = do
+        threadDelay delay
+        when (reachedMaxAttempt (s_retry _setts) trialCount) $ do
+            atomically $ putTMVar _var Closed
+            throwIO MaxAttemptConnectionReached
+        attempt (trialCount + 1)
+
+    attempt trialCount = do
+        _settingsLog _setts (Info $ Connecting trialCount)
+        old <- readIORef _last
+        ept_opt <- runDiscovery _disc old
+        case ept_opt of
+            Nothing -> handleFailure trialCount
+            Just ept -> do
+                let host = endPointIp ept
+                    port = endPointPort ept
+                res <- tryAny $ connect _setts _ctx host port
+                case res of
+                    Left _ -> handleFailure trialCount
+                    Right st -> st <$ writeIORef _last (Just ept)
 
 --------------------------------------------------------------------------------
 secs :: Int
 secs = 1000000
 
 --------------------------------------------------------------------------------
-connect :: Settings -> ConnectionContext -> String -> Int -> IO State
+connect :: Settings
+        -> ConnectionContext
+        -> String
+        -> Int
+        -> IO (UUID, Connection)
 connect sett ctx host port = do
     let params = ConnectionParams host (fromIntegral port) (s_ssl sett) Nothing
     conn <- connectTo ctx params
     uuid <- nextRandom
     _settingsLog sett (Info $ Connected uuid)
-    return $ Online uuid conn
+    return  (uuid, conn)
 
 --------------------------------------------------------------------------------
 -- Binary operations
