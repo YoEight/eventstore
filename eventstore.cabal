@@ -69,6 +69,7 @@ library
                    Database.EventStore.Internal.Generator
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Processor
+                   Database.EventStore.Internal.Promise
                    Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Manager.Operation.Model
@@ -119,6 +120,7 @@ library
                      , dotnet-timespan
                      , connection ==0.2.*
                      , classy-prelude ==1.*
+                     , lens >=4.5
 
   -- Directories containing source files.
   -- hs-source-dirs:
