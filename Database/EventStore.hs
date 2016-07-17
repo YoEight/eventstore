@@ -510,12 +510,6 @@ data Transaction =
     }
 
 --------------------------------------------------------------------------------
--- | The id of a 'Transaction'.
-newtype TransactionId =
-    TransactionId { _unTransId :: Int64 }
-    deriving (Eq, Ord, Show)
-
---------------------------------------------------------------------------------
 -- | Gets the id of a 'Transaction'.
 transactionId :: Transaction -> TransactionId
 transactionId = _tTransId

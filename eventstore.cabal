@@ -66,6 +66,7 @@ library
                    Database.EventStore.Internal.Connection
                    Database.EventStore.Internal.Discovery
                    Database.EventStore.Internal.Execution.Production
+                   Database.EventStore.Internal.Feature
                    Database.EventStore.Internal.Generator
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Processor

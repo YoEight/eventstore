@@ -308,6 +308,12 @@ positionEnd :: Position
 positionEnd = Position (-1) (-1)
 
 --------------------------------------------------------------------------------
+-- | The id of a 'Transaction'.
+newtype TransactionId =
+    TransactionId { _unTransId :: Int64 }
+    deriving (Eq, Ord, Show)
+
+--------------------------------------------------------------------------------
 -- | Represents a previously written event.
 data RecordedEvent
     = RecordedEvent
