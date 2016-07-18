@@ -187,22 +187,15 @@ module Database.EventStore
     ) where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Exception
-import Control.Monad (when)
-import Data.ByteString (ByteString)
 import Data.Int
 import Data.Maybe
-import Data.Monoid ((<>))
-import Data.Typeable
-import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
+import ClassyPrelude hiding (Builder, group, async)
 import Control.Concurrent.Async
 import Data.List.NonEmpty(NonEmpty(..), nonEmpty)
-import Data.Text hiding (group)
 import Data.UUID
+import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Command
@@ -305,7 +298,7 @@ hasCaughtUp sub = atomically $ _hasCaughtUp sub
 waitTillCatchup :: Subscription S.Catchup -> IO ()
 waitTillCatchup sub = atomically $ do
     caughtUp <- _hasCaughtUp sub
-    when (not caughtUp) retry
+    when (not caughtUp) retrySTM
 
 --------------------------------------------------------------------------------
 _hasCaughtUp :: Subscription S.Catchup -> STM Bool
@@ -383,7 +376,7 @@ nextEvent :: Subscription a -> IO ResolvedEvent
 nextEvent sub = atomically $ do
     m <- _nextEventMaybe sub
     case m of
-        Nothing -> retry
+        Nothing -> retrySTM
         Just e  -> return e
 
 --------------------------------------------------------------------------------
@@ -515,12 +508,6 @@ data Transaction =
     , _tExpVer  :: ExpectedVersion
     , _tConn    :: Connection
     }
-
---------------------------------------------------------------------------------
--- | The id of a 'Transaction'.
-newtype TransactionId =
-    TransactionId { _unTransId :: Int64 }
-    deriving (Eq, Ord, Show)
 
 --------------------------------------------------------------------------------
 -- | Gets the id of a 'Transaction'.

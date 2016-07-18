@@ -18,6 +18,7 @@ module Database.EventStore.Internal.Generator
     ) where
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.UUID
 import System.Random
 

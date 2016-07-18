@@ -38,8 +38,8 @@ module Database.EventStore.Internal.Manager.Subscription
 import Data.Int
 
 --------------------------------------------------------------------------------
-import Data.Sequence
-import Data.Text (Text)
+import ClassyPrelude
+import Data.Sequence (ViewL(..), viewl, dropWhileL)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription.Driver
@@ -167,13 +167,13 @@ catchupSubscription = Subscription $ catchingUp empty empty
                -> Input Catchup a
                -> a
     catchingUp b s (Arrived e) =
-        Subscription $ catchingUp b (s |> e)
+        Subscription $ catchingUp b (s `snoc` e)
     catchingUp b s ReadNext =
         case viewl b of
             EmptyL    -> (Nothing, Subscription $ catchingUp b s)
             e :< rest -> (Just e, Subscription $ catchingUp rest s)
     catchingUp b s (BatchRead es eos nxt_pt) =
-        let nxt_b = foldl (|>) b es
+        let nxt_b = foldl' snoc b es
             nxt_s = dropWhileL (beforeChk nxt_pt) s
             nxt   = if eos
                     then Subscription $ caughtUp nxt_b nxt_s
@@ -185,7 +185,7 @@ catchupSubscription = Subscription $ catchingUp empty empty
              -> Seq ResolvedEvent
              -> Input Catchup a
              -> a
-    caughtUp  b s (Arrived e) = Subscription $ caughtUp b (s |> e)
+    caughtUp  b s (Arrived e) = Subscription $ caughtUp b (s `snoc` e)
     caughtUp b s  ReadNext =
         case viewl b of
             EmptyL -> live s ReadNext
@@ -197,7 +197,7 @@ catchupSubscription = Subscription $ catchingUp empty empty
     caughtUp _ _ CaughtUp = False
 
     live :: forall a. Seq ResolvedEvent -> Input Catchup a -> a
-    live s (Arrived e) = Subscription $ live (s |> e)
+    live s (Arrived e) = Subscription $ live (s `snoc` e)
     live s ReadNext =
         case viewl s of
             EmptyL    -> (Nothing, Subscription $ live s)
@@ -211,7 +211,7 @@ baseSubscription :: forall t. Subscription t
 baseSubscription = Subscription $ go empty
   where
     go :: forall a. Seq ResolvedEvent -> Input t a -> a
-    go s (Arrived e) = Subscription $ go (s |> e)
+    go s (Arrived e) = Subscription $ go (s `snoc` e)
     go s ReadNext =
         case viewl s of
             EmptyL    -> (Nothing, Subscription $ go s)

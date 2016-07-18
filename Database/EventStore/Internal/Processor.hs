@@ -34,7 +34,7 @@ module Database.EventStore.Internal.Processor
 import Data.Int
 
 --------------------------------------------------------------------------------
-import Data.Text
+import ClassyPrelude
 import Data.UUID
 
 --------------------------------------------------------------------------------
@@ -229,7 +229,7 @@ loopOpTransition st (Op.Produce r nxt) =
 loopOpTransition st (Op.Transmit pkg nxt) =
     Transmit pkg (loopOpTransition st nxt)
 loopOpTransition st (Op.Await m) =
-    let nxt_st = st { _opModel = m } in Await $ Processor $ handle nxt_st
+    let nxt_st = st { _opModel = m } in Await $ Processor $ execute nxt_st
 
 --------------------------------------------------------------------------------
 abortTransition :: State r -> Op.Transition r -> [r] -> Transition r
@@ -239,12 +239,12 @@ abortTransition st init_op init_rs = abortOp init_op
     abortOp (Op.Transmit _ nxt) = abortOp nxt
     abortOp _                   = abortSub init_rs
 
-    abortSub []     = Await $ Processor $ handle st
+    abortSub []     = Await $ Processor $ execute st
     abortSub (r:rs) = Produce r (abortSub rs)
 
 --------------------------------------------------------------------------------
-handle :: State r -> In r -> Transition r
-handle = go
+execute :: State r -> In r -> Transition r
+execute = go
   where
     go st (Cmd tpe) =
         case tpe of
@@ -319,4 +319,4 @@ handle = go
 --------------------------------------------------------------------------------
 -- | Creates a new 'Processor' state-machine.
 newProcessor :: Settings -> Generator -> Processor r
-newProcessor setts gen = Processor $ handle $ initState setts gen
+newProcessor setts gen = Processor $ execute $ initState setts gen

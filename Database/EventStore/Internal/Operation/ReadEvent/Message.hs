@@ -16,11 +16,10 @@ module Database.EventStore.Internal.Operation.ReadEvent.Message where
 
 --------------------------------------------------------------------------------
 import Data.Int
-import GHC.Generics
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.ProtocolBuffers
-import Data.Text
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Types

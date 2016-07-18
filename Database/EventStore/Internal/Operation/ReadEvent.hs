@@ -20,8 +20,8 @@ module Database.EventStore.Internal.Operation.ReadEvent
 import Data.Int
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.ProtocolBuffers
-import Data.Text
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation

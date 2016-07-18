@@ -4,8 +4,8 @@
 {-# LANGUAGE TypeFamilies   #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Operation.Read.Common
--- Copyright : (C) 2015 Yorick Laupa
+-- Module : Database.EventStore.Internal.Results
+-- Copyright : (C) 2016 Yorick Laupa
 -- License : (see the file LICENSE)
 --
 -- Maintainer : Yorick Laupa <yo.eight@gmail.com>
@@ -13,18 +13,39 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Operation.Read.Common where
-
---------------------------------------------------------------------------------
-import Data.Foldable (foldMap)
-import Data.Int
+module Database.EventStore.Internal.Results where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.Foldable (foldMap)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+-- | Returned after writing to a stream.
+data WriteResult
+    = WriteResult
+      { writeNextExpectedVersion :: !Int32
+        -- ^ Next expected version of the stream.
+      , writePosition :: !Position
+        -- ^ 'Position' of the write.
+      }
+    deriving (Eq, Show)
+
+--------------------------------------------------------------------------------
+-- | Represents the result of looking up a specific event number from a stream.
+data ReadEvent
+    = ReadEventNotFound
+      { readEventStream :: !Text
+      , readEventNumber :: !Int32
+      }
+    | ReadEvent
+      { readEventStream   :: !Text
+      , readEventNumber   :: !Int32
+      , readEventResolved :: !ResolvedEvent
+      } deriving Show
 
 --------------------------------------------------------------------------------
 -- | Enumeration detailing the possible outcomes of reading a stream.
@@ -137,3 +158,7 @@ instance Slice AllSlice where
     sliceEOS       = _saEOS
     sliceFrom      = _saFrom
     sliceNext      = _saNext
+
+--------------------------------------------------------------------------------
+-- | Returned after deleting a stream. 'Position' of the write.
+newtype DeleteResult = DeleteResult Position deriving (Eq, Show)

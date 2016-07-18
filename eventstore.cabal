@@ -65,10 +65,14 @@ library
   other-modules:   Database.EventStore.Internal.Command
                    Database.EventStore.Internal.Connection
                    Database.EventStore.Internal.Discovery
+                   Database.EventStore.Internal.Engine
                    Database.EventStore.Internal.Execution.Production
+                   Database.EventStore.Internal.Feature
                    Database.EventStore.Internal.Generator
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Processor
+                   Database.EventStore.Internal.Promise
+                   Database.EventStore.Internal.Results
                    Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Manager.Operation.Model
@@ -98,16 +102,17 @@ library
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
 
+  default-extensions: NoImplicitPrelude,
+                      FlexibleContexts
+
   -- Other library packages from which modules are imported.
   build-depends:       base       >=4.7      && <5
                      , aeson      >=0.8      && <0.12
                      , async      >=2.0      && <2.2
-                     , bytestring >=0.10.4   && <0.11
                      , cereal     >=0.4      && <0.6
-                     , containers >=0.5      && <0.6
+                     , containers ==0.5.*
                      , protobuf   >=0.2.1.1  && <0.3
                      , random     ==1.*
-                     , text       >=1.1.1    && <1.3
                      , time       >=1.4      && <1.7
                      , uuid       ==1.3.*
                      , unordered-containers
@@ -118,6 +123,9 @@ library
                      , http-client== 0.5.*
                      , dotnet-timespan
                      , connection ==0.2.*
+                     , classy-prelude ==1.*
+                     , lens >=4.5
+                     , mtl
 
   -- Directories containing source files.
   -- hs-source-dirs:

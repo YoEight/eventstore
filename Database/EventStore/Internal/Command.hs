@@ -17,6 +17,9 @@ import Data.Word
 import Numeric
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
+
+--------------------------------------------------------------------------------
 -- | Internal command representation.
 newtype Command = Command { cmdWord8 :: Word8 } deriving (Eq, Ord, Num)
 
