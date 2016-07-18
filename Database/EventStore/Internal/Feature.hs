@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Feature
@@ -17,6 +18,9 @@ import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Manager.Subscription
+import Database.EventStore.Internal.Promise
+import Database.EventStore.Internal.Results
+import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -31,15 +35,15 @@ data TargetedStreamEvents
 
 --------------------------------------------------------------------------------
 data OperationFeature
-    = SendEvent Text ExpectedVersion [Event]
-    | ReadEvent Text Int32 Bool
+    = SendEvents Text ExpectedVersion [Event] (Promise WriteResult)
+    | ReadEvent Text Int32 Bool (Promise (ReadResult 'RegularStream ReadEvent))
     | ReadEvents ReadDirection Int32 Bool TargetedStreamEvents
-    | DeleteStream Text ExpectedVersion Bool
-    | StartTransaction Text ExpectedVersion
-    | TransactionWriteEvents TransactionId [Event]
-    | TransactionCommit TransactionId
-    | SetStreamMetadata Text ExpectedVersion StreamMetadata
-    | GetStreamMetadata Text
+    | DeleteStream Text ExpectedVersion Bool (Promise DeleteResult)
+    | StartTransaction Text ExpectedVersion (Promise TransactionId)
+    | TransactionWriteEvents TransactionId [Event] (Promise ())
+    | TransactionCommit TransactionId (Promise WriteResult)
+    | SetStreamMetadata Text ExpectedVersion StreamMetadata (Promise WriteResult)
+    | GetStreamMetadata Text (Promise StreamMetadataResult)
 
 --------------------------------------------------------------------------------
 data TargetedSubscription
@@ -58,4 +62,5 @@ data PersistentSubscriptionFeature
 --------------------------------------------------------------------------------
 data SubscriptionFeature
     = Subscribe TargetedSubscription
-    | PersistentFeature PersistentSubscriptionFeature
+    | Unsubscribe UUID
+    | PersistentFeature  (Promise ()) PersistentSubscriptionFeature

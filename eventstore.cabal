@@ -65,12 +65,14 @@ library
   other-modules:   Database.EventStore.Internal.Command
                    Database.EventStore.Internal.Connection
                    Database.EventStore.Internal.Discovery
+                   Database.EventStore.Internal.Engine
                    Database.EventStore.Internal.Execution.Production
                    Database.EventStore.Internal.Feature
                    Database.EventStore.Internal.Generator
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Promise
+                   Database.EventStore.Internal.Results
                    Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Manager.Operation.Model
@@ -100,7 +102,8 @@ library
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
 
-  default-extensions: NoImplicitPrelude
+  default-extensions: NoImplicitPrelude,
+                      FlexibleContexts
 
   -- Other library packages from which modules are imported.
   build-depends:       base       >=4.7      && <5
@@ -122,6 +125,7 @@ library
                      , connection ==0.2.*
                      , classy-prelude ==1.*
                      , lens >=4.5
+                     , mtl
 
   -- Directories containing source files.
   -- hs-source-dirs:
