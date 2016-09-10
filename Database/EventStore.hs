@@ -179,7 +179,7 @@ module Database.EventStore
     , exactEventVersion
     , streamExists
       -- * Re-export
-    , module Control.Concurrent.Async
+    , waitAsync
     , (<>)
     , NonEmpty(..)
     , nonEmpty
@@ -191,8 +191,7 @@ import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import ClassyPrelude hiding (Builder, group, async)
-import Control.Concurrent.Async
+import ClassyPrelude hiding (Builder, group)
 import Data.List.NonEmpty(NonEmpty(..), nonEmpty)
 import Data.UUID
 import Network.Connection (TLSSettings)
