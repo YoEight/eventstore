@@ -1,3 +1,8 @@
+0.13.1.4
+--------
+* Bump `aeson` version.
+* Internal connection refactoring.
+
 0.13.1.3
 --------
 * Bump `http-client` version.
