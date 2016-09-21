@@ -1,3 +1,7 @@
+0.13.1.5
+--------
+* Fix an internal connection bug.
+
 0.13.1.4
 --------
 * Bump `aeson` version.

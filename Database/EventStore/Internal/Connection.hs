@@ -246,11 +246,11 @@ connect sett ctx host port = do
 --------------------------------------------------------------------------------
 recv :: Connection -> IO Package
 recv con = do
-    header_bs <- connectionGet con 4
+    header_bs <- connectionGetExact con 4
     case runGet getLengthPrefix header_bs of
         Left _              -> throwIO WrongPackageFraming
         Right length_prefix -> do
-            bs <- connectionGet con length_prefix
+            bs <- connectionGetExact con length_prefix
             case runGet getPackage bs of
                 Left e    -> throwIO $ PackageParsingError e
                 Right pkg -> return pkg
