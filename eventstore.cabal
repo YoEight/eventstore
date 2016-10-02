@@ -10,7 +10,7 @@ name:                eventstore
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.13.1.5
+version:             0.13.1.6
 
 tested-with: GHC >= 7.8.3 && < 7.11
 
@@ -146,4 +146,5 @@ test-suite integration-tests
                    stm,
                    time,
                    dotnet-timespan,
-                   connection
+                   connection,
+                   async

@@ -16,10 +16,12 @@
 module Tests where
 
 --------------------------------------------------------------------------------
+import Control.Concurrent
 import Control.Exception
 import Data.Maybe (catMaybes)
 
 --------------------------------------------------------------------------------
+import Control.Concurrent.Async
 import Data.Aeson
 import Data.DotNet.TimeSpan
 import Test.Tasty
@@ -41,6 +43,8 @@ tests conn = testGroup "EventStore actions tests"
     , testCase "Real $all backward" $ readAllEventsBackwardTest conn
     , testCase "Subscription test" $ subscribeTest conn
     , testCase "Subscription from test" $ subscribeFromTest conn
+    , testCase "Subscription from catchup not blocking" $
+          subscribeFromNoStreamTest conn
     , testCase "Set Stream Metadata" $ setStreamMetadataTest conn
     , testCase "Get Stream Metadata" $ getStreamMetadataTest conn
     , testCase "Create persistent sub" $ createPersistentTest conn
@@ -224,6 +228,35 @@ subscribeFromTest conn = do
             return False
     res <- catch action $ \(_ :: SubscriptionClosed) -> return True
     assertBool "Should have raised an exception" res
+
+--------------------------------------------------------------------------------
+data SubNoStreamTest
+  = SubNoStreamTestSuccess
+  | SubNoStreamTestWrongException
+  | SubNoStreamTestTimeout
+  deriving (Eq, Show)
+
+--------------------------------------------------------------------------------
+secs :: Int
+secs = 1000 * 1000
+
+--------------------------------------------------------------------------------
+subscribeFromNoStreamTest :: Connection -> IO ()
+subscribeFromNoStreamTest conn = do
+  sub <- subscribeFrom conn "non-existent-stream" False Nothing Nothing
+  let subAction = do
+          res <- try $ waitTillCatchup sub
+          case res of
+              Left InvalidOperation{} -> return SubNoStreamTestSuccess
+              _ -> return SubNoStreamTestWrongException
+      timeout = do
+          threadDelay (10 * secs)
+          return SubNoStreamTestTimeout
+
+  res <- race subAction timeout
+  case res of
+    Left r -> assertEqual "Wrong test result" SubNoStreamTestSuccess r
+    Right r -> assertEqual "Wrong test result" SubNoStreamTestSuccess r
 
 --------------------------------------------------------------------------------
 setStreamMetadataTest :: Connection -> IO ()

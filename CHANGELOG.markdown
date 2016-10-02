@@ -1,3 +1,7 @@
+0.13.1.6
+--------
+* Fix a deadlock on user side when asking a catchup subscription on a stream that doesn't exist.
+
 0.13.1.5
 --------
 * Fix an internal connection bug.
