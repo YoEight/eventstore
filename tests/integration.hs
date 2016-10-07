@@ -14,7 +14,7 @@
 module Main where
 
 --------------------------------------------------------------------------------
-import Data.Time
+import ClassyPrelude
 import Database.EventStore
 import Database.EventStore.Logging
 import Test.Tasty
@@ -40,7 +40,7 @@ _logger :: Log -> IO ()
 _logger l = do
     t <- getCurrentTime
     putStr "["
-    putStr $ show t
+    putStr $ pack $ show t
     putStr "]  "
     showLog l
   where

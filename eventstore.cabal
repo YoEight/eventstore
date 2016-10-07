@@ -133,6 +133,8 @@ test-suite integration-tests
     hs-source-dirs: tests
     main-is: integration.hs
 
+    default-extensions: NoImplicitPrelude
+
     other-modules: Tests
 
     ghc-options: -Wall
@@ -147,4 +149,5 @@ test-suite integration-tests
                    time,
                    dotnet-timespan,
                    connection,
-                   async
+                   classy-prelude,
+                   uuid
