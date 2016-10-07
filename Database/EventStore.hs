@@ -883,7 +883,14 @@ createSubAsync mk rcv send quit = go
   where
     go (S.SubConfirmed run) = atomically $ mk run
     go (S.EventAppeared e) = atomically $ do
-        SubState sm close <- rcv
-        let nxt = S.eventArrived e sm
-        send $ SubState nxt close
+          st <- rcv
+          case st of
+              SubState sm close ->
+                  let nxt = S.eventArrived e sm in
+                  send $ SubState nxt close
+              SubException _ ->
+                  -- At this moment [07 October 2016], this can only happen during
+                  -- the first phase of a catchup subscription where the user
+                  -- asked for a subscription on a stream that doesn't exist.
+                return ()
     go (S.Dropped r) = atomically $ quit r
