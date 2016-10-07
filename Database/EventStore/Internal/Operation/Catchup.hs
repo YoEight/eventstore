@@ -38,8 +38,9 @@ defaultBatchSize :: Int32
 defaultBatchSize = 500
 
 --------------------------------------------------------------------------------
-streamNotFound :: OperationError
-streamNotFound = InvalidOperation "Catchup. inexistant stream"
+streamNotFound :: Text -> OperationError
+streamNotFound stream =
+  InvalidOperation $ "Catchup. inexistant stream [" <> stream <> "]"
 
 --------------------------------------------------------------------------------
 -- | Catchup operation state.
@@ -49,6 +50,11 @@ data CatchupState
     | AllCatchup Int64 Int64
       -- ^ Indicates the commit and prepare position. Used when catching up from
       --   the $all stream.
+
+--------------------------------------------------------------------------------
+streamName :: CatchupState -> Text
+streamName (RegularCatchup stream _) = stream
+streamName _ = "$all"
 
 --------------------------------------------------------------------------------
 -- | Stream catching up operation.
@@ -79,7 +85,7 @@ catchup setts init_tpe tos bat_siz = go init_tpe
                         tmp_tpe = AllCatchup nxt_c nxt_p
                         chk     = CheckpointPosition $ sliceNext as
                     return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
-                Left rr -> fromReadResult rr $ \as ->
+                Left rr -> fromReadResult (streamName tpe) rr $ \as ->
                     let RegularCatchup s _ = tpe
                         nxt = sliceNext as
                         tmp_tpe = RegularCatchup s nxt
@@ -90,10 +96,13 @@ catchup setts init_tpe tos bat_siz = go init_tpe
             when (not eos) $ go nxt_tpe
 
 --------------------------------------------------------------------------------
-fromReadResult :: ReadResult 'RegularStream a -> (a -> SM b x) -> SM b x
-fromReadResult res k =
+fromReadResult :: Text
+               -> ReadResult 'RegularStream a
+               -> (a -> SM b x)
+               -> SM b x
+fromReadResult stream res k =
     case res of
-        ReadNoStream        -> failure streamNotFound
+        ReadNoStream        -> failure $ streamNotFound stream
         ReadStreamDeleted s -> failure $ StreamDeleted s
         ReadNotModified     -> failure $ ServerError Nothing
         ReadError e         -> failure $ ServerError e
