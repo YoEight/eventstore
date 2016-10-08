@@ -1,3 +1,8 @@
+0.13.1.7
+--------
+* Report stream name when facing a 'Stream not found' error from the server on catchup subscription.
+* Prevent the driver from deadlocking when asking for catchup subscription on a stream that doesn't exist.
+
 0.13.1.6
 --------
 * Fix a deadlock on user side when asking a catchup subscription on a stream that doesn't exist.
