@@ -44,7 +44,8 @@ import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 import qualified Database.EventStore.Internal.Manager.Operation.Model as Op
-import qualified Database.EventStore.Internal.Manager.Subscription    as Sub
+import qualified Database.EventStore.Internal.Manager.Subscription.Driver as Sub
+import qualified Database.EventStore.Internal.Manager.Subscription.Model as Sub
 
 --------------------------------------------------------------------------------
 -- | Type of inputs handled by the 'Processor' driver.

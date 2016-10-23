@@ -108,11 +108,10 @@ module Database.EventStore
     , SubscriptionClosed(..)
     , SubscriptionId
     , Subscription
-    , S.Running(..)
-    , S.SubDropReason(..)
+    , SubDropReason(..)
     , waitConfirmation
       -- * Volatile Subscription
-    , S.Regular
+    , Regular
     , subscribe
     , subscribeToAll
     , getSubId
@@ -125,17 +124,17 @@ module Database.EventStore
     , getSubLastCommitPos
     , getSubLastEventNumber
       -- * Catch-up Subscription
-    , S.Catchup
+    , Catchup
     , subscribeFrom
     , subscribeToAllFrom
     , waitTillCatchup
     , hasCaughtUp
      -- * Persistent Subscription
-    , S.Persistent
+    , Persistent
     , PersistentSubscriptionSettings(..)
     , SystemConsumerStrategy(..)
     , NakAction(..)
-    , S.PersistActionException(..)
+    , PersistActionException(..)
     , acknowledge
     , acknowledgeEvents
     , failed
@@ -194,14 +193,14 @@ import Data.Maybe
 --------------------------------------------------------------------------------
 import ClassyPrelude hiding (Builder, group)
 import Data.List.NonEmpty(NonEmpty(..), nonEmpty)
-import Data.UUID
 import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Connection
 import           Database.EventStore.Internal.Discovery
-import qualified Database.EventStore.Internal.Manager.Subscription as S
+import           Database.EventStore.Internal.Manager.Subscription
+import           Database.EventStore.Internal.Manager.Subscription.Driver hiding (unsubscribe)
 import           Database.EventStore.Internal.Manager.Subscription.Message
 import           Database.EventStore.Internal.Operation (OperationError(..))
 import qualified Database.EventStore.Internal.Operations as Op
@@ -278,213 +277,6 @@ sendEvent :: Connection
 sendEvent mgr evt_stream exp_ver evt =
     sendEvents mgr evt_stream exp_ver [evt]
 
---------------------------------------------------------------------------------
--- | Represents a subscription id.
-newtype SubscriptionId = SubId UUID deriving (Eq, Ord, Show)
-
---------------------------------------------------------------------------------
--- | Determines whether or not any link events encontered in the stream will be
---   resolved.
-getSubResolveLinkTos :: Subscription S.Regular -> Bool
-getSubResolveLinkTos = S._subTos . _subInner
-
---------------------------------------------------------------------------------
--- | Non blocking version of `waitTillCatchup`.
-hasCaughtUp :: Subscription S.Catchup -> IO Bool
-hasCaughtUp sub = atomically $ _hasCaughtUp sub
-
---------------------------------------------------------------------------------
--- | Waits until 'CatchupSubscription' subscription catch-up its stream.
-waitTillCatchup :: Subscription S.Catchup -> IO ()
-waitTillCatchup sub = atomically $ do
-    caughtUp <- _hasCaughtUp sub
-    when (not caughtUp) retrySTM
-
---------------------------------------------------------------------------------
-_hasCaughtUp :: Subscription S.Catchup -> STM Bool
-_hasCaughtUp Subscription{..} = do
-    res <- _subState
-    case res of
-        SubState sm _ -> return $ S.hasCaughtUp sm
-        SubException e -> throwSTM e
-
---------------------------------------------------------------------------------
--- | Tracks a 'Subcription' lifecycle. It holds a 'Subscription' state machine
---   and `SubDropReason` if any.
-data SubState a
-    = SubState (S.Subscription a) (Maybe S.SubDropReason)
-    | forall e. Exception e => SubException e
-      -- ^ Hack used to cover a special exception that can arise from
-      --   a catchup subscription for instance. One example is when asking a
-      --   catchup subscription on stream that doesn't exist yet.
-
---------------------------------------------------------------------------------
--- | It's possible to subscribe to a stream and be notified when new events are
---   written to that stream. There are three types of subscription which are
---   available, all of which can be useful in different situations.
---
---     * 'S.Regular'
---
---     * 'S.Catchup'
---
---     * 'S.Persistent'
-data Subscription a =
-    Subscription
-    { _subState    :: STM (SubState a)
-    , _subSetState :: SubState a -> STM ()
-    , _subRun      :: TMVar S.Running
-    , _subStream   :: Text
-    , _subProd     :: Production
-    , _subInner    :: a
-    }
-
---------------------------------------------------------------------------------
--- | Gets the ID of the subscription.
-getSubId :: Subscription a -> IO SubscriptionId
-getSubId Subscription{..} = atomically $ do
-    run <- readTMVar _subRun
-    return $ SubId $ S.runningUUID run
-
---------------------------------------------------------------------------------
--- | Gets the subscription stream name.
-getSubStream :: Subscription a -> Text
-getSubStream = _subStream
-
---------------------------------------------------------------------------------
--- | Asynchronously unsubscribe from the the stream.
-unsubscribe :: Subscription a -> IO ()
-unsubscribe Subscription{..} = do
-    run <- atomically $ readTMVar _subRun
-    pushUnsubscribe _subProd run
-
---------------------------------------------------------------------------------
--- | If the subscription is on the $all stream.
-isSubscribedToAll :: Subscription a -> Bool
-isSubscribedToAll = (== "") . getSubStream
-
---------------------------------------------------------------------------------
--- | The last commit position seen on the subscription (if this a subscription
---   to $all stream).
-getSubLastCommitPos :: Subscription a -> IO Int64
-getSubLastCommitPos Subscription{..} = atomically $ do
-    run <- readTMVar _subRun
-    return $ S.runningLastCommitPosition run
-
---------------------------------------------------------------------------------
--- | The last event number seen on the subscription (if this is a subscription
---   to a single stream).
-getSubLastEventNumber :: Subscription a -> IO (Maybe Int32)
-getSubLastEventNumber Subscription{..} = atomically $ do
-    run <- readTMVar _subRun
-    return $ S.runningLastEventNumber run
-
---------------------------------------------------------------------------------
--- | Awaits for the next event.
-nextEvent :: Subscription a -> IO ResolvedEvent
-nextEvent sub = atomically $ do
-    m <- _nextEventMaybe sub
-    case m of
-        Nothing -> retrySTM
-        Just e  -> return e
-
---------------------------------------------------------------------------------
--- | Non blocking version of 'nextEvent'.
-nextEventMaybe :: Subscription a -> IO (Maybe ResolvedEvent)
-nextEventMaybe = atomically . _nextEventMaybe
-
---------------------------------------------------------------------------------
--- | Waits until the `Subscription` has been confirmed.
-waitConfirmation :: Subscription a -> IO ()
-waitConfirmation s = atomically $ do
-    _ <- readTMVar $ _subRun s
-    return ()
-
---------------------------------------------------------------------------------
-_nextEventMaybe :: Subscription a -> STM (Maybe ResolvedEvent)
-_nextEventMaybe Subscription{..} = do
-    st <- _subState
-    case st of
-        SubException e -> throwSTM e
-        SubState sub close -> do
-            run <- readTMVar _subRun
-            let (res, nxt) = S.readNext sub
-            case res of
-                Nothing -> do
-                    case close of
-                      Nothing  -> return Nothing
-                      Just err -> throwSTM $ SubscriptionClosed run err
-                Just e -> do
-                  _subSetState $ SubState nxt close
-                  return $ Just e
-
---------------------------------------------------------------------------------
--- | Acknowledges those event ids have been successfully processed.
-notifyEventsProcessed :: Subscription S.Persistent -> [UUID] -> IO ()
-notifyEventsProcessed Subscription{..} evts = do
-    run <- atomically $ readTMVar _subRun
-    pushAckPersist _subProd run evts
-
---------------------------------------------------------------------------------
--- | Acknowledges that 'ResolvedEvent' has been successfully processed.
-acknowledge :: Subscription S.Persistent -> ResolvedEvent -> IO ()
-acknowledge sub e = notifyEventsProcessed sub [resolvedEventOriginalId e]
-
---------------------------------------------------------------------------------
--- | Acknowledges those 'ResolvedEvent's have been successfully processed.
-acknowledgeEvents :: Subscription S.Persistent -> [ResolvedEvent] -> IO ()
-acknowledgeEvents sub = notifyEventsProcessed sub . fmap resolvedEventOriginalId
-
---------------------------------------------------------------------------------
--- | Mark a message that has failed processing. The server will take action
---   based upon the action parameter.
-failed :: Subscription S.Persistent
-       -> ResolvedEvent
-       -> NakAction
-       -> Maybe Text
-       -> IO ()
-failed sub e a r = notifyEventsFailed sub a r [resolvedEventOriginalId e]
-
---------------------------------------------------------------------------------
--- | Mark messages that have failed processing. The server will take action
---   based upon the action parameter.
-eventsFailed :: Subscription S.Persistent
-             -> [ResolvedEvent]
-             -> NakAction
-             -> Maybe Text
-             -> IO ()
-eventsFailed sub evts a r =
-    notifyEventsFailed sub a r $ fmap resolvedEventOriginalId evts
-
---------------------------------------------------------------------------------
--- | Acknowledges those event ids have failed to be processed successfully.
-notifyEventsFailed :: Subscription S.Persistent
-                   -> NakAction
-                   -> Maybe Text
-                   -> [UUID]
-                   -> IO ()
-notifyEventsFailed Subscription{..} act res evts = do
-    run <- atomically $ readTMVar _subRun
-    pushNakPersist _subProd run act res evts
-
---------------------------------------------------------------------------------
--- | Modifies 'SubState' internal state machine, letting any 'SubDropReason'
---   untouched.
-modifySubSM :: (S.Subscription a -> S.Subscription a)
-            -> SubState a
-            -> SubState a
-modifySubSM k (SubState sm r) = SubState (k sm) r
-modifySubSM _ s = s
-
---------------------------------------------------------------------------------
--- | This exception is raised when the user tries to get the next event from a
---   'Subscription' that is already closed.
-data SubscriptionClosed =
-    SubscriptionClosed S.Running S.SubDropReason
-    deriving (Show, Typeable)
-
---------------------------------------------------------------------------------
-
-instance Exception SubscriptionClosed
 --------------------------------------------------------------------------------
 -- | Sends a list of 'Event' to given stream.
 sendEvents :: Connection
@@ -664,33 +456,39 @@ readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
     Position c_pos p_pos = pos
 
 --------------------------------------------------------------------------------
+mkSubEnv :: Connection -> SubEnv
+mkSubEnv Connection{..} =
+    SubEnv
+    { subSettings = _settings
+    , subPushOp = pushOperation _prod
+    , subPushConnect = \k cmd ->
+          case cmd of
+              PushRegular stream tos ->
+                  pushConnectStream _prod k stream tos
+              PushPersistent group stream size ->
+                  pushConnectPersist _prod k group stream size
+    , subPushUnsub = pushUnsubscribe _prod
+    , subAckCmd = \cmd run uuids ->
+          case cmd of
+              AckCmd -> pushAckPersist _prod run uuids
+              NakCmd act res -> pushNakPersist _prod run act res uuids
+    }
+
+--------------------------------------------------------------------------------
 -- | Subcribes to given stream.
 subscribe :: Connection
           -> Text       -- ^ Stream name
           -> Bool       -- ^ Resolve Link Tos
-          -> IO (Subscription S.Regular)
-subscribe Connection{..} stream_id res_lnk_tos = do
-    mvar <- newEmptyTMVarIO
-    var  <- newTVarIO $ SubState S.regularSubscription Nothing
-    let mk r = putTMVar mvar r
-        recv = readTVar var
-        send = writeTVar var
-        dropped r = do
-            SubState sm _ <- readTVar var
-            writeTVar var $ SubState sm (Just r)
-        cb = createSubAsync mk recv send dropped
-    pushConnectStream _prod cb stream_id res_lnk_tos
-    let getState = readTVar var
-        setState = writeTVar var
-    return $ Subscription getState setState mvar stream_id _prod
-      (S.Regular res_lnk_tos)
+          -> IO (Subscription Regular)
+subscribe conn streamId resLnkTos =
+    regularSub (mkSubEnv conn) streamId resLnkTos
 
 --------------------------------------------------------------------------------
 -- | Subcribes to $all stream.
 subscribeToAll :: Connection
                -> Bool       -- ^ Resolve Link Tos
-               -> IO (Subscription S.Regular)
-subscribeToAll conn res_lnk_tos = subscribe conn "" res_lnk_tos
+               -> IO (Subscription Regular)
+subscribeToAll conn = subscribe conn ""
 
 --------------------------------------------------------------------------------
 -- | Subscribes to given stream. If last checkpoint is defined, this will
@@ -702,11 +500,11 @@ subscribeFrom :: Connection
               -> Bool        -- ^ Resolve Link Tos
               -> Maybe Int32 -- ^ Last checkpoint
               -> Maybe Int32 -- ^ Batch size
-              -> IO (Subscription S.Catchup)
-subscribeFrom conn stream_id res_lnk_tos last_chk_pt batch_m =
-    subscribeFromCommon conn stream_id res_lnk_tos batch_m tpe
+              -> IO (Subscription Catchup)
+subscribeFrom conn streamId resLnkTos lastChkPt batch =
+    subscribeFromCommon conn resLnkTos batch tpe
   where
-    tpe = Op.RegularCatchup stream_id (fromMaybe 0 last_chk_pt)
+    tpe = Op.RegularCatchup streamId (fromMaybe 0 lastChkPt)
 
 --------------------------------------------------------------------------------
 -- | Same as 'subscribeFrom' but applied to $all stream.
@@ -714,62 +512,26 @@ subscribeToAllFrom :: Connection
                    -> Bool           -- ^ Resolve Link Tos
                    -> Maybe Position -- ^ Last checkpoint
                    -> Maybe Int32    -- ^ Batch size
-                   -> IO (Subscription S.Catchup)
-subscribeToAllFrom conn res_lnk_tos last_chk_pt batch_m =
-    subscribeFromCommon conn "" res_lnk_tos batch_m tpe
+                   -> IO (Subscription Catchup)
+subscribeToAllFrom conn resLnkTos lastChkPt batch =
+    subscribeFromCommon conn resLnkTos batch tpe
   where
-    Position c_pos p_pos = fromMaybe positionStart last_chk_pt
-    tpe = Op.AllCatchup c_pos p_pos
+    Position cPos pPos = fromMaybe positionStart lastChkPt
+    tpe = Op.AllCatchup cPos pPos
 
 --------------------------------------------------------------------------------
 subscribeFromCommon :: Connection
-                    -> Text
                     -> Bool
                     -> Maybe Int32
                     -> Op.CatchupState
-                    -> IO (Subscription S.Catchup)
-subscribeFromCommon Connection{..} stream_id res_lnk_tos batch_m tpe = do
-    mvarRun <- newEmptyTMVarIO
-    mvarSub <- newEmptyTMVarIO
-    let readFrom res =
-            case res of
-                -- We want to notify the user that something went wrong in the
-                -- first phase of a catchup subscription (e.g. reading the
-                -- stream forward until we catchup to stream's end). This
-                -- prevents a deadlock on user side in case where the user calls
-                -- `waitTillCatchup` on a stream that doesn't exist.
-                Left e -> atomically $ do
-                  isEmpty <- isEmptyTMVar mvarSub
-                  if isEmpty
-                      then putTMVar mvarSub (SubException e)
-                      else () <$ swapTMVar mvarSub (SubException e)
-
-                Right (xs, eos, chk) -> atomically $ do
-                    -- When a catchup subscription receives events for the
-                    -- first time.
-                    whenM (isEmptyTMVar mvarSub) $ do
-                        let initState = SubState S.catchupSubscription Nothing
-                        putTMVar mvarSub initState
-
-                    subState <- takeTMVar mvarSub
-                    let nxtSubState =
-                          modifySubSM (S.batchRead xs eos chk) subState
-
-                    putTMVar mvarSub nxtSubState
-        mk   = putTMVar mvarRun
-        rcv  = readTMVar mvarSub
-        send = \x -> () <$ swapTMVar mvarSub x
-        dropped r = do
-            SubState sm _ <- takeTMVar mvarSub
-            putTMVar mvarSub $ SubState sm (Just r)
-        op  = Op.catchup _settings tpe res_lnk_tos batch_m
-        cb  = createSubAsync mk rcv send dropped
-
-    pushOperation _prod readFrom op
-    pushConnectStream _prod cb stream_id res_lnk_tos
-    let getState = readTMVar mvarSub
-        setState = \x -> () <$ swapTMVar mvarSub x
-    return $ Subscription getState setState mvarRun stream_id _prod S.Catchup
+                    -> IO (Subscription Catchup)
+subscribeFromCommon conn resLnkTos batch tpe =
+    catchupSub (mkSubEnv conn) params
+  where
+    params = CatchupParams { catchupResLnkTos = resLnkTos
+                           , catchupState = tpe
+                           , catchupBatchSize = batch
+                           }
 
 --------------------------------------------------------------------------------
 -- | Asynchronously sets the metadata for a stream.
@@ -799,7 +561,7 @@ createPersistentSubscription :: Connection
                              -> Text
                              -> Text
                              -> PersistentSubscriptionSettings
-                             -> IO (Async (Maybe S.PersistActionException))
+                             -> IO (Async (Maybe PersistActionException))
 createPersistentSubscription Connection{..} group stream sett = do
     mvar <- newEmptyTMVarIO
     let _F res = atomically $
@@ -815,7 +577,7 @@ updatePersistentSubscription :: Connection
                              -> Text
                              -> Text
                              -> PersistentSubscriptionSettings
-                             -> IO (Async (Maybe S.PersistActionException))
+                             -> IO (Async (Maybe PersistActionException))
 updatePersistentSubscription Connection{..} group stream sett = do
     mvar <- newEmptyTMVarIO
     let _F res = atomically $
@@ -830,7 +592,7 @@ updatePersistentSubscription Connection{..} group stream sett = do
 deletePersistentSubscription :: Connection
                              -> Text
                              -> Text
-                             -> IO (Async (Maybe S.PersistActionException))
+                             -> IO (Async (Maybe PersistActionException))
 deletePersistentSubscription Connection{..} group stream = do
     mvar <- newEmptyTMVarIO
     let _F res = atomically $
@@ -847,22 +609,9 @@ connectToPersistentSubscription :: Connection
                                 -> Text
                                 -> Text
                                 -> Int32
-                                -> IO (Subscription S.Persistent)
-connectToPersistentSubscription Connection{..} group stream bufSize = do
-    mvar <- newEmptyTMVarIO
-    var  <- newTVarIO $ SubState S.persistentSubscription Nothing
-    let mk r = putTMVar mvar r
-        recv = readTVar var
-        send = writeTVar var
-        dropped r = do
-            SubState sm _ <- readTVar var
-            writeTVar var $ SubState sm (Just r)
-        cb = createSubAsync mk recv send dropped
-    pushConnectPersist _prod cb group stream bufSize
-    let getState = readTVar var
-        setState = writeTVar var
-    return $ Subscription getState setState mvar stream _prod
-      (S.Persistent group)
+                                -> IO (Subscription Persistent)
+connectToPersistentSubscription conn group stream bufSize =
+    persistentSub (mkSubEnv conn) group stream bufSize
 
 --------------------------------------------------------------------------------
 createOpAsync :: IO (Either OperationError a -> IO (), Async a)
@@ -872,25 +621,3 @@ createOpAsync = do
         res <- readMVar mvar
         either throwIO return res
     return (putMVar mvar, as)
-
---------------------------------------------------------------------------------
-createSubAsync :: (S.Running -> STM ())
-               -> STM (SubState a)
-               -> (SubState a -> STM ())
-               -> (S.SubDropReason -> STM ())
-               -> (S.SubConnectEvent -> IO ())
-createSubAsync mk rcv send quit = go
-  where
-    go (S.SubConfirmed run) = atomically $ mk run
-    go (S.EventAppeared e) = atomically $ do
-          st <- rcv
-          case st of
-              SubState sm close ->
-                  let nxt = S.eventArrived e sm in
-                  send $ SubState nxt close
-              SubException _ ->
-                  -- At this moment [07 October 2016], this can only happen during
-                  -- the first phase of a catchup subscription where the user
-                  -- asked for a subscription on a stream that doesn't exist.
-                return ()
-    go (S.Dropped r) = atomically $ quit r

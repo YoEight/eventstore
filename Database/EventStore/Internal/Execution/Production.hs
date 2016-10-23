@@ -51,13 +51,14 @@ import Data.UUID
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Generator
-import Database.EventStore.Internal.Manager.Subscription hiding
+import Database.EventStore.Internal.Manager.Subscription.Driver hiding
     ( submitPackage
     , unsubscribe
     , ackPersist
     , nakPersist
     , abort
     )
+import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Processor
 import Database.EventStore.Internal.Types
