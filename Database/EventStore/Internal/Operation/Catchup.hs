@@ -14,7 +14,10 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.Catchup
     ( CatchupState(..)
+    , CatchupOpResult(..)
+    , Checkpoint(..)
     , catchup
+    , catchupStreamName
     ) where
 
 --------------------------------------------------------------------------------
@@ -25,13 +28,18 @@ import Data.Maybe
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Manager.Subscription (Checkpoint(..))
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadAllEvents
 import Database.EventStore.Internal.Operation.ReadStreamEvents
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+-- | Represents the next checkpoint to reach on a catchup subscription. Wheither
+--   it's a regular stream or the $all stream, it either point to an 'Int32' or
+--   a 'Position'.
+data Checkpoint = CheckpointNumber Int32 | CheckpointPosition Position
 
 --------------------------------------------------------------------------------
 defaultBatchSize :: Int32
@@ -52,9 +60,16 @@ data CatchupState
       --   the $all stream.
 
 --------------------------------------------------------------------------------
-streamName :: CatchupState -> Text
-streamName (RegularCatchup stream _) = stream
-streamName _ = "$all"
+catchupStreamName :: CatchupState -> Text
+catchupStreamName (RegularCatchup stream _) = stream
+catchupStreamName _ = "$all"
+
+--------------------------------------------------------------------------------
+data CatchupOpResult =
+    CatchupOpResult { catchupReadEvents :: ![ResolvedEvent]
+                    , catchupEndOfStream :: !Bool
+                    , catchupCheckpoint :: !Checkpoint
+                    }
 
 --------------------------------------------------------------------------------
 -- | Stream catching up operation.
@@ -62,7 +77,7 @@ catchup :: Settings
         -> CatchupState
         -> Bool
         -> Maybe Int32
-        -> Operation ([ResolvedEvent], Bool, Checkpoint)
+        -> Operation CatchupOpResult -- ([ResolvedEvent], Bool, Checkpoint)
 catchup setts init_tpe tos bat_siz = go init_tpe
   where
     batch = fromMaybe defaultBatchSize bat_siz
@@ -85,15 +100,15 @@ catchup setts init_tpe tos bat_siz = go init_tpe
                         tmp_tpe = AllCatchup nxt_c nxt_p
                         chk     = CheckpointPosition $ sliceNext as
                     return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
-                Left rr -> fromReadResult (streamName tpe) rr $ \as ->
+                Left rr -> fromReadResult (catchupStreamName tpe) rr $ \as ->
                     let RegularCatchup s _ = tpe
                         nxt = sliceNext as
                         tmp_tpe = RegularCatchup s nxt
                         chk = CheckpointNumber nxt in
                     return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
 
-            yield (evts, eos, nchk)
-            when (not eos) $ go nxt_tpe
+            yield (CatchupOpResult evts eos nchk)
+            unless eos $ go nxt_tpe
 
 --------------------------------------------------------------------------------
 fromReadResult :: Text
