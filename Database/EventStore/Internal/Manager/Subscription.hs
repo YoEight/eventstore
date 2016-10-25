@@ -104,7 +104,7 @@ data Input t a where
     -- store that event withing its state.
     Arrived :: ResolvedEvent -> Input t (SubStateMachine t)
     -- The user asks for the next event coming from the server.
-    ReadNext :: Input t (Maybe ResolvedEvent, SubStateMachine t)
+    ReadNext :: Input t (Maybe (ResolvedEvent, SubStateMachine t))
     -- A batch read has been made. It's only use for 'Catchup' subscription
     -- type. It gives the list of read events and indicates if it reaches the
     -- end of the stream along with the next checkpoint to point at.
@@ -115,6 +115,9 @@ data Input t a where
     -- Used only for 'Catchup' subscription type. Asks if the subscription
     -- read every events up to the checkpoint given by the user.
     CaughtUp :: Input Catchup Bool
+
+    -- Returns the last event number read by the user.
+    LastEventNum :: Input Catchup (Int32, Maybe Position)
 
 --------------------------------------------------------------------------------
 -- | Main subscription state machine.
@@ -214,23 +217,53 @@ catchupSub env params = do
     mvarRun <- newEmptyTMVarIO
     mvarState <- newEmptyTMVarIO
 
-    let lcycle =
+    let streamId = catchupStreamName $ catchupState params
+        pushCmd = PushRegular streamId (catchupResLnkTos params)
+        lcycle =
             SubLifeCycle
             { onConfirm = atomically . putTMVar mvarRun
             , readState = readTMVar mvarState
             , writeState = \s -> () <$ swapTMVar mvarState s
-            , onError = \e -> atomically $ do
-                  s <- takeTMVar mvarState
-                  case s of
-                      SubOnline{} -> putTMVar mvarState $ SubDropped e
-                      _ -> putTMVar mvarState s
+            , onError = \e ->
+                case e of
+                    SubAborted -> do
+                        state <- atomically $ takeTMVar mvarState
+
+                        case state of
+                            -- In this case, we do our best to re-engage the
+                            -- catchup subscription where it was at before
+                            -- losing the connection with the server.
+                            SubOnline sm -> do
+                                let (num, posM) = lastEventNumSM sm
+                                    newStart =
+                                        case catchupState params of
+                                            RegularCatchup stream _ ->
+                                                RegularCatchup stream num
+                                            AllCatchup{} ->
+                                                case posM of
+                                                    Just (Position npc npp) ->
+                                                        AllCatchup npc npp
+                                                    _ -> catchupState params
+
+                                    newParams = params { catchupState = newStart }
+
+                                    newOp = createCatchupOperation env newParams
+
+                                subPushOp env (catchupOpEventHandler mvarState)
+                                    newOp
+                                subPushConnect env (subEventHandler lcycle)
+                                    pushCmd
+                            _ -> atomically $ putTMVar mvarState state
+                    _ -> atomically $ do
+                        s <- takeTMVar mvarState
+                        case s of
+                            SubOnline{} -> putTMVar mvarState $ SubDropped e
+                            _ -> putTMVar mvarState s
             }
 
         op = createCatchupOperation env params
 
     subPushOp env (catchupOpEventHandler mvarState) op
-    let streamId = catchupStreamName $ catchupState params
-        pushCmd = PushRegular streamId (catchupResLnkTos params)
     subPushConnect env (subEventHandler lcycle) pushCmd
     return $ Subscription streamId lcycle env mvarRun Catchup
 
@@ -339,7 +372,7 @@ eventArrivedSM e (SubStateMachine k) = k (Arrived e)
 --------------------------------------------------------------------------------
 -- | Reads the next available event. Returns 'Nothing' it there is any. When
 --   returning an event, it will be removed from the subscription buffer.
-readNextSM :: SubStateMachine t -> (Maybe ResolvedEvent, SubStateMachine t)
+readNextSM :: SubStateMachine t -> Maybe (ResolvedEvent, SubStateMachine t)
 readNextSM (SubStateMachine k) = k ReadNext
 
 --------------------------------------------------------------------------------
@@ -357,6 +390,11 @@ batchReadSM es eos nxt (SubStateMachine k) = k (BatchRead es eos nxt)
 --   subscription is actually live. Only used by 'Catchup' subscription.
 hasCaughtUpSM :: SubStateMachine Catchup -> Bool
 hasCaughtUpSM (SubStateMachine k) = k CaughtUp
+
+--------------------------------------------------------------------------------
+-- | Last event number read by the user.
+lastEventNumSM :: SubStateMachine Catchup -> (Int32, Maybe Position)
+lastEventNumSM (SubStateMachine k) = k LastEventNum
 
 --------------------------------------------------------------------------------
 -- | Main 'Regular' subscription state machine.
@@ -379,6 +417,75 @@ beforeChk (CheckpointPosition pos) re =
     maybe False (< pos) $ resolvedEventPosition re
 
 --------------------------------------------------------------------------------
+-- | This data structure is only used by catchup subscription state machine.
+data CatchupSMState =
+    CatchupSMState { csmReadSeq :: !(Seq ResolvedEvent)
+                   -- ^ This sequence is used to pack events coming from reading
+                   --   a stream forward.
+                   , csmLiveSeq :: !(Seq ResolvedEvent)
+                   -- ^ This sequence is used to pack events coming from live
+                   --   subscription.
+                   , csmLastNum :: !(Maybe Int32)
+                   -- ^ Tracks the last event read.
+                   , csmLastPos :: !(Maybe Position)
+                   }
+
+--------------------------------------------------------------------------------
+initialCatchupSMState :: CatchupSMState
+initialCatchupSMState = CatchupSMState empty empty Nothing Nothing
+
+--------------------------------------------------------------------------------
+insertReadEvents :: [ResolvedEvent]
+                 -> Checkpoint
+                 -> CatchupSMState
+                 -> CatchupSMState
+insertReadEvents es chp s =
+    s { csmReadSeq = foldl' snoc (csmReadSeq s) es
+      , csmLiveSeq = dropWhileL (beforeChk chp) (csmLiveSeq s)
+      }
+
+--------------------------------------------------------------------------------
+insertLiveEvent :: ResolvedEvent -> CatchupSMState -> CatchupSMState
+insertLiveEvent e s = s { csmLiveSeq = csmLiveSeq s `snoc` e }
+
+--------------------------------------------------------------------------------
+readNextFromBatchSeq :: CatchupSMState -> Maybe (ResolvedEvent, CatchupSMState)
+readNextFromBatchSeq s =
+    case viewl $ csmReadSeq s of
+        EmptyL -> Nothing
+        e :< rest ->
+            let newLast = recordedEventNumber $ resolvedEventOriginal e
+                nxtS = s { csmReadSeq = rest
+                         , csmLastNum = Just newLast
+                         , csmLastPos = resolvedEventPosition e
+                         } in
+            Just (e, nxtS)
+
+--------------------------------------------------------------------------------
+readNextFromLiveSeq :: CatchupSMState -> Maybe (ResolvedEvent, CatchupSMState)
+readNextFromLiveSeq s =
+    case viewl $ csmLiveSeq s of
+        EmptyL -> Nothing
+        e :< rest ->
+            let newLast = recordedEventNumber $ resolvedEventOriginal e
+                nxtS = s { csmLiveSeq = rest
+                         , csmLastNum = Just newLast
+                         , csmLastPos = resolvedEventPosition e
+                         } in
+            Just (e, nxtS)
+
+--------------------------------------------------------------------------------
+lastEventNumber :: CatchupSMState -> (Int32, Maybe Position)
+lastEventNumber s = (fromMaybe 0 $ csmLastNum s, csmLastPos s)
+
+--------------------------------------------------------------------------------
+isBatchReqEmpty :: CatchupSMState -> Bool
+isBatchReqEmpty s =
+    case viewl $ csmReadSeq s of
+        EmptyL -> True
+        _ -> False
+
+--------------------------------------------------------------------------------
 -- | That subscription state machine accumulates events coming from batch read
 --   and any real time change made on a stream. That state machine will not
 --   served any recent change made on the stream until it reaches the end of the
@@ -388,50 +495,44 @@ beforeChk (CheckpointPosition pos) re =
 --   moment with reach the end of the stream and the delay required by asking
 --   for a subscription.
 catchupSubscription :: SubStateMachine Catchup
-catchupSubscription = SubStateMachine $ catchingUp empty empty
+catchupSubscription = SubStateMachine $ catchingUp initialCatchupSMState
   where
-    catchingUp :: forall a. Seq ResolvedEvent
-               -> Seq ResolvedEvent
-               -> Input Catchup a
-               -> a
-    catchingUp b s (Arrived e) =
-        SubStateMachine $ catchingUp b (s `snoc` e)
-    catchingUp b s ReadNext =
-        case viewl b of
-            EmptyL    -> (Nothing, SubStateMachine $ catchingUp b s)
-            e :< rest -> (Just e, SubStateMachine $ catchingUp rest s)
-    catchingUp b s (BatchRead es eos nxt_pt) =
-        let nxt_b = foldl' snoc b es
-            nxt_s = dropWhileL (beforeChk nxt_pt) s
-            nxt   = if eos
-                    then SubStateMachine $ caughtUp nxt_b nxt_s
-                    else SubStateMachine $ catchingUp nxt_b nxt_s in
-        nxt
-    catchingUp _ _ CaughtUp = False
+    catchingUp :: forall a. CatchupSMState -> Input Catchup a -> a
+    catchingUp s (Arrived e) =
+        SubStateMachine $ catchingUp $ insertLiveEvent e s
+    catchingUp s ReadNext =
+        let _F (e, sm) = (e, SubStateMachine $ catchingUp sm) in
+        fmap _F $ readNextFromBatchSeq s
+    catchingUp s (BatchRead es eos chk) =
+        let nxtS = insertReadEvents es chk s in
+        SubStateMachine $
+            if eos
+            then caughtUp nxtS
+            else catchingUp nxtS
+    catchingUp _ CaughtUp = False
+    catchingUp s LastEventNum = lastEventNumber s
 
-    caughtUp :: forall a. Seq ResolvedEvent
-             -> Seq ResolvedEvent
-             -> Input Catchup a
-             -> a
-    caughtUp  b s (Arrived e) = SubStateMachine $ caughtUp b (s `snoc` e)
-    caughtUp b s  ReadNext =
-        case viewl b of
-            EmptyL -> live s ReadNext
-            e :< rest ->
-                case viewl rest of
-                    EmptyL -> (Just e, SubStateMachine $ live s)
-                    _      -> (Just e, SubStateMachine $ caughtUp rest s)
-    caughtUp b s (BatchRead _ _ _) = SubStateMachine $ caughtUp b s
-    caughtUp _ _ CaughtUp = False
+    caughtUp :: forall a. CatchupSMState -> Input Catchup a -> a
+    caughtUp s (Arrived e) = SubStateMachine $ caughtUp $ insertLiveEvent e s
+    caughtUp s ReadNext =
+        case readNextFromBatchSeq s of
+            Nothing -> live s ReadNext
+            Just (e, nxtS) ->
+                if isBatchReqEmpty nxtS
+                then Just (e, SubStateMachine $ live s)
+                else Just (e, SubStateMachine $ caughtUp nxtS)
+    caughtUp s BatchRead{} = SubStateMachine $ caughtUp s
+    caughtUp _ CaughtUp = False
+    caughtUp s LastEventNum = lastEventNumber s
 
-    live :: forall a. Seq ResolvedEvent -> Input Catchup a -> a
-    live s (Arrived e) = SubStateMachine $ live (s `snoc` e)
+    live :: forall a. CatchupSMState -> Input Catchup a -> a
+    live s (Arrived e) = SubStateMachine $ live $ insertLiveEvent e s
     live s ReadNext =
-        case viewl s of
-            EmptyL    -> (Nothing, SubStateMachine $ live s)
-            e :< rest -> (Just e, SubStateMachine $ live rest)
-    live s (BatchRead _ _ _) = SubStateMachine $ live s
+        let _F (e, sm) = (e, SubStateMachine $ live sm) in
+        fmap _F $ readNextFromLiveSeq s
+    live s BatchRead{} = SubStateMachine $ live s
     live _ CaughtUp = True
+    live s LastEventNum = lastEventNumber s
 
 --------------------------------------------------------------------------------
 -- | Base subscription used for 'Regular' or 'Persistent' subscription.
@@ -442,10 +543,9 @@ baseSubStateMachine = SubStateMachine $ go empty
     go s (Arrived e) = SubStateMachine $ go (s `snoc` e)
     go s ReadNext =
         case viewl s of
-            EmptyL    -> (Nothing, SubStateMachine $ go s)
-            e :< rest -> (Just e, SubStateMachine $ go rest)
-    go _ BatchRead{} = error "impossible: base subscription"
-    go _ CaughtUp    = error "impossible: base subscription"
+            EmptyL    -> Nothing
+            e :< rest -> Just (e, SubStateMachine $ go rest)
+    go _ _ = error "impossible: base subscription"
 
 --------------------------------------------------------------------------------
 -- Subscription API
@@ -503,10 +603,10 @@ nextEventMaybeSTM Subscription{..} = do
         SubException e -> throwSTM e
         SubDropped r -> throwSTM $ SubscriptionClosed r
         SubOnline sub -> do
-            let (res, nxt) = readNextSM sub
-            if isJust res
-                then res <$ writeState subLifeCycle (SubOnline nxt)
-                else return res
+            case readNextSM sub of
+                Just (e, nxt) ->
+                    Just e <$ writeState subLifeCycle (SubOnline nxt)
+                _ -> return Nothing
 
 --------------------------------------------------------------------------------
 -- | Awaits for the next event.
