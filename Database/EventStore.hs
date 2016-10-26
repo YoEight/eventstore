@@ -45,6 +45,7 @@ module Database.EventStore
       -- * Event
     , Event
     , EventData
+    , EventType(..)
     , createEvent
     , withJson
     , withJsonAndMetadata

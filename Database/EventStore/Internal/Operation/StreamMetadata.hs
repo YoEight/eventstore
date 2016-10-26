@@ -60,7 +60,7 @@ setMetaStream :: Settings
 setMetaStream setts s v meta =
     let stream = metaStream s
         json   = streamMetadataJSON meta
-        evt    = createEvent "$metadata" Nothing (withJson json)
+        evt    = createEvent StreamMetadataType Nothing (withJson json)
         inner  = writeEvents setts stream v [evt] in
     foreach inner yield
 

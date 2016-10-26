@@ -57,18 +57,61 @@ instance Exception InternalException
 --------------------------------------------------------------------------------
 -- Event
 --------------------------------------------------------------------------------
+-- | Constants for System event types.
+data EventType
+    = StreamDeletedType
+      -- ^ Event type for stream deleted.
+    | StatsCollectionType
+      -- ^ Event type for statistics.
+    | LinkToType
+      -- ^ Event type for linkTo.
+    | StreamMetadataType
+      -- ^ Event type for stream metadata.
+    | SettingsType
+      -- ^ Event type for the system settings.
+    | UserDefined Text
+      -- ^ Event defined by the user.
+    deriving Eq
+
+--------------------------------------------------------------------------------
+instance IsString EventType where
+    fromString = eventTypeFromStr
+
+--------------------------------------------------------------------------------
+instance Show EventType where
+    show = unpack . eventTypeText
+
+--------------------------------------------------------------------------------
+eventTypeText :: EventType -> Text
+eventTypeText StreamDeletedType = "$streamDeleted"
+eventTypeText StatsCollectionType = "$statsCollected"
+eventTypeText LinkToType = "$>"
+eventTypeText StreamMetadataType = "$metadata"
+eventTypeText SettingsType = "$settings"
+eventTypeText (UserDefined t) = t
+
+--------------------------------------------------------------------------------
+eventTypeFromStr :: String -> EventType
+eventTypeFromStr "$streamDeleted" = StreamDeletedType
+eventTypeFromStr "$statsCollected" = StatsCollectionType
+eventTypeFromStr "$>" = LinkToType
+eventTypeFromStr "$metadata" = StreamMetadataType
+eventTypeFromStr "$settings" = SettingsType
+eventTypeFromStr t = UserDefined $ pack t
+
+--------------------------------------------------------------------------------
 -- | Contains event information like its type and data. Only used for write
 --   queries.
 data Event
     = Event
-      { eventType :: !Text
+      { eventType :: !EventType
       , eventId   :: !(Maybe UUID)
       , eventData :: !EventData
       } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- | Create an 'Event' meant to be persisted.
-createEvent :: Text       -- ^ Event type
+createEvent :: EventType  -- ^ Event type
             -> Maybe UUID -- ^ Event ID, generated if 'Nothing'
             -> EventData  -- ^ Event data
             -> Event

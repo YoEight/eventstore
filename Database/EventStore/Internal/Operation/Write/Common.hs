@@ -44,7 +44,7 @@ eventToNewEvent evt = do
                       evt_data_bytes
                       evt_metadata_bytes
   where
-    evt_type           = eventType evt
+    evt_type           = eventTypeText $ eventType evt
     evt_id             = eventId evt
     evt_data_bytes     = eventDataBytes $ eventData evt
     evt_data_type      = eventDataType $ eventData evt
