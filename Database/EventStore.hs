@@ -200,7 +200,7 @@ import Network.Connection (TLSSettings)
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Connection
 import           Database.EventStore.Internal.Discovery
-import           Database.EventStore.Internal.Manager.Subscription
+import           Database.EventStore.Internal.Subscription
 import           Database.EventStore.Internal.Manager.Subscription.Driver hiding (unsubscribe)
 import           Database.EventStore.Internal.Manager.Subscription.Message
 import           Database.EventStore.Internal.Operation (OperationError(..))

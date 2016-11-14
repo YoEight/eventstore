@@ -6,7 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Manager.Subscription
+-- Module : Database.EventStore.Internal.Subscription
 -- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -17,7 +17,7 @@
 -- Main subscription state machine declaration module. It also declares every
 -- functions required to drive a 'Subscription'.
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Manager.Subscription
+module Database.EventStore.Internal.Subscription
     ( Regular(..)
     , Persistent(..)
     , Catchup(..)

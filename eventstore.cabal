@@ -70,9 +70,9 @@ library
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Stream
+                   Database.EventStore.Internal.Subscription
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Manager.Operation.Model
-                   Database.EventStore.Internal.Manager.Subscription
                    Database.EventStore.Internal.Manager.Subscription.Driver
                    Database.EventStore.Internal.Manager.Subscription.Message
                    Database.EventStore.Internal.Manager.Subscription.Model
