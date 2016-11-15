@@ -36,6 +36,7 @@ import           Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
@@ -302,6 +303,78 @@ data ResolvedIndexedEvent
 instance Decode ResolvedIndexedEvent
 
 --------------------------------------------------------------------------------
+data NotHandledReason
+    = N_NotReady
+    | N_TooBusy
+    | N_NotMaster
+    deriving (Enum, Eq, Show)
+
+--------------------------------------------------------------------------------
+data MasterInfoBuf
+    = MasterInfoBuf
+      { bufMasterExternalTcpAddr :: Required 1 (Value Text)
+      , bufMasterExternalTcpPort :: Required 2 (Value Int32)
+      , bufMasterExternalHttpAddr :: Required 3 (Value Text)
+      , bufMasterExternalHttpPort :: Required 4 (Value Int32)
+      , bufMasterExternalSecureTcpAddr :: Optional 5 (Value Text)
+      , bufMasterExternalSecureTcpPort :: Optional 6 (Value Int32)
+      } deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode MasterInfoBuf
+
+--------------------------------------------------------------------------------
+data MasterInfo
+    = MasterInfo
+      { masterExternalTcpAddr :: !String
+      , masterExternalTcpPort :: !Int
+      , masterExternalHttpAddr :: !String
+      , masterExternalHttpPort :: !Int
+      , masterExternalSecureTcpAddr :: !(Maybe String)
+      , masterExternalSecureTcpPort :: !(Maybe Int)
+      } deriving (Show, Eq)
+
+--------------------------------------------------------------------------------
+masterInfo :: MasterInfoBuf -> MasterInfo
+masterInfo buf =
+    MasterInfo
+    { masterExternalTcpAddr =
+          unpack $ getField $ bufMasterExternalTcpAddr buf
+    , masterExternalTcpPort =
+          fromIntegral $ getField $ bufMasterExternalTcpPort buf
+    , masterExternalHttpAddr =
+          unpack $ getField $ bufMasterExternalHttpAddr buf
+    , masterExternalHttpPort =
+          fromIntegral $ getField $ bufMasterExternalHttpPort buf
+    , masterExternalSecureTcpAddr =
+          fmap unpack $ getField $ bufMasterExternalSecureTcpAddr buf
+    , masterExternalSecureTcpPort =
+          fmap fromIntegral $ getField $ bufMasterExternalSecureTcpPort buf
+    }
+
+--------------------------------------------------------------------------------
+masterInfoNodeEndPoints :: MasterInfo -> NodeEndPoints
+masterInfoNodeEndPoints info =
+    NodeEndPoints
+        (EndPoint (masterExternalTcpAddr info)
+                  (fromIntegral $ masterExternalTcpPort info))
+        securePoint
+  where
+    securePoint =
+        EndPoint <$> masterExternalSecureTcpAddr info
+                 <*> (fmap fromIntegral $ masterExternalSecureTcpPort info)
+
+--------------------------------------------------------------------------------
+data NotHandledBuf
+    = NotHandledBuf
+      { notHandledReason :: Required 1 (Enumeration NotHandledReason)
+      , notHandledAdditionalInfo :: Optional 2 (Message MasterInfoBuf)
+      } deriving (Generic, Show)
+
+--------------------------------------------------------------------------------
+instance Decode NotHandledBuf
+
+--------------------------------------------------------------------------------
 -- | Represents a serialized event sent by the server in a subscription context.
 data ResolvedEventBuf
     = ResolvedEventBuf
@@ -532,6 +605,13 @@ data Package
       , packageCred        :: !(Maybe Credentials)
       }
     deriving Show
+
+--------------------------------------------------------------------------------
+packageDataAsText :: Package -> Maybe Text
+packageDataAsText = go . decodeUtf8 . packageData
+  where
+    go "" = Nothing
+    go t  = Just t
 
 --------------------------------------------------------------------------------
 -- | Constructs a heartbeat response given the 'UUID' of heartbeat request.

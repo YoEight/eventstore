@@ -477,6 +477,8 @@ mkSubEnv Connection{..} =
           case cmd of
               AckCmd -> pushAckPersist _prod run uuids
               NakCmd act res -> pushNakPersist _prod run act res uuids
+    , subForceReconnect = \node ->
+          pushForceReconnect _prod node
     }
 
 --------------------------------------------------------------------------------
