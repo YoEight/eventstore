@@ -111,6 +111,9 @@ module Database.EventStore
     , Subscription
     , SubDropReason(..)
     , waitConfirmation
+    , unsubscribeConfirmed
+    , unsubscribeConfirmedSTM
+    , waitUnsubscribeConfirmed
       -- * Volatile Subscription
     , Regular
     , subscribe
@@ -130,6 +133,7 @@ module Database.EventStore
     , subscribeToAllFrom
     , waitTillCatchup
     , hasCaughtUp
+    , hasCaughtUpSTM
      -- * Persistent Subscription
     , Persistent
     , PersistentSubscriptionSettings(..)

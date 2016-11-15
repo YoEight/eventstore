@@ -73,10 +73,12 @@ library
                    Database.EventStore.Internal.Subscription
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Manager.Operation.Model
+                   Database.EventStore.Internal.Manager.Subscription.Command
                    Database.EventStore.Internal.Manager.Subscription.Driver
                    Database.EventStore.Internal.Manager.Subscription.Message
                    Database.EventStore.Internal.Manager.Subscription.Model
                    Database.EventStore.Internal.Manager.Subscription.Packages
+                   Database.EventStore.Internal.Manager.Subscription.Types
                    Database.EventStore.Internal.Operations
                    Database.EventStore.Internal.Operation.Catchup
                    Database.EventStore.Internal.Operation.DeleteStream

@@ -42,15 +42,15 @@ import Data.Maybe
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.Serialize
-import Data.ProtocolBuffers
 import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Generator
+import Database.EventStore.Internal.Manager.Subscription.Command
 import Database.EventStore.Internal.Manager.Subscription.Message
 import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Manager.Subscription.Packages
+import Database.EventStore.Internal.Manager.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -63,22 +63,7 @@ data SubConnectEvent
     | SubConfirmed Running
       -- ^ Subscription connection is confirmed. It means that subscription can
       --   receive events from the server.
-
---------------------------------------------------------------------------------
--- | Indicates why a subscription has been dropped.
-data SubDropReason
-    = SubUnsubscribed
-      -- ^ Subscription connection has been closed by the user.
-    | SubAccessDenied
-      -- ^ The current user is not allowed to operate on the supplied stream.
-    | SubNotFound
-      -- ^ Given stream name doesn't exist.
-    | SubPersistDeleted
-      -- ^ Given stream is deleted.
-    | SubAborted
-      -- ^ Occurs when the user shutdown the connection from the server or if
-      -- the connection to the server is no longer possible.
-    deriving (Show, Eq)
+    | Unsubscribed
 
 --------------------------------------------------------------------------------
 -- | Enumerates all persistent action exceptions.
@@ -245,13 +230,6 @@ updateRException UPS_Fail         = Just PersistActionFail
 updateRException UPS_AccessDenied = Just PersistActionAccessDenied
 
 --------------------------------------------------------------------------------
-toSubDropReason :: DropReason -> SubDropReason
-toSubDropReason D_Unsubscribed                  = SubUnsubscribed
-toSubDropReason D_NotFound                      = SubNotFound
-toSubDropReason D_AccessDenied                  = SubAccessDenied
-toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
-
---------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 -- | Type of inputs handled by the 'Subscription' driver.
 data In r a where
@@ -336,92 +314,70 @@ newDriver :: forall r. Settings -> Generator -> Driver r
 newDriver setts gen = Driver $ go (initState gen)
   where
     go :: forall a. State r -> In r a -> a
-    go st@State{..} (Pkg Package{..}) = do
-        elm <- lookup packageCorrelation _reg
-        case packageCmd of
-            0xC2 -> do
-                _   <- querySubscription packageCorrelation _model
-                msg <- maybeDecodeMessage packageData
-                let e   = getField $ streamResolvedEvent msg
-                    evt = newResolvedEventFromBuf e
-                    app = EventAppeared evt
+    go st@State{..} (Pkg pkg) = do
+        elm <- lookup (packageCorrelation pkg) _reg
+        case decodeServerMessage pkg of
+            EventAppearedMsg evt -> do
+                _   <- querySubscription (packageCorrelation pkg) _model
+                let ConnectReg k _ _ = elm
+                return (k $ EventAppeared evt, Driver $ go st)
+            PersistentEventAppearedMsg evt -> do
+                _   <- querySubscription (packageCorrelation pkg) _model
+                let ConnectPersist k _ _ _ = elm
+                return (k $ EventAppeared evt, Driver $ go st)
+            ConfirmationMsg lcp len -> do
+                let meta = RegularMeta lcp len
                     ConnectReg k _ _ = elm
-                return (k app, Driver $ go st)
-
-            0xC7 -> do
-                _   <- querySubscription packageCorrelation _model
-                msg <- maybeDecodeMessage packageData
-                let e   = getField $ psseaEvt msg
-                    evt = newResolvedEvent e
-                    app = EventAppeared evt
-                    ConnectPersist k _ _ _ = elm
-                return (k app, Driver $ go st)
-
-            0xC1 -> do
-                msg <- maybeDecodeMessage packageData
-                let lcp  = getField $ subscribeLastCommitPos msg
-                    len  = getField $ subscribeLastEventNumber msg
-                    meta = RegularMeta lcp len
-                    ConnectReg k _ _ = elm
-                    nxt_m = confirmedSubscription packageCorrelation meta _model
-                run   <- querySubscription packageCorrelation nxt_m
+                    nxt_m = confirmedSubscription
+                                (packageCorrelation pkg) meta _model
+                run <- querySubscription (packageCorrelation pkg) nxt_m
                 let nxt_st = st { _model = nxt_m }
-                    evt    = SubConfirmed run
-                return (k evt, Driver $ go nxt_st)
-
-            0xC6 -> do
-                msg <- maybeDecodeMessage packageData
-                let lcp  = getField $ pscLastCommitPos msg
-                    sid  = getField $ pscId msg
-                    len  = getField $ pscLastEvtNumber msg
-                    meta = PersistMeta sid lcp len
+                return (k $ SubConfirmed run, Driver $ go nxt_st)
+            PersistentConfirmationMsg sid lcp len -> do
+                let meta = PersistMeta sid lcp len
                     ConnectPersist k _ _ _ = elm
-                    nxt_m = confirmedSubscription packageCorrelation meta _model
-                run   <- querySubscription packageCorrelation nxt_m
+                    nxt_m = confirmedSubscription
+                                (packageCorrelation pkg) meta _model
+                run <- querySubscription (packageCorrelation pkg) nxt_m
                 let nxt_st = st { _model = nxt_m }
-                    evt    = SubConfirmed run
-                return (k evt, Driver $ go nxt_st)
-
-            0xC9 -> confirmPAction elm (getField . cpscResult) createRException
-            0xCF -> confirmPAction elm (getField . upscResult) updateRException
-            0xCB -> confirmPAction elm (getField . dpscResult) deleteRException
-
-            0xC4 -> do
-                run <- querySubscription packageCorrelation _model
-                msg <- maybeDecodeMessage packageData
-                let reason  = fromMaybe D_Unsubscribed $ getField
-                                                       $ dropReason msg
-                    nxt_m   = unsubscribed run _model
-                    dreason = toSubDropReason reason
-                    evt     = Dropped dreason
-                    nxt_reg = deleteMap packageCorrelation _reg
+                return (k $ SubConfirmed run, Driver $ go nxt_st)
+            PersistentCreatedMsg res ->
+                confirmPAction elm $ createRException res
+            PersistentUpdatedMsg res ->
+                confirmPAction elm $ updateRException res
+            PersistentDeletedMsg res ->
+                confirmPAction elm $ deleteRException res
+            DroppedMsg reason -> do
+                run <- querySubscription (packageCorrelation pkg) _model
+                let nxt_m   = unsubscribed run _model
+                    evt =
+                        case reason of
+                            SubUnsubscribed -> Unsubscribed
+                            _ -> Dropped reason
+                    nxt_reg = deleteMap (packageCorrelation pkg) _reg
                     nxt_st  = st { _model = nxt_m
                                  , _reg   = nxt_reg }
                 case elm of
                   ConnectReg k _ _       -> return (k evt, Driver $ go nxt_st)
                   ConnectPersist k _ _ _ -> return (k evt, Driver $ go nxt_st)
                   _                      -> Nothing
-
-            _ -> Nothing
+            UnhandledMsg -> Nothing
       where
-        confirmPAction :: Decode m
-                       => Cmd r
-                       -> (m -> e)
-                       -> (e -> Maybe PersistActionException)
+        confirmPAction :: Cmd r
+                       -> Maybe PersistActionException
                        -> Maybe (r, Driver r)
-        confirmPAction (ApplyPersistAction k g n c) fd em = do
-            msg <- maybeDecodeMessage packageData
-            _   <- queryPersistentAction packageCorrelation _model
-            let nxt_m  = confirmedAction packageCorrelation _model
-                nxt_rg = deleteMap packageCorrelation _reg
+        confirmPAction (ApplyPersistAction k g n c) em = do
+            _ <- queryPersistentAction (packageCorrelation pkg) _model
+            let nxt_m  = confirmedAction (packageCorrelation pkg) _model
+                nxt_rg = deleteMap (packageCorrelation pkg) _reg
                 nxt_st = st { _model = nxt_m
                             , _reg   = nxt_rg
                             }
-                evt    = ConfirmedAction packageCorrelation g n c
-            case em $ fd msg of
+                evt    = ConfirmedAction (packageCorrelation pkg) g n c
+            case em of
                 Just e  -> return (k $ Left e, Driver $ go nxt_st)
                 Nothing -> return (k $ Right evt, Driver $ go nxt_st)
-        confirmPAction _ _ _ = Nothing
+        confirmPAction _ _ = Nothing
 
     go st@State{..} (Cmd cmd) =
         case cmd of
@@ -468,10 +424,3 @@ newDriver setts gen = Driver $ go (initState gen)
         _F (ConnectPersist k _ _ _)     = [k $ Dropped SubAborted]
         _F (ApplyPersistAction k _ _ _) = [k $ Left PersistActionAborted]
         _F _                            = []
-
---------------------------------------------------------------------------------
-maybeDecodeMessage :: Decode a => ByteString -> Maybe a
-maybeDecodeMessage bytes =
-    case runGet decodeMessage bytes of
-        Right a -> Just a
-        _       -> Nothing

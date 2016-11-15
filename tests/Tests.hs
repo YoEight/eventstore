@@ -237,6 +237,7 @@ subscribeFromTest conn = do
 
     loop alljss
     unsubscribe sub
+    waitUnsubscribeConfirmed sub
     let action = do
             _ <- nextEvent sub
             return False

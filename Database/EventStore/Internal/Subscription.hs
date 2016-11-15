@@ -53,6 +53,9 @@ module Database.EventStore.Internal.Subscription
     , failed
     , eventsFailed
     , notifyEventsFailed
+    , unsubscribeConfirmed
+    , waitUnsubscribeConfirmed
+    , unsubscribeConfirmedSTM
     ) where
 
 --------------------------------------------------------------------------------
@@ -151,6 +154,7 @@ data SubState t
     = SubOnline (SubStateMachine t)
     | SubDropped SubDropReason
     | forall e. Exception e => SubException e
+    | SubUserUnsubscribed
 
 --------------------------------------------------------------------------------
 -- | Modifies 'SubState' internal state machine, letting any 'SubDropReason'
@@ -181,6 +185,9 @@ data SubLifeCycle a =
       -- ^ Modifies this subscription internal state.
     , onError :: SubDropReason -> IO ()
       -- ^ When an error's occured.
+    , onUserUnsubscribed :: IO ()
+      -- ^ When the server confirmed the subscription is no longer live.
+      --   This action is triggered because the user asks to unsubscribe.
     }
 
 --------------------------------------------------------------------------------
@@ -204,8 +211,9 @@ data Subscription t =
 --------------------------------------------------------------------------------
 -- | This exception is raised when the user tries to get the next event from a
 --   'Subscription' that is already closed.
-data SubscriptionClosed =
-    SubscriptionClosed SubDropReason
+data SubscriptionClosed
+    = SubscriptionClosed SubDropReason
+    | SubscriptionUnsubscribedByUser
     deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
@@ -259,6 +267,9 @@ catchupSub env params = do
                         case s of
                             SubOnline{} -> putTMVar mvarState $ SubDropped e
                             _ -> putTMVar mvarState s
+            , onUserUnsubscribed = atomically $ do
+                  _ <- takeTMVar mvarState
+                  putTMVar mvarState SubUserUnsubscribed
             }
 
         op = createCatchupOperation env params
@@ -282,6 +293,8 @@ regularSub env streamId resLnkTos = do
                   case s of
                       SubOnline{} -> writeTVar varState $ SubDropped r
                       _ -> return ()
+            , onUserUnsubscribed =
+                  atomically $ writeTVar varState SubUserUnsubscribed
             }
 
     subPushConnect env (subEventHandler lcycle) (PushRegular streamId resLnkTos)
@@ -302,6 +315,8 @@ persistentSub env grp stream bufSize = do
                   case s of
                       SubOnline{} -> writeTVar varState $ SubDropped r
                       _ -> return ()
+            , onUserUnsubscribed =
+                  atomically $ writeTVar varState SubUserUnsubscribed
             }
 
         pushCmd = PushPersistent grp stream bufSize
@@ -360,7 +375,8 @@ subEventHandler lcycle (EventAppeared e) = atomically $ do
             -- the first phase of a catchup subscription where the user
             -- asked for a subscription on a stream that doesn't exist.
             return ()
-        SubDropped _ -> error "Impossible: subEventHandler"
+        _ -> error "Impossible: subEventHandler"
+subEventHandler lcycle Unsubscribed = onUserUnsubscribed lcycle
 subEventHandler lcycle (Dropped r) = onError lcycle r
 
 --------------------------------------------------------------------------------
@@ -607,6 +623,7 @@ nextEventMaybeSTM Subscription{..} = do
                 Just (e, nxt) ->
                     Just e <$ writeState subLifeCycle (SubOnline nxt)
                 _ -> return Nothing
+        SubUserUnsubscribed -> throwSTM SubscriptionUnsubscribedByUser
 
 --------------------------------------------------------------------------------
 -- | Awaits for the next event.
@@ -655,6 +672,29 @@ hasCaughtUpSTM Subscription{..} = do
         SubOnline sm -> return $ hasCaughtUpSM sm
         SubException e -> throwSTM e
         SubDropped r -> throwSTM $ SubscriptionClosed r
+        SubUserUnsubscribed -> throwSTM SubscriptionUnsubscribedByUser
+
+--------------------------------------------------------------------------------
+-- | Like 'unsubscribeConfirmed' but lives in 'STM' monad.
+unsubscribeConfirmedSTM :: Subscription a -> STM Bool
+unsubscribeConfirmedSTM Subscription{..} = do
+    res <- readState subLifeCycle
+    case res of
+        SubOnline _ -> return False
+        SubException e -> throwSTM e
+        SubDropped r -> throwSTM $ SubscriptionClosed r
+        SubUserUnsubscribed -> return True
+
+--------------------------------------------------------------------------------
+-- | Non blocking version of `waitUnsubscribeConfirmed`.
+unsubscribeConfirmed :: Subscription a -> IO Bool
+unsubscribeConfirmed = atomically . unsubscribeConfirmedSTM
+
+--------------------------------------------------------------------------------
+-- | Wait until unsubscription has been confirmed by the server.
+waitUnsubscribeConfirmed :: Subscription a -> IO ()
+waitUnsubscribeConfirmed sub = atomically $
+    unlessM (unsubscribeConfirmedSTM sub) retrySTM
 
 --------------------------------------------------------------------------------
 -- | Acknowledges those event ids have been successfully processed.
