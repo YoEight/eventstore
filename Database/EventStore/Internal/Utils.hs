@@ -1,7 +1,6 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Command
+-- Module : Database.EventStore.Internal.Utils
 -- Copyright : (C) 2016 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -10,18 +9,19 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Command (Command(..)) where
+module Database.EventStore.Internal.Utils (prettyWord8) where
+
+--------------------------------------------------------------------------------
+import Numeric
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Utils
+prettyWord8 :: Word8 -> String
+prettyWord8 w = "0x" ++ padding (showHex w "")
 
 --------------------------------------------------------------------------------
--- | Internal command representation.
-newtype Command = Command { cmdWord8 :: Word8 } deriving (Eq, Ord, Num)
-
---------------------------------------------------------------------------------
-instance Show Command where
-    show (Command w) = prettyWord8 w
+padding :: String -> String
+padding [x] = ['0',x]
+padding xs  = xs

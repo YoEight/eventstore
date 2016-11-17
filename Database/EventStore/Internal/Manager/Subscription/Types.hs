@@ -35,4 +35,5 @@ data SubDropReason
     | SubServerError (Maybe Text)
       -- ^ Unexpected error from the server.
     | SubNotHandled !NotHandledReason !(Maybe MasterInfo)
+    | SubClientError !Text
     deriving (Show, Eq)

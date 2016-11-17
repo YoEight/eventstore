@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -290,6 +291,12 @@ data Cmd r
       --   confirmed, the driver will return the provided final value.
 
 --------------------------------------------------------------------------------
+cmdSubCallback :: Cmd r -> Maybe (SubConnectEvent -> r)
+cmdSubCallback (ConnectReg k _ _) = Just k
+cmdSubCallback (ConnectPersist k _ _ _) = Just k
+cmdSubCallback _ = Nothing
+
+--------------------------------------------------------------------------------
 -- | Driver internal state.
 data Internal r =
     Internal
@@ -475,18 +482,22 @@ handleMsg corrId = go
               case reason of
                   SubUnsubscribed -> Unsubscribed
                   _ -> Dropped reason
-        case cmd of
-            ConnectReg k _ _ -> return $ k evt
-            ConnectPersist k _ _ _ -> return $ k evt
-            _ -> noop
+        k <- lift $ cmdSubCallback cmd
+        return $ k evt
     go cmd (BadRequestMsg msg) =
         go cmd (DroppedMsg $ SubServerError msg)
     go cmd (NotAuthenticatedMsg msg) =
         go cmd (DroppedMsg $ SubNotAuthenticated msg)
     go cmd (NotHandledMsg reason info) =
         go cmd (DroppedMsg $ SubNotHandled reason info)
-    go _ UnknownMsg = noop
-    go _ _ = noop
+    go cmd (UnknownMsg pkgCmdM) = do
+        k <- lift $ cmdSubCallback cmd
+        let msgM = fmap (\c -> "unknown command: " <> tshow c) pkgCmdM
+        return $ k $ Dropped $ SubServerError msgM
+    go cmd _ = do
+        k <- lift $ cmdSubCallback cmd
+        let msg = "Logic error in Subscription Driver (the impossible happened)"
+        return $ k $ Dropped $ SubClientError msg
 
     confirmPAction :: Cmd r
                    -> Maybe PersistActionException

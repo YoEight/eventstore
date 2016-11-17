@@ -17,6 +17,7 @@ import Data.ProtocolBuffers
 import Data.Serialize
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Manager.Subscription.Message
 import Database.EventStore.Internal.Manager.Subscription.Types
 import Database.EventStore.Internal.Types
@@ -34,7 +35,7 @@ data ServerMessage
     | BadRequestMsg !(Maybe Text)
     | NotHandledMsg !NotHandledReason !(Maybe MasterInfo)
     | NotAuthenticatedMsg !(Maybe Text)
-    | UnknownMsg
+    | UnknownMsg !(Maybe Command)
 
 --------------------------------------------------------------------------------
 toSubDropReason :: DropReason -> SubDropReason
@@ -45,8 +46,9 @@ toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
 
 --------------------------------------------------------------------------------
 decodeServerMessage :: Package -> ServerMessage
-decodeServerMessage pkg = fromMaybe UnknownMsg $ go $ packageCmd pkg
+decodeServerMessage pkg = fromMaybe (UnknownMsg $ Just cmd) $ go cmd
   where
+    cmd = packageCmd pkg
     go 0xC2 = do
         msg <- maybeDecodeMessage $ packageData pkg
         let evt = newResolvedEventFromBuf $ getField $ streamResolvedEvent msg

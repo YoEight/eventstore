@@ -73,6 +73,7 @@ library
                    Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.Subscription
                    Database.EventStore.Internal.Types
+                   Database.EventStore.Internal.Utils
                    Database.EventStore.Internal.Manager.Operation.Model
                    Database.EventStore.Internal.Manager.Subscription.Command
                    Database.EventStore.Internal.Manager.Subscription.Driver
