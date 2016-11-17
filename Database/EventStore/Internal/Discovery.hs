@@ -49,6 +49,9 @@ import Network.DNS hiding (decode)
 import System.Random
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.EndPoint
+
+--------------------------------------------------------------------------------
 data DnsDiscoveryException
     = MaxDiscoveryAttemptReached ByteString
     | DNSDiscoveryError DNSError
@@ -56,18 +59,6 @@ data DnsDiscoveryException
 
 --------------------------------------------------------------------------------
 instance Exception DnsDiscoveryException
-
---------------------------------------------------------------------------------
--- | Gathers both an IPv4 and a port.
-data EndPoint =
-    EndPoint
-    { endPointIp   :: !String
-    , endPointPort :: !Int
-    } deriving Show
-
---------------------------------------------------------------------------------
-emptyEndPoint :: EndPoint
-emptyEndPoint = EndPoint "" 0
 
 --------------------------------------------------------------------------------
 httpRequest :: EndPoint -> String -> IO Request

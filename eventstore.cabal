@@ -65,6 +65,7 @@ library
   other-modules:   Database.EventStore.Internal.Command
                    Database.EventStore.Internal.Connection
                    Database.EventStore.Internal.Discovery
+                   Database.EventStore.Internal.EndPoint
                    Database.EventStore.Internal.Execution.Production
                    Database.EventStore.Internal.Generator
                    Database.EventStore.Internal.Operation
@@ -120,6 +121,7 @@ library
                      , dotnet-timespan
                      , connection ==0.2.*
                      , classy-prelude ==1.*
+                     , mtl
 
   -- Directories containing source files.
   -- hs-source-dirs:

@@ -31,7 +31,10 @@ data ServerMessage
     | PersistentUpdatedMsg UpdatePersistentSubscriptionResult
     | PersistentDeletedMsg DeletePersistentSubscriptionResult
     | DroppedMsg SubDropReason
-    | UnhandledMsg
+    | BadRequestMsg !(Maybe Text)
+    | NotHandledMsg !NotHandledReason !(Maybe MasterInfo)
+    | NotAuthenticatedMsg !(Maybe Text)
+    | UnknownMsg
 
 --------------------------------------------------------------------------------
 toSubDropReason :: DropReason -> SubDropReason
@@ -42,7 +45,7 @@ toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
 
 --------------------------------------------------------------------------------
 decodeServerMessage :: Package -> ServerMessage
-decodeServerMessage pkg = fromMaybe UnhandledMsg $ go $ packageCmd pkg
+decodeServerMessage pkg = fromMaybe UnknownMsg $ go $ packageCmd pkg
   where
     go 0xC2 = do
         msg <- maybeDecodeMessage $ packageData pkg
@@ -79,6 +82,14 @@ decodeServerMessage pkg = fromMaybe UnhandledMsg $ go $ packageCmd pkg
         msg <- maybeDecodeMessage $ packageData pkg
         let reason  = fromMaybe D_Unsubscribed $ getField $ dropReason msg
         return $ DroppedMsg $ toSubDropReason reason
+    go 0xF0 = return $ BadRequestMsg $ packageDataAsText pkg
+    go 0xF4 = return $ NotAuthenticatedMsg $ packageDataAsText pkg
+    go 0xF1 = do
+        msg <- maybeDecodeMessage $ packageData pkg
+        let info = fmap masterInfo $ getField $ notHandledAdditionalInfo msg
+            reason = getField $ notHandledReason msg
+        return $ NotHandledMsg reason info
+
     go _ = Nothing
 
 --------------------------------------------------------------------------------

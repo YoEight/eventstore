@@ -67,6 +67,7 @@ import Data.Sequence (ViewL(..), viewl, dropWhileL)
 import Data.UUID
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Manager.Subscription.Driver hiding (unsubscribe)
 import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Operation
@@ -147,6 +148,7 @@ data SubEnv =
            , subPushConnect :: PushConnect
            , subPushUnsub :: Running -> IO ()
            , subAckCmd :: AckCmd -> Running -> [UUID] -> IO ()
+           , subForceReconnect :: NodeEndPoints -> IO ()
            }
 
 --------------------------------------------------------------------------------
@@ -188,6 +190,8 @@ data SubLifeCycle a =
     , onUserUnsubscribed :: IO ()
       -- ^ When the server confirmed the subscription is no longer live.
       --   This action is triggered because the user asks to unsubscribe.
+    , retrySub :: IO ()
+     -- ^ Retry the all subscription, this behavior is transparent to the user.
     }
 
 --------------------------------------------------------------------------------
@@ -234,34 +238,11 @@ catchupSub env params = do
             , writeState = \s -> () <$ swapTMVar mvarState s
             , onError = \e ->
                 case e of
-                    SubAborted -> do
-                        state <- atomically $ takeTMVar mvarState
-
-                        case state of
-                            -- In this case, we do our best to re-engage the
-                            -- catchup subscription where it was at before
-                            -- losing the connection with the server.
-                            SubOnline sm -> do
-                                let (num, posM) = lastEventNumSM sm
-                                    newStart =
-                                        case catchupState params of
-                                            RegularCatchup stream _ ->
-                                                RegularCatchup stream num
-                                            AllCatchup{} ->
-                                                case posM of
-                                                    Just (Position npc npp) ->
-                                                        AllCatchup npc npp
-                                                    _ -> catchupState params
-
-                                    newParams = params { catchupState = newStart }
-
-                                    newOp = createCatchupOperation env newParams
-
-                                subPushOp env (catchupOpEventHandler mvarState)
-                                    newOp
-                                subPushConnect env (subEventHandler lcycle)
-                                    pushCmd
-                            _ -> atomically $ putTMVar mvarState state
+                    SubAborted ->
+                        tryRetryCatcupSubscription pushCmd env mvarState
+                            lcycle params
+                    SubNotHandled reason infoM ->
+                        subNotHandledMsg env lcycle reason infoM
                     _ -> atomically $ do
                         s <- takeTMVar mvarState
                         case s of
@@ -270,6 +251,8 @@ catchupSub env params = do
             , onUserUnsubscribed = atomically $ do
                   _ <- takeTMVar mvarState
                   putTMVar mvarState SubUserUnsubscribed
+            , retrySub = tryRetryCatcupSubscription pushCmd env mvarState
+                             lcycle params
             }
 
         op = createCatchupOperation env params
@@ -277,6 +260,42 @@ catchupSub env params = do
     subPushOp env (catchupOpEventHandler mvarState) op
     subPushConnect env (subEventHandler lcycle) pushCmd
     return $ Subscription streamId lcycle env mvarRun Catchup
+
+--------------------------------------------------------------------------------
+tryRetryCatcupSubscription :: PushCmd
+                           -> SubEnv
+                           -> TMVar (SubState Catchup)
+                           -> SubLifeCycle Catchup
+                           -> CatchupParams
+                           -> IO ()
+tryRetryCatcupSubscription pushCmd env mvarState lcycle params = do
+    state <- atomically $ takeTMVar mvarState
+
+    case state of
+        -- In this case, we do our best to re-engage the
+        -- catchup subscription where it was at before
+        -- losing the connection with the server.
+        SubOnline sm -> do
+            let (num, posM) = lastEventNumSM sm
+                newStart =
+                  case catchupState params of
+                      RegularCatchup stream _ ->
+                          RegularCatchup stream num
+                      AllCatchup{} ->
+                          case posM of
+                              Just (Position npc npp) ->
+                                  AllCatchup npc npp
+                              _ -> catchupState params
+
+                newParams = params { catchupState = newStart }
+
+                newOp = createCatchupOperation env newParams
+
+            subPushOp env (catchupOpEventHandler mvarState)
+                newOp
+            subPushConnect env (subEventHandler lcycle)
+                pushCmd
+        _ -> atomically $ putTMVar mvarState state
 
 --------------------------------------------------------------------------------
 regularSub :: SubEnv -> Text -> Bool -> IO (Subscription Regular)
@@ -295,6 +314,14 @@ regularSub env streamId resLnkTos = do
                       _ -> return ()
             , onUserUnsubscribed =
                   atomically $ writeTVar varState SubUserUnsubscribed
+            , retrySub = do
+                  atomically $ do
+                      state <- readState lcycle
+                      case state of
+                          SubOnline{} -> return ()
+                          _ -> writeState lcycle $ SubOnline regularSubscription
+                  subPushConnect env (subEventHandler lcycle)
+                                     (PushRegular streamId resLnkTos)
             }
 
     subPushConnect env (subEventHandler lcycle) (PushRegular streamId resLnkTos)
@@ -317,12 +344,33 @@ persistentSub env grp stream bufSize = do
                       _ -> return ()
             , onUserUnsubscribed =
                   atomically $ writeTVar varState SubUserUnsubscribed
+            , retrySub = do
+                  atomically $ writeState lcycle
+                             $ SubOnline persistentSubscription
+                  subPushConnect env (subEventHandler lcycle) pushCmd
             }
 
         pushCmd = PushPersistent grp stream bufSize
 
     subPushConnect env (subEventHandler lcycle) pushCmd
     return $ Subscription stream lcycle env mvarRun (Persistent grp)
+
+--------------------------------------------------------------------------------
+subNotHandledMsg :: SubEnv
+                 -> SubLifeCycle s
+                 -> NotHandledReason
+                 -> Maybe MasterInfo
+                 -> IO ()
+subNotHandledMsg env _ N_NotMaster (Just info) =
+    subForceReconnect env $ masterInfoNodeEndPoints info
+subNotHandledMsg _ lcycle N_NotMaster _ =
+    atomically $ writeState lcycle
+               $ SubDropped $ SubServerError (Just msg)
+  where
+    msg = "Been asked to connect to new master node \
+          \ but no master info been sent."
+subNotHandledMsg _ lcycle N_NotReady _ = retrySub lcycle
+subNotHandledMsg _ lcycle N_TooBusy _ = retrySub lcycle
 
 --------------------------------------------------------------------------------
 createCatchupOperation :: SubEnv -> CatchupParams -> Operation CatchupOpResult

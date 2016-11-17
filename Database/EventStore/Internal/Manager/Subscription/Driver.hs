@@ -1,8 +1,9 @@
-{-# LANGUAGE DeriveDataTypeable  #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE Rank2Types          #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE Rank2Types                 #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Manager.Subscription.Driver
@@ -41,7 +42,8 @@ import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import ClassyPrelude hiding (group)
+import Control.Monad.State
 import Data.UUID
 
 --------------------------------------------------------------------------------
@@ -289,8 +291,8 @@ data Cmd r
 
 --------------------------------------------------------------------------------
 -- | Driver internal state.
-data State r =
-    State
+data Internal r =
+    Internal
     { _model :: !Model
       -- ^ Subscription model.
     , _gen :: !Generator
@@ -301,126 +303,237 @@ data State r =
     }
 
 --------------------------------------------------------------------------------
-initState :: Generator -> State r
-initState gen = State newModel gen mempty
+initInternal :: Generator -> Internal r
+initInternal gen = Internal newModel gen mempty
 
 --------------------------------------------------------------------------------
 -- | Subscription driver state machine.
 newtype Driver r = Driver (forall a. In r a -> a)
 
 --------------------------------------------------------------------------------
+newtype DriverM r m a = DriverM (ReaderT Settings (StateT (Internal r) m) a)
+    deriving ( Functor
+             , Applicative
+             , Monad
+             , MonadReader Settings
+             , MonadState (Internal r)
+             )
+
+--------------------------------------------------------------------------------
+instance MonadTrans (DriverM r) where
+    lift m = DriverM $ lift $ lift m
+
+--------------------------------------------------------------------------------
+noop :: DriverM r Maybe a
+noop = lift Nothing
+
+--------------------------------------------------------------------------------
+modelSubRunning :: UUID -> DriverM r Maybe Running
+modelSubRunning uuid = do
+    model <- gets _model
+    lift $ querySubscription uuid $ model
+
+--------------------------------------------------------------------------------
+modelSubConfirmed :: Monad m => UUID -> Meta -> DriverM r m ()
+modelSubConfirmed uuid meta = do
+    model <- gets _model
+    let nxt = confirmedSubscription uuid meta model
+    modify $ \s -> s { _model = nxt }
+
+--------------------------------------------------------------------------------
+modelActionConfirmed :: Monad m => UUID -> DriverM r m ()
+modelActionConfirmed uuid =
+    modify $ \s -> s { _model = confirmedAction uuid $ _model s }
+
+--------------------------------------------------------------------------------
+modelUnsubscribed :: UUID -> DriverM r Maybe ()
+modelUnsubscribed uuid = do
+    run <- modelSubRunning uuid
+    model <- gets _model
+    modify $ \s -> s { _model = unsubscribed run model }
+
+--------------------------------------------------------------------------------
+registerDelete :: Monad m => UUID -> DriverM r m ()
+registerDelete uuid = do
+    reg <- gets _reg
+    let nxtR = deleteMap uuid reg
+    modify $ \s -> s { _reg = nxtR }
+
+--------------------------------------------------------------------------------
+registerAdd :: Monad m => UUID -> Cmd r -> DriverM r m ()
+registerAdd uuid cmd = do
+    reg <- gets _reg
+    modify $ \s -> s { _reg = insertMap uuid cmd reg }
+
+--------------------------------------------------------------------------------
+modelPersistentAction :: UUID -> DriverM r Maybe PendingAction
+modelPersistentAction uuid = do
+    model <- gets _model
+    lift $ queryPersistentAction uuid model
+
+--------------------------------------------------------------------------------
+freshUUID :: Monad m => DriverM r m UUID
+freshUUID = do
+    (uuid, nxtG) <- gets (nextUUID . _gen)
+    modify $ \s -> s { _gen = nxtG }
+    return uuid
+
+--------------------------------------------------------------------------------
+modelConnectReg :: Monad m => Text -> Bool -> DriverM r m UUID
+modelConnectReg stream tos = do
+    uuid <- freshUUID
+    model <- gets _model
+    modify $ \s -> s { _model = connectReg stream tos uuid model }
+    return uuid
+
+--------------------------------------------------------------------------------
+modelConnectPersist :: Monad m => Text -> Text -> Int32 -> DriverM r m UUID
+modelConnectPersist group name batch = do
+  uuid <- freshUUID
+  model <- gets _model
+  modify $ \s -> s { _model = connectPersist group name batch uuid model }
+  return uuid
+
+--------------------------------------------------------------------------------
+modelPersistAction :: Monad m
+                   => Text
+                   -> Text
+                   -> PersistAction
+                   -> DriverM r m UUID
+modelPersistAction group name action = do
+    uuid <- freshUUID
+    model <- gets _model
+    modify $ \s -> s { _model = persistAction group name uuid action model }
+    return uuid
+
+--------------------------------------------------------------------------------
+runDriverM :: Monad m
+           => Settings
+           -> Internal r
+           -> DriverM r m a
+           -> m (a, Driver r)
+runDriverM setts st (DriverM m) = do
+    (a, nxtSt) <- runStateT (runReaderT m setts) st
+    return (a, Driver $ handleDriver setts nxtSt)
+
+--------------------------------------------------------------------------------
+runDriver :: Settings
+          -> Internal r
+          -> DriverM r Identity a
+          -> (a, Driver r)
+runDriver setts st action = runIdentity $ runDriverM setts st action
+
+--------------------------------------------------------------------------------
+-- Driver main state machine.
+handleDriver :: Settings -> Internal r -> In r a -> a
+handleDriver setts st (Pkg pkg) = do
+    let corrId = packageCorrelation pkg
+    cmd <- lookup corrId $ _reg st
+    let action = handleMsg corrId cmd $ decodeServerMessage pkg
+    runDriverM setts st action
+handleDriver setts st (Cmd cmd) =
+    let action = handleCmd cmd in
+    runDriver setts st action
+handleDriver _ st Abort = (fmap snd $ mapToList $ _reg st) >>= _F
+  where
+    _F (ConnectReg k _ _)           = [k $ Dropped SubAborted]
+    _F (ConnectPersist k _ _ _)     = [k $ Dropped SubAborted]
+    _F (ApplyPersistAction k _ _ _) = [k $ Left PersistActionAborted]
+    _F _                            = []
+
+--------------------------------------------------------------------------------
+-- | Handles 'Package's coming from the server.
+handleMsg :: UUID -> Cmd r -> ServerMessage -> DriverM r Maybe r
+handleMsg corrId = go
+  where
+    go (ConnectReg k _ _) (EventAppearedMsg evt) = do
+        _ <- modelSubRunning corrId
+        return $ k $ EventAppeared evt
+    go (ConnectPersist k _ _ _) (PersistentEventAppearedMsg evt) = do
+        _ <- modelSubRunning corrId
+        return $ k $ EventAppeared evt
+    go (ConnectReg k _ _) (ConfirmationMsg lcp len) = do
+        let meta = RegularMeta lcp len
+        modelSubConfirmed corrId meta
+        run <- modelSubRunning corrId
+        return $ k $ SubConfirmed run
+    go (ConnectPersist k _ _ _) (PersistentConfirmationMsg sid lcp len) = do
+        let meta = PersistMeta sid lcp len
+        modelSubConfirmed corrId meta
+        run <- modelSubRunning corrId
+        return $ k $ SubConfirmed run
+    go cmd (PersistentCreatedMsg res) =
+        confirmPAction cmd $ createRException res
+    go cmd (PersistentUpdatedMsg res) =
+        confirmPAction cmd $ updateRException res
+    go cmd (PersistentDeletedMsg res) =
+        confirmPAction cmd $ deleteRException res
+    go cmd (DroppedMsg reason) = do
+        modelUnsubscribed corrId
+        registerDelete corrId
+        let evt =
+              case reason of
+                  SubUnsubscribed -> Unsubscribed
+                  _ -> Dropped reason
+        case cmd of
+            ConnectReg k _ _ -> return $ k evt
+            ConnectPersist k _ _ _ -> return $ k evt
+            _ -> noop
+    go cmd (BadRequestMsg msg) =
+        go cmd (DroppedMsg $ SubServerError msg)
+    go cmd (NotAuthenticatedMsg msg) =
+        go cmd (DroppedMsg $ SubNotAuthenticated msg)
+    go cmd (NotHandledMsg reason info) =
+        go cmd (DroppedMsg $ SubNotHandled reason info)
+    go _ UnknownMsg = noop
+    go _ _ = noop
+
+    confirmPAction :: Cmd r
+                   -> Maybe PersistActionException
+                   -> DriverM r Maybe r
+    confirmPAction (ApplyPersistAction k g n c) em = do
+        _ <- modelPersistentAction corrId
+        modelActionConfirmed corrId
+        registerDelete corrId
+        let evt = ConfirmedAction corrId g n c
+        case em of
+            Just e  -> return $ k $ Left e
+            Nothing -> return $ k $ Right evt
+    confirmPAction _ _ = noop
+
+--------------------------------------------------------------------------------
+-- | Handles commands coming from the user.
+handleCmd :: Monad m => Cmd r -> DriverM r m Package
+handleCmd cmd@(ConnectReg _ s tos) = do
+    setts <- ask
+    uuid <- modelConnectReg s tos
+    registerAdd uuid cmd
+    return $ createConnectRegularPackage setts uuid s tos
+handleCmd cmd@(ConnectPersist _ gn n b) = do
+    setts <- ask
+    uuid <- modelConnectPersist gn n b
+    registerAdd uuid cmd
+    return $ createConnectPersistPackage setts uuid gn n b
+handleCmd (Unsubscribe r) = do
+    setts <- ask
+    return $ createUnsubscribePackage setts $ runningUUID r
+handleCmd cmd@(ApplyPersistAction _ gn n a) = do
+    setts <- ask
+    uuid <- modelPersistAction gn n a
+    registerAdd uuid cmd
+    return $ createPersistActionPackage setts uuid gn n a
+handleCmd (PersistAck _ run evts) = do
+    setts <- ask
+    let RunningPersist _ _ _ _ sid _ _ = run
+        uuid = runningUUID run
+    return $ createAckPackage setts uuid sid evts
+handleCmd (PersistNak _ run na r evts) = do
+    setts <- ask
+    let RunningPersist _ _ _ _ sid _ _ = run
+        uuid = runningUUID run
+    return $ createNakPackage setts uuid sid na r evts
+
+--------------------------------------------------------------------------------
 -- | Creates a new subscription 'Driver' state machine.
 newDriver :: forall r. Settings -> Generator -> Driver r
-newDriver setts gen = Driver $ go (initState gen)
-  where
-    go :: forall a. State r -> In r a -> a
-    go st@State{..} (Pkg pkg) = do
-        elm <- lookup (packageCorrelation pkg) _reg
-        case decodeServerMessage pkg of
-            EventAppearedMsg evt -> do
-                _   <- querySubscription (packageCorrelation pkg) _model
-                let ConnectReg k _ _ = elm
-                return (k $ EventAppeared evt, Driver $ go st)
-            PersistentEventAppearedMsg evt -> do
-                _   <- querySubscription (packageCorrelation pkg) _model
-                let ConnectPersist k _ _ _ = elm
-                return (k $ EventAppeared evt, Driver $ go st)
-            ConfirmationMsg lcp len -> do
-                let meta = RegularMeta lcp len
-                    ConnectReg k _ _ = elm
-                    nxt_m = confirmedSubscription
-                                (packageCorrelation pkg) meta _model
-                run <- querySubscription (packageCorrelation pkg) nxt_m
-                let nxt_st = st { _model = nxt_m }
-                return (k $ SubConfirmed run, Driver $ go nxt_st)
-            PersistentConfirmationMsg sid lcp len -> do
-                let meta = PersistMeta sid lcp len
-                    ConnectPersist k _ _ _ = elm
-                    nxt_m = confirmedSubscription
-                                (packageCorrelation pkg) meta _model
-                run <- querySubscription (packageCorrelation pkg) nxt_m
-                let nxt_st = st { _model = nxt_m }
-                return (k $ SubConfirmed run, Driver $ go nxt_st)
-            PersistentCreatedMsg res ->
-                confirmPAction elm $ createRException res
-            PersistentUpdatedMsg res ->
-                confirmPAction elm $ updateRException res
-            PersistentDeletedMsg res ->
-                confirmPAction elm $ deleteRException res
-            DroppedMsg reason -> do
-                run <- querySubscription (packageCorrelation pkg) _model
-                let nxt_m   = unsubscribed run _model
-                    evt =
-                        case reason of
-                            SubUnsubscribed -> Unsubscribed
-                            _ -> Dropped reason
-                    nxt_reg = deleteMap (packageCorrelation pkg) _reg
-                    nxt_st  = st { _model = nxt_m
-                                 , _reg   = nxt_reg }
-                case elm of
-                  ConnectReg k _ _       -> return (k evt, Driver $ go nxt_st)
-                  ConnectPersist k _ _ _ -> return (k evt, Driver $ go nxt_st)
-                  _                      -> Nothing
-            UnhandledMsg -> Nothing
-      where
-        confirmPAction :: Cmd r
-                       -> Maybe PersistActionException
-                       -> Maybe (r, Driver r)
-        confirmPAction (ApplyPersistAction k g n c) em = do
-            _ <- queryPersistentAction (packageCorrelation pkg) _model
-            let nxt_m  = confirmedAction (packageCorrelation pkg) _model
-                nxt_rg = deleteMap (packageCorrelation pkg) _reg
-                nxt_st = st { _model = nxt_m
-                            , _reg   = nxt_rg
-                            }
-                evt    = ConfirmedAction (packageCorrelation pkg) g n c
-            case em of
-                Just e  -> return (k $ Left e, Driver $ go nxt_st)
-                Nothing -> return (k $ Right evt, Driver $ go nxt_st)
-        confirmPAction _ _ = Nothing
-
-    go st@State{..} (Cmd cmd) =
-        case cmd of
-            ConnectReg _ s tos ->
-                let (u, nxt_g) = nextUUID _gen
-                    pkg        = createConnectRegularPackage setts u s tos
-                    nxt_m      = connectReg s tos u _model
-                    nxt_st     = st { _model = nxt_m
-                                    , _gen   = nxt_g
-                                    , _reg   = insertMap u cmd _reg } in
-                (pkg, Driver $ go nxt_st)
-            ConnectPersist _ gn n b ->
-                let (u, nxt_g) = nextUUID _gen
-                    pkg        = createConnectPersistPackage setts u gn n b
-                    nxt_m      = connectPersist gn n b u _model
-                    nxt_st     = st { _model = nxt_m
-                                    , _gen   = nxt_g
-                                    , _reg   = insertMap u cmd _reg } in
-                (pkg, Driver $ go nxt_st)
-            Unsubscribe r ->
-                let pkg    = createUnsubscribePackage setts $ runningUUID r in
-                (pkg, Driver $ go st)
-            ApplyPersistAction _ gn n a ->
-                let (u, nxt_g) = nextUUID _gen
-                    pkg        = createPersistActionPackage setts u gn n a
-                    nxt_m      = persistAction gn n u a _model
-                    nxt_st     = st { _model = nxt_m
-                                    , _gen   = nxt_g
-                                    , _reg   = insertMap u cmd _reg } in
-                (pkg, Driver $ go nxt_st)
-            PersistAck _ run evts ->
-                let RunningPersist _ _ _ _ sid _ _ = run
-                    u   = runningUUID run
-                    pkg = createAckPackage setts u sid evts in
-                (pkg, Driver $ go st)
-            PersistNak _ run na r evts ->
-                let RunningPersist _ _ _ _ sid _ _ = run
-                    u   = runningUUID run
-                    pkg = createNakPackage setts u sid na r evts  in
-                (pkg, Driver $ go st)
-    go st Abort = (fmap snd $ mapToList $ _reg st) >>= _F
-      where
-        _F (ConnectReg k _ _)           = [k $ Dropped SubAborted]
-        _F (ConnectPersist k _ _ _)     = [k $ Dropped SubAborted]
-        _F (ApplyPersistAction k _ _ _) = [k $ Left PersistActionAborted]
-        _F _                            = []
+newDriver setts gen = Driver $ handleDriver setts (initInternal gen)

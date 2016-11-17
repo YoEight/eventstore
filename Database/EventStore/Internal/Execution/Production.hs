@@ -36,6 +36,7 @@ module Database.EventStore.Internal.Execution.Production
     , pushNakPersist
     , pushUnsubscribe
     , prodWaitTillClosed
+    , pushForceReconnect
     ) where
 
 --------------------------------------------------------------------------------
@@ -50,6 +51,7 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
+import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Manager.Subscription.Driver hiding
     ( submitPackage
@@ -192,6 +194,7 @@ data Msg
           Text Text
     | AckPersist Running [UUID]
     | NakPersist Running NakAction (Maybe Text) [UUID]
+    | ForceReconnect NodeEndPoints
 
 --------------------------------------------------------------------------------
 pushCmd :: Production -> Msg -> IO ()
@@ -285,6 +288,10 @@ pushUnsubscribe prod r = pushCmd prod (Unsubscribe r)
 -- | Waits the execution model to close properly.
 prodWaitTillClosed :: Production -> IO ()
 prodWaitTillClosed (Prod _ disposed) = atomically disposed
+
+--------------------------------------------------------------------------------
+pushForceReconnect :: Production -> NodeEndPoints -> IO ()
+pushForceReconnect prod n = pushCmd prod (ForceReconnect n)
 
 --------------------------------------------------------------------------------
 newtype Job = Job (IO ())
@@ -391,6 +398,13 @@ bootstrap env@Env{..} = do
     cruising env
 
 --------------------------------------------------------------------------------
+data ForceReconnectException = ForceReconnectionException NodeEndPoints
+    deriving (Show, Typeable)
+
+--------------------------------------------------------------------------------
+instance Exception ForceReconnectException
+
+--------------------------------------------------------------------------------
 -- | Crusing execution mode. Reads and handle message coming from the channel as
 --   those are arrived. That mode is used when the connection to the server is
 --   still live. We might have deconnection once in a while but at the end, if
@@ -401,6 +415,7 @@ cruising env@Env{..} = do
     s   <- readTVarIO _state
     case msg of
         Stopped _ e -> throwIO e
+        ForceReconnect node -> throwIO $ ForceReconnectionException node
         Arrived pkg -> do
             let sm = submitPackage pkg $ _proc s
             atomically $ do
@@ -518,6 +533,14 @@ raiseException :: Exception e => e -> Msg -> IO ()
 raiseException e _ = throwIO e
 
 --------------------------------------------------------------------------------
+handles :: SomeException -> [Handler IO a] -> IO a
+handles e [] = throwIO e
+handles e (Handler k:hs) =
+    case fromException e of
+        Just t -> k t
+        _ -> handles e hs
+
+--------------------------------------------------------------------------------
 -- | Main Production execution model entry point.
 newExecutionModel :: Settings -> Discovery -> IO Production
 newExecutionModel setts disc = do
@@ -536,15 +559,23 @@ newExecutionModel setts disc = do
             case res of
                 Left e -> do
                     _settingsLog setts (Error $ UnexpectedException e)
-                    case fromException e of
-                        Just (_ :: ConnectionException) -> atomically $ do
-                            writeTVar nxt_sub (raiseException e)
-                            putTMVar disposed ()
-                        _ -> do new_conn <- newConnection setts disc
-                                writeIORef conn_ref new_conn
-                                _ <- forkFinally (bootstrap env) handler
-                                return ()
-
+                    handles e
+                        [ Handler $ \(_ :: ConnectionException) ->
+                              atomically $ do
+                                  writeTVar nxt_sub (raiseException e)
+                                  putTMVar disposed ()
+                        , Handler $ \(ForceReconnectionException node) -> do
+                              new_conn <- newConnection setts disc
+                              connForceReconnect new_conn node
+                              writeIORef conn_ref new_conn
+                              _ <- forkFinally (bootstrap env) handler
+                              return ()
+                        , Handler $ \(_ :: SomeException) -> do
+                              new_conn <- newConnection setts disc
+                              writeIORef conn_ref new_conn
+                              _ <- forkFinally (bootstrap env) handler
+                              return ()
+                        ]
                 _ -> atomically $ putTMVar disposed ()
     _ <- forkFinally (bootstrap env) handler
     return $ Prod nxt_sub $ do

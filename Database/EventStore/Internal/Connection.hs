@@ -22,6 +22,7 @@ module Database.EventStore.Internal.Connection
     , connRecv
     , connIsClosed
     , newConnection
+    , connForceReconnect
     ) where
 
 --------------------------------------------------------------------------------
@@ -36,6 +37,7 @@ import Network.Connection
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
@@ -63,6 +65,7 @@ data In a where
     Close :: In ()
     Send  :: Package -> In ()
     Recv  :: In Package
+    ForceReconnect :: NodeEndPoints -> In ()
 
 --------------------------------------------------------------------------------
 -- | Represents connection logic action to carry out.
@@ -131,6 +134,11 @@ connIsClosed InternalConnection{..} = do
         _      -> return False
 
 --------------------------------------------------------------------------------
+-- | Forces reconnection on given node.
+connForceReconnect :: InternalConnection -> NodeEndPoints -> IO ()
+connForceReconnect conn = execute conn . ForceReconnect
+
+--------------------------------------------------------------------------------
 -- Connection Logic
 --------------------------------------------------------------------------------
 onlineLogic :: forall a. TMVar State
@@ -175,6 +183,7 @@ handleInput _ conn (Send pkg) = send conn pkg
 handleInput _ conn Recv = recv conn
 handleInput uuid _ Id = return uuid
 handleInput _ conn Close = liftIO $ connectionClose conn
+handleInput _ _ ForceReconnect{} = return ()
 
 --------------------------------------------------------------------------------
 -- | Main connection logic. It will automatically reconnect to the server when
@@ -188,7 +197,10 @@ execute iconn input = do
         Errored e -> throwIO e
         WithConnection uuid conn op -> handleInput uuid conn op
         CreateConnection op -> do
-            (uuid, conn) <- openConnection iconn
+            (uuid, conn) <-
+                case op of
+                    ForceReconnect node -> openConnection iconn (Just node)
+                    _ -> openConnection iconn Nothing
             atomically $ putTMVar (_var iconn) (Online uuid conn)
             handleInput uuid conn op
 
@@ -198,8 +210,14 @@ reachedMaxAttempt KeepRetrying _ = False
 reachedMaxAttempt (AtMost n) cur = n <= cur
 
 --------------------------------------------------------------------------------
-openConnection :: InternalConnection -> IO (UUID, Connection)
-openConnection InternalConnection{..} = attempt 1
+isSsl :: Settings -> Bool
+isSsl = isJust . s_ssl
+
+--------------------------------------------------------------------------------
+openConnection :: InternalConnection
+               -> Maybe NodeEndPoints
+               -> IO (UUID, Connection)
+openConnection InternalConnection{..} nodeM = attempt 1
   where
     delay = s_reconnect_delay_secs _setts * secs
 
@@ -212,17 +230,31 @@ openConnection InternalConnection{..} = attempt 1
 
     attempt trialCount = do
         _settingsLog _setts (Info $ Connecting trialCount)
-        old <- readIORef _last
-        ept_opt <- runDiscovery _disc old
-        case ept_opt of
-            Nothing -> handleFailure trialCount
-            Just ept -> do
-                let host = endPointIp ept
+        case nodeM of
+            Just node -> do
+                let ept = if isSsl _setts
+                          then let Just pt = secureEndPoint node
+                               in pt
+                          else tcpEndPoint node
+
+                    host = endPointIp ept
                     port = endPointPort ept
                 res <- tryAny $ connect _setts _ctx host port
                 case res of
                     Left _ -> handleFailure trialCount
                     Right st -> st <$ writeIORef _last (Just ept)
+            Nothing -> do
+                old <- readIORef _last
+                ept_opt <- runDiscovery _disc old
+                case ept_opt of
+                    Nothing -> handleFailure trialCount
+                    Just ept -> do
+                        let host = endPointIp ept
+                            port = endPointPort ept
+                        res <- tryAny $ connect _setts _ctx host port
+                        case res of
+                            Left _ -> handleFailure trialCount
+                            Right st -> st <$ writeIORef _last (Just ept)
 
 --------------------------------------------------------------------------------
 secs :: Int

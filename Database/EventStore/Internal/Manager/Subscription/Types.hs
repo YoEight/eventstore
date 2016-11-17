@@ -15,6 +15,9 @@ module Database.EventStore.Internal.Manager.Subscription.Types where
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
 -- | Indicates why a subscription has been dropped.
 data SubDropReason
     = SubUnsubscribed
@@ -28,4 +31,8 @@ data SubDropReason
     | SubAborted
       -- ^ Occurs when the user shutdown the connection from the server or if
       -- the connection to the server is no longer possible.
+    | SubNotAuthenticated (Maybe Text)
+    | SubServerError (Maybe Text)
+      -- ^ Unexpected error from the server.
+    | SubNotHandled !NotHandledReason !(Maybe MasterInfo)
     deriving (Show, Eq)
