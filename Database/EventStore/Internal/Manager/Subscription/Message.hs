@@ -76,6 +76,7 @@ data DropReason
     | D_AccessDenied
     | D_NotFound
     | D_PersistentSubscriptionDeleted
+    | D_SubscriberMaxCountReached
     deriving (Enum, Eq, Show)
 
 --------------------------------------------------------------------------------

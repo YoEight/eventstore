@@ -36,4 +36,5 @@ data SubDropReason
       -- ^ Unexpected error from the server.
     | SubNotHandled !NotHandledReason !(Maybe MasterInfo)
     | SubClientError !Text
+    | SubSubscriberMaxCountReached
     deriving (Show, Eq)
