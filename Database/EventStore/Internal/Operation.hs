@@ -50,6 +50,7 @@ data OperationError
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason
     | InvalidOperation Text
+    | NotAuthenticatedOp
       -- ^ Invalid operation state. If happens, it's a driver bug.
     | Aborted
       -- ^ Occurs when the user asked to close the connection or if the

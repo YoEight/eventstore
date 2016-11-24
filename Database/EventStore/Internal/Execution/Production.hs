@@ -382,6 +382,9 @@ runTransition Env{..} = go
         writeCycleQueue _pkgQueue pkg
         go nxt
     go (Await new_proc) = return new_proc
+    go (ForceReconnectCmd node nxt) = do
+        writeCycleQueue _queue (ForceReconnect node)
+        go nxt
 
 --------------------------------------------------------------------------------
 -- | First execution mode. It spawns initial reader, runner and writer threads.
