@@ -77,6 +77,7 @@ data Transition r
       -- ^ Asks for sending the given 'Package'.
     | Await (Model r)
       -- ^ waits for more input.
+    | NotHandled MasterInfo (Transition r)
 
 --------------------------------------------------------------------------------
 -- | Main 'Operation' bookkeeping state machine.
@@ -139,20 +140,40 @@ runOperation setts cb op start init_st = go init_st start
 
 --------------------------------------------------------------------------------
 runPackage :: Settings -> State r -> Package -> Maybe (Transition r)
-runPackage setts st Package{..} = do
+runPackage setts st pkg@Package{..} = do
     Elem op resp_cmd cont cb <- lookup packageCorrelation $ _pending st
     let nxt_ps = deleteMap packageCorrelation $ _pending st
         nxt_st = st { _pending = nxt_ps }
-    if resp_cmd /= packageCmd
-        then
-            let r = cb $ Left $ InvalidServerResponse resp_cmd packageCmd in
-            return $ Produce r (Await $ Model $ execute setts nxt_st)
-        else
-            case runGet decodeMessage packageData of
-                Left e  ->
+    case packageCmd of
+        -- Bad request
+        0xF0 -> do
+            let reason = packageDataAsText pkg
+                resp  = ServerError reason
+                value = cb $ Left $ resp
+            return $ Produce value (Await $ Model $ execute setts nxt_st)
+        0xF4 -> do
+            let value = cb $ Left NotAuthenticatedOp
+            return $ Produce value (Await $ Model $ execute setts nxt_st)
+        -- Not handled
+        0xF1 -> do
+            msg <- maybeDecodeMessage packageData
+            let reason = getField $ notHandledReason msg
+            case reason of
+                N_NotMaster -> do
+                    info <- getField $ notHandledAdditionalInfo msg
+                    let next = runOperation setts cb op op nxt_st
+                    return $ NotHandled (masterInfo info) next
+                -- In this case with just retry the operation.
+                _ -> return $ runOperation setts cb op op nxt_st
+        _ | packageCmd /= resp_cmd -> do
+              let r = cb $ Left $ InvalidServerResponse resp_cmd packageCmd
+              return $ Produce r (Await $ Model $ execute setts nxt_st)
+          | otherwise ->
+              case runGet decodeMessage packageData of
+                  Left e  ->
                     let r = cb $ Left $ ProtobufDecodingError e in
                     return $ Produce r (Await $ Model $ execute setts nxt_st)
-                Right m -> return $ runOperation setts cb op (cont m) nxt_st
+                  Right m -> return $ runOperation setts cb op (cont m) nxt_st
 
 --------------------------------------------------------------------------------
 abortOperations :: Settings -> State r -> Transition r
@@ -174,3 +195,10 @@ execute :: Settings -> State r -> Request r -> Maybe (Transition r)
 execute setts st (New op cb) = Just $ runOperation setts cb op op st
 execute setts st (Pkg pkg)   = runPackage setts st pkg
 execute setts st Abort       = Just $ abortOperations setts st
+
+--------------------------------------------------------------------------------
+maybeDecodeMessage :: Decode a => ByteString -> Maybe a
+maybeDecodeMessage bytes =
+    case runGet decodeMessage bytes of
+        Right a -> Just a
+        _       -> Nothing

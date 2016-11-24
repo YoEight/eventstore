@@ -38,6 +38,7 @@ import ClassyPrelude
 import Data.UUID
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Operation hiding (SM(..))
 import Database.EventStore.Internal.Types
@@ -218,6 +219,7 @@ data Transition r
       -- ^ Indicates to send the given 'Package'.
     | Await (Processor r)
       -- ^ Waits for more input.
+    | ForceReconnectCmd NodeEndPoints (Transition r)
 
 --------------------------------------------------------------------------------
 -- | Processor state-machine.
@@ -231,6 +233,9 @@ loopOpTransition st (Op.Transmit pkg nxt) =
     Transmit pkg (loopOpTransition st nxt)
 loopOpTransition st (Op.Await m) =
     let nxt_st = st { _opModel = m } in Await $ Processor $ execute nxt_st
+loopOpTransition st (Op.NotHandled info nxt) =
+    let node = masterInfoNodeEndPoints info in
+    ForceReconnectCmd node (loopOpTransition st nxt)
 
 --------------------------------------------------------------------------------
 abortTransition :: State r -> Op.Transition r -> [r] -> Transition r
