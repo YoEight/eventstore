@@ -5,6 +5,7 @@ EventStore Haskell TCP client
 [![Build Status](https://travis-ci.org/YoEight/eventstore.svg?branch=master)](https://travis-ci.org/YoEight/eventstore)
 
 That driver supports 100% of EventStore features !
+More information about the GetEventStore database can be found there: https://geteventstore.com/
 
 Requirements
 ============
