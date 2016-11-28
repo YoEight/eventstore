@@ -1,3 +1,10 @@
+0.14.0.0
+--------
+* Fix deadlock issues in subscription code.
+* Improve cluster connection fiability.
+* Internal refactoring.
+* Typeful `EventType`
+
 0.13.1.7
 --------
 * Report stream name when facing a 'Stream not found' error from the server on catchup subscription.
