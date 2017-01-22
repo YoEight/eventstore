@@ -233,7 +233,7 @@ catchupSub env params = do
         pushCmd = PushRegular streamId (catchupResLnkTos params)
         lcycle =
             SubLifeCycle
-            { onConfirm = atomically . putTMVar mvarRun
+            { onConfirm = confirmSub mvarRun
             , readState = readTMVar mvarState
             , writeState = \s -> () <$ swapTMVar mvarState s
             , onError = \e ->
@@ -269,7 +269,7 @@ tryRetryCatcupSubscription :: PushCmd
                            -> CatchupParams
                            -> IO ()
 tryRetryCatcupSubscription pushCmd env mvarState lcycle params = do
-    state <- atomically $ takeTMVar mvarState
+    state <- atomically $ readTMVar mvarState
 
     case state of
         -- In this case, we do our best to re-engage the
@@ -295,7 +295,7 @@ tryRetryCatcupSubscription pushCmd env mvarState lcycle params = do
                 newOp
             subPushConnect env (subEventHandler lcycle)
                 pushCmd
-        _ -> atomically $ putTMVar mvarState state
+        _ -> return ()
 
 --------------------------------------------------------------------------------
 regularSub :: SubEnv -> Text -> Bool -> IO (Subscription Regular)
@@ -304,7 +304,7 @@ regularSub env streamId resLnkTos = do
     varState <- newTVarIO $ SubOnline regularSubscription
     let lcycle =
             SubLifeCycle
-            { onConfirm = atomically . putTMVar mvarRun
+            { onConfirm = confirmSub mvarRun
             , readState = readTVar varState
             , writeState = writeTVar varState
             , onError = \r -> atomically $ do
@@ -334,7 +334,7 @@ persistentSub env grp stream bufSize = do
     varState <- newTVarIO $ SubOnline persistentSubscription
     let lcycle =
             SubLifeCycle
-            { onConfirm = atomically . putTMVar mvarRun
+            { onConfirm = confirmSub mvarRun
             , readState = readTVar varState
             , writeState = writeTVar varState
             , onError = \r -> atomically $ do
@@ -354,6 +354,16 @@ persistentSub env grp stream bufSize = do
 
     subPushConnect env (subEventHandler lcycle) pushCmd
     return $ Subscription stream lcycle env mvarRun (Persistent grp)
+
+--------------------------------------------------------------------------------
+-- | Makes sure to not cause deadlock because the subscription already been
+-- confirmed but because of a connection drop, need to be recconfirmed again.
+confirmSub :: TMVar Running -> Running -> IO ()
+confirmSub mvarRun r = atomically $ do
+  emptyVar <- isEmptyTMVar mvarRun
+  if emptyVar
+    then putTMVar mvarRun r
+    else () <$ swapTMVar mvarRun r
 
 --------------------------------------------------------------------------------
 subNotHandledMsg :: SubEnv
@@ -503,10 +513,16 @@ insertReadEvents :: [ResolvedEvent]
                  -> Checkpoint
                  -> CatchupSMState
                  -> CatchupSMState
-insertReadEvents es chp s =
-    s { csmReadSeq = foldl' snoc (csmReadSeq s) es
-      , csmLiveSeq = dropWhileL (beforeChk chp) (csmLiveSeq s)
-      }
+insertReadEvents es chp s = result
+  where
+    temp = s { csmReadSeq = foldl' snoc (csmReadSeq s) es
+             , csmLiveSeq = dropWhileL (beforeChk chp) (csmLiveSeq s)
+             }
+
+    result =
+      case chp of
+        CheckpointNumber n -> temp { csmLastNum = Just n }
+        CheckpointPosition p -> temp { csmLastPos = Just p }
 
 --------------------------------------------------------------------------------
 insertLiveEvent :: ResolvedEvent -> CatchupSMState -> CatchupSMState
