@@ -601,7 +601,7 @@ catchupSubscription = SubStateMachine $ catchingUp initialCatchupSMState
                 if isBatchReqEmpty nxtS
                 then Just (e, SubStateMachine $ live s)
                 else Just (e, SubStateMachine $ caughtUp nxtS)
-    caughtUp s BatchRead{} = SubStateMachine $ caughtUp s
+    caughtUp s input@BatchRead{} = catchingUp s input
     caughtUp _ CaughtUp = False
     caughtUp s LastEventNum = lastEventNumber s
 
