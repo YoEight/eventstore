@@ -52,6 +52,7 @@ import Data.UUID
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Execution.TCQueue
 import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Manager.Subscription.Driver hiding
     ( submitPackage
@@ -72,62 +73,6 @@ data Worker
     | Runner ThreadId
     | Writer ThreadId
     deriving Show
-
---------------------------------------------------------------------------------
--- | Used to determine if we hit the end of the queue.
-data Slot a = Slot !a | End
-
---------------------------------------------------------------------------------
--- | A 'TQueue' that can be cycled.
-newtype CycleQueue a = CycleQueue (TQueue (Slot a))
-
---------------------------------------------------------------------------------
--- | Creates an empty 'CycleQueue'.
-newCycleQueue :: IO (CycleQueue a)
-newCycleQueue = fmap CycleQueue newTQueueIO
-
---------------------------------------------------------------------------------
--- | Gets an element from the 'CycleQueue'.
-readCycleQueue :: CycleQueue a -> STM a
-readCycleQueue (CycleQueue q) = do
-    Slot a <- readTQueue q
-    return a
-
---------------------------------------------------------------------------------
--- | Writes an element to the 'CycleQueue'.
-writeCycleQueue :: CycleQueue a -> a -> STM ()
-writeCycleQueue (CycleQueue q) a = writeTQueue q (Slot a)
-
---------------------------------------------------------------------------------
--- | Empties a 'CycleQueue'.
-emptyCycleQueue :: CycleQueue a -> STM ()
-emptyCycleQueue (CycleQueue q) = writeTQueue q End >> go
-  where
-    go = do
-        s <- readTQueue q
-        case s of
-            End -> return ()
-            _   -> go
-
---------------------------------------------------------------------------------
--- | Updates a 'CycleQueue'.
-updateCycleQueue :: CycleQueue a -> (a -> STM (Maybe a)) -> STM ()
-updateCycleQueue (CycleQueue q) k = writeTQueue q End >> go
-  where
-    go = do
-        s <- readTQueue q
-        case s of
-            End    -> return ()
-            Slot a -> do
-                r <- k a
-                case r of
-                    Nothing -> go
-                    Just a' -> writeTQueue q (Slot a') >> go
-
---------------------------------------------------------------------------------
--- | Indicates if a 'CycleQueue' is empty.
-isEmptyCycleQueue :: CycleQueue a -> STM Bool
-isEmptyCycleQueue (CycleQueue q) = isEmptyTQueue q
 
 --------------------------------------------------------------------------------
 wkUpdState :: Worker -> State -> State
@@ -153,15 +98,15 @@ data Env =
     Env
     { _setts :: Settings
       -- ^ Global settings reference.
-    , _queue :: CycleQueue Msg
+    , _queue :: TCQueue Msg
       -- ^ That queue ties the user, the reader thread and the manager thread.
       --   The user and the reader push new messages onto the queue while the
       --   manager dequeue and handles one message at the time.
-    , _pkgQueue :: CycleQueue Package
+    , _pkgQueue :: TCQueue Package
       -- ^ That queue ties the writer thread with the manager thread. The writer
       --   dequeue packages from that queue and sends those to the server. While
       --   the manager pushes new packages on every new submitted operation.
-    , _jobQueue :: CycleQueue Job
+    , _jobQueue :: TCQueue Job
       -- ^ That queue ties the runner thread with the manager thread. The runner
       --   dequeues IO action from it while the manager pushes new command
       --   finalizers as those arrived.
@@ -317,21 +262,21 @@ updateProc p s = s { _proc = p }
 
 --------------------------------------------------------------------------------
 -- | Reader thread. Keeps reading 'Package' from the server.
-reader :: Settings -> CycleQueue Msg -> InternalConnection -> IO ()
+reader :: Settings -> TCQueue Msg -> InternalConnection -> IO ()
 reader sett queue c = forever $ do
     pkg <- connRecv c
     let cmd  = packageCmd pkg
         uuid = packageCorrelation pkg
 
-    atomically $ writeCycleQueue queue (Arrived pkg)
+    atomically $ writeTCQueue queue (Arrived pkg)
     _settingsLog sett $ Info $ PackageReceived cmd uuid
 
 --------------------------------------------------------------------------------
 -- | Writer thread, writes incoming 'Package's
 --------------------------------------------------------------------------------
-writer :: Settings -> CycleQueue Package -> InternalConnection -> IO ()
+writer :: Settings -> TCQueue Package -> InternalConnection -> IO ()
 writer setts pkg_queue conn = forever $ do
-    pkg <- atomically $ readCycleQueue pkg_queue
+    pkg <- atomically $ readTCQueue pkg_queue
     connSend conn pkg
     let cmd  = packageCmd pkg
         uuid = packageCorrelation pkg
@@ -341,9 +286,9 @@ writer setts pkg_queue conn = forever $ do
 --------------------------------------------------------------------------------
 -- Runner thread. Keeps running job comming from the Manager thread.
 --------------------------------------------------------------------------------
-runner :: CycleQueue Job -> IO ()
+runner :: TCQueue Job -> IO ()
 runner job_queue = forever $ do
-    Job j <- atomically $ readCycleQueue job_queue
+    Job j <- atomically $ readTCQueue job_queue
     j
 
 --------------------------------------------------------------------------------
@@ -363,7 +308,7 @@ spawn Env{..} mk = do
                 Left e ->
                     case asyncExceptionFromException e of
                         Just ThreadKilled -> return ()
-                        _ ->  atomically $ writeCycleQueue _queue
+                        _ ->  atomically $ writeTCQueue _queue
                                          $ Stopped worker e
                 _      -> return ()
     return $ mk tid
@@ -376,14 +321,14 @@ runTransition Env{..} = go
   where
     go (Produce j nxt) = do
         let job = Job j
-        writeCycleQueue _jobQueue job
+        writeTCQueue _jobQueue job
         go nxt
     go (Transmit pkg nxt) = do
-        writeCycleQueue _pkgQueue pkg
+        writeTCQueue _pkgQueue pkg
         go nxt
     go (Await new_proc) = return new_proc
     go (ForceReconnectCmd node nxt) = do
-        writeCycleQueue _queue (ForceReconnect node)
+        writeTCQueue _queue (ForceReconnect node)
         go nxt
 
 --------------------------------------------------------------------------------
@@ -414,7 +359,7 @@ instance Exception ForceReconnectException
 --   we managed to reconnect to it, we consider everything is fine.
 cruising :: Env -> IO ()
 cruising env@Env{..} = do
-    msg <- atomically $ readCycleQueue _queue
+    msg <- atomically $ readTCQueue _queue
     s   <- readTVarIO _state
     case msg of
         Stopped _ e -> throwIO e
@@ -494,13 +439,13 @@ closing env@Env{..} = do
     traverse_ killThread wutid
 
     -- Discards every 'Package' that was about to be sent.
-    atomically $ emptyCycleQueue _pkgQueue
+    atomically $ clearTCQueue _pkgQueue
 
     -- Takes care of 'Package's that have already arrived. Just in case those
     -- are completing or moving forward ongoing operations. Every ongoing
     -- request is kept for later reconnection. Some transient operations like
     -- Ack, Nak or Unsubscribe are just discard.
-    atomically $ updateCycleQueue _queue $ \nxt ->
+    atomically $ updateTCQueue _queue $ \nxt ->
         case nxt of
             Arrived pkg -> do
                 s <- readTVar _state
@@ -526,7 +471,7 @@ closing env@Env{..} = do
 
     -- Waits the runner thread to deal with its jobs list.
     atomically $ do
-        end <- isEmptyCycleQueue _jobQueue
+        end <- isEmptyTCQueue _jobQueue
         unless end retrySTM
 
     traverse_ killThread rutid
@@ -548,13 +493,13 @@ handles e (Handler k:hs) =
 newExecutionModel :: Settings -> Discovery -> IO Production
 newExecutionModel setts disc = do
     gen       <- newGenerator
-    queue     <- newCycleQueue
-    pkg_queue <- newCycleQueue
-    job_queue <- newCycleQueue
+    queue     <- newTCQueue
+    pkg_queue <- newTCQueue
+    job_queue <- newTCQueue
     conn      <- newConnection setts disc
     conn_var  <- newTVarIO conn
     var       <- newTVarIO $ emptyState setts gen
-    nxt_sub   <- newTVarIO (atomically . writeCycleQueue queue)
+    nxt_sub   <- newTVarIO (atomically . writeTCQueue queue)
     disposed  <- newEmptyTMVarIO
     let env = Env setts queue pkg_queue job_queue var nxt_sub conn_var disposed
         handler res = do
