@@ -169,7 +169,7 @@ data Env =
       -- ^ Holds manager thread state.
     , _nextSubmit :: TVar (Msg -> IO ())
       -- ^ Indicates the action to call in order to push new commands.
-    , _connRef :: IORef InternalConnection
+    , _connVar :: TVar InternalConnection
       -- ^ Connection to the server.
     , _disposed :: TMVar ()
       -- ^ Indicates when the production execution model has been shutdown and
@@ -350,7 +350,7 @@ runner job_queue = forever $ do
 -- | Spawns a new thread worker.
 spawn :: Env -> (ThreadId -> Worker) -> IO Worker
 spawn Env{..} mk = do
-    conn <- readIORef _connRef
+    conn <- readTVarIO _connVar
     tid  <- mfix $ \tid ->
         let worker = mk tid
             action =
@@ -517,7 +517,7 @@ closing env@Env{..} = do
 
     -- If the connection is already closed, it will throw an exception. We just
     -- make sure it doesn't interfere with the cleaning process.
-    conn <- readIORef _connRef
+    conn <- readTVarIO _connVar
     _    <- try $ connClose conn :: (IO (Either ConnectionException ()))
     atomically $ do
         s <- readTVar _state
@@ -552,11 +552,11 @@ newExecutionModel setts disc = do
     pkg_queue <- newCycleQueue
     job_queue <- newCycleQueue
     conn      <- newConnection setts disc
-    conn_ref  <- newIORef conn
+    conn_var  <- newTVarIO conn
     var       <- newTVarIO $ emptyState setts gen
     nxt_sub   <- newTVarIO (atomically . writeCycleQueue queue)
     disposed  <- newEmptyTMVarIO
-    let env = Env setts queue pkg_queue job_queue var nxt_sub conn_ref disposed
+    let env = Env setts queue pkg_queue job_queue var nxt_sub conn_var disposed
         handler res = do
             closing env
             case res of
@@ -570,18 +570,18 @@ newExecutionModel setts disc = do
                         , Handler $ \(ForceReconnectionException node) -> do
                               new_conn <- newConnection setts disc
                               connForceReconnect new_conn node
-                              writeIORef conn_ref new_conn
+                              atomically $ writeTVar conn_var new_conn
                               _ <- forkFinally (bootstrap env) handler
                               return ()
                         , Handler $ \(_ :: SomeException) -> do
                               new_conn <- newConnection setts disc
-                              writeIORef conn_ref new_conn
+                              atomically $ writeTVar conn_var new_conn
                               _ <- forkFinally (bootstrap env) handler
                               return ()
                         ]
                 _ -> atomically $ putTMVar disposed ()
     _ <- forkFinally (bootstrap env) handler
     return $ Prod nxt_sub $ do
-        closed <- connIsClosed conn
-        unless closed retrySTM
+        curConn <- readTVar conn_var
+        unlessM (connIsClosed curConn) retrySTM
         readTMVar disposed
