@@ -1,3 +1,10 @@
+0.14.0.1
+----------
+* Fix subscription deadlock on connection drop.
+* Fix subscription catchup state tracking on connection drop.
+* Fix internal connection dispose lock implementation.
+* Bump `aeson` version.
+
 0.14.0.0
 --------
 * Fix deadlock issues in subscription code.
