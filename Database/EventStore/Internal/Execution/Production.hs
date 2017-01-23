@@ -68,19 +68,6 @@ import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
-data Worker
-    = Reader ThreadId
-    | Runner ThreadId
-    | Writer ThreadId
-    deriving Show
-
---------------------------------------------------------------------------------
-wkUpdState :: Worker -> State -> State
-wkUpdState (Reader tid) s = s { _reader = Just tid }
-wkUpdState (Runner tid) s = s { _runner = Just tid }
-wkUpdState (Writer tid) s = s { _writer = Just tid }
-
---------------------------------------------------------------------------------
 -- | Holds the execution model state.
 data Production =
     Prod
@@ -122,8 +109,25 @@ data Env =
     }
 
 --------------------------------------------------------------------------------
+newEnv :: Settings -> Discovery -> IO Env
+newEnv setts disc = mfix $ \env ->
+    Env setts <$> newTCQueue
+              <*> newTCQueue
+              <*> newTCQueue
+              <*> newState
+              <*> newTVarIO (atomically . writeTCQueue (_queue env))
+              <*> newConn
+              <*> newEmptyTMVarIO
+  where
+    newState = do
+        gen <- newGenerator
+        newTVarIO $ emptyState setts gen
+
+    newConn = newConnection setts disc >>= newTVarIO
+
+--------------------------------------------------------------------------------
 data Msg
-    = Stopped Worker SomeException
+    = Stopped SomeException
     | Arrived Package
     | Shutdown
     | forall a.
@@ -253,6 +257,12 @@ data State =
     }
 
 --------------------------------------------------------------------------------
+data WorkerType
+  = ReaderWorker
+  | RunnerWorker
+  | WriterWorker
+
+--------------------------------------------------------------------------------
 emptyState :: Settings -> Generator -> State
 emptyState setts gen = State (newProcessor setts gen) Nothing Nothing Nothing
 
@@ -293,25 +303,23 @@ runner job_queue = forever $ do
 
 --------------------------------------------------------------------------------
 -- | Spawns a new thread worker.
-spawn :: Env -> (ThreadId -> Worker) -> IO Worker
-spawn Env{..} mk = do
+spawn :: Env -> WorkerType -> IO ()
+spawn Env{..} typ = do
     conn <- readTVarIO _connVar
-    tid  <- mfix $ \tid ->
-        let worker = mk tid
-            action =
-                case worker of
-                    Reader _ -> reader _setts _queue conn
-                    Runner _ -> runner _jobQueue
-                    Writer _ -> writer _setts _pkgQueue conn in
-        forkFinally action $ \r ->
-            case r of
-                Left e ->
-                    case asyncExceptionFromException e of
-                        Just ThreadKilled -> return ()
-                        _ ->  atomically $ writeTCQueue _queue
-                                         $ Stopped worker e
-                _      -> return ()
-    return $ mk tid
+    let action =
+           case typ of
+               ReaderWorker -> reader _setts _queue conn
+               RunnerWorker -> runner _jobQueue
+               WriterWorker -> writer _setts _pkgQueue conn
+    _ <- forkFinally action $ \r ->
+        case r of
+            Left e ->
+                case asyncExceptionFromException e of
+                  Just ThreadKilled -> return ()
+                  _ ->  atomically $ writeTCQueue _queue
+                                   $ Stopped e
+            _      -> return ()
+    return ()
 
 --------------------------------------------------------------------------------
 -- | Loops over a 'Processor''s 'Transition' state machine, returning an updated
@@ -336,13 +344,10 @@ runTransition Env{..} = go
 --   Then it switches to 'cruising' mode.
 bootstrap :: Env -> IO ()
 bootstrap env@Env{..} = do
-    rew <- spawn env Reader
-    ruw <- spawn env Runner
-    wrw <- spawn env Writer
-    let _F = wkUpdState rew .
-             wkUpdState ruw .
-             wkUpdState wrw
-    atomically $ modifyTVar' _state _F
+    spawn env ReaderWorker
+    spawn env RunnerWorker
+    spawn env WriterWorker
+
     cruising env
 
 --------------------------------------------------------------------------------
@@ -362,7 +367,7 @@ cruising env@Env{..} = do
     msg <- atomically $ readTCQueue _queue
     s   <- readTVarIO _state
     case msg of
-        Stopped _ e -> throwIO e
+        Stopped e -> throwIO e
         ForceReconnect node -> throwIO $ ForceReconnectionException node
         Arrived pkg -> do
             let sm = submitPackage pkg $ _proc s
@@ -457,7 +462,7 @@ closing env@Env{..} = do
             AckPersist _ _ -> return Nothing
             NakPersist _ _ _ _ -> return Nothing
             Unsubscribe _ -> return Nothing
-            Stopped _ _ -> return Nothing
+            Stopped _ -> return Nothing
             _ -> return $ Just nxt
 
     -- If the connection is already closed, it will throw an exception. We just
@@ -492,17 +497,8 @@ handles e (Handler k:hs) =
 -- | Main Production execution model entry point.
 newExecutionModel :: Settings -> Discovery -> IO Production
 newExecutionModel setts disc = do
-    gen       <- newGenerator
-    queue     <- newTCQueue
-    pkg_queue <- newTCQueue
-    job_queue <- newTCQueue
-    conn      <- newConnection setts disc
-    conn_var  <- newTVarIO conn
-    var       <- newTVarIO $ emptyState setts gen
-    nxt_sub   <- newTVarIO (atomically . writeTCQueue queue)
-    disposed  <- newEmptyTMVarIO
-    let env = Env setts queue pkg_queue job_queue var nxt_sub conn_var disposed
-        handler res = do
+    env <- newEnv setts disc
+    let handler res = do
             closing env
             case res of
                 Left e -> do
@@ -510,23 +506,23 @@ newExecutionModel setts disc = do
                     handles e
                         [ Handler $ \(_ :: ConnectionException) ->
                               atomically $ do
-                                  writeTVar nxt_sub (raiseException e)
-                                  putTMVar disposed ()
+                                  writeTVar (_nextSubmit env) (raiseException e)
+                                  putTMVar (_disposed env) ()
                         , Handler $ \(ForceReconnectionException node) -> do
-                              new_conn <- newConnection setts disc
-                              connForceReconnect new_conn node
-                              atomically $ writeTVar conn_var new_conn
+                              newConn <- newConnection setts disc
+                              connForceReconnect newConn node
+                              atomically $ writeTVar (_connVar env) newConn
                               _ <- forkFinally (bootstrap env) handler
                               return ()
                         , Handler $ \(_ :: SomeException) -> do
-                              new_conn <- newConnection setts disc
-                              atomically $ writeTVar conn_var new_conn
+                              newConn <- newConnection setts disc
+                              atomically $ writeTVar (_connVar env) newConn
                               _ <- forkFinally (bootstrap env) handler
                               return ()
                         ]
-                _ -> atomically $ putTMVar disposed ()
+                _ -> atomically $ putTMVar (_disposed env) ()
     _ <- forkFinally (bootstrap env) handler
-    return $ Prod nxt_sub $ do
-        curConn <- readTVar conn_var
+    return $ Prod (_nextSubmit env) $ do
+        curConn <- readTVar $ _connVar env
         unlessM (connIsClosed curConn) retrySTM
-        readTMVar disposed
+        readTMVar $ _disposed env
