@@ -270,7 +270,7 @@ connectionSettings = _settings
 --------------------------------------------------------------------------------
 -- | Asynchronously closes the 'Connection'.
 shutdown :: Connection -> IO ()
-shutdown Connection{..} = shutdownExecutionModel _prod
+shutdown Connection{..} = pushShutdown _prod
 
 --------------------------------------------------------------------------------
 -- | Sends a single 'Event' to given stream.
@@ -292,7 +292,7 @@ sendEvents :: Connection
 sendEvents Connection{..} evt_stream exp_ver evts = do
     (k, as)  <- createOpAsync
     let op = Op.writeEvents _settings evt_stream exp_ver evts
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
 
 --------------------------------------------------------------------------------
@@ -305,7 +305,7 @@ deleteStream :: Connection
 deleteStream Connection{..} evt_stream exp_ver hard_del = do
     (k, as) <- createOpAsync
     let op = Op.deleteStream _settings evt_stream exp_ver hard_del
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
 
 --------------------------------------------------------------------------------
@@ -338,7 +338,7 @@ startTransaction :: Connection
 startTransaction conn@Connection{..} evt_stream exp_ver = do
     (k, as) <- createOpAsync
     let op = Op.transactionStart _settings evt_stream exp_ver
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     let _F trans_id =
             Transaction
             { _tStream  = evt_stream
@@ -356,7 +356,7 @@ transactionWrite Transaction{..} evts = do
     let Connection{..} = _tConn
         raw_id = _unTransId _tTransId
         op     = Op.transactionWrite _settings _tStream _tExpVer raw_id evts
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
 
 --------------------------------------------------------------------------------
@@ -367,7 +367,7 @@ transactionCommit Transaction{..} = do
     let Connection{..} = _tConn
         raw_id = _unTransId _tTransId
         op     = Op.transactionCommit _settings _tStream _tExpVer raw_id
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
 
 --------------------------------------------------------------------------------
@@ -386,7 +386,7 @@ readEvent :: Connection
 readEvent Connection{..} stream_id evt_num res_link_tos = do
     (k, as) <- createOpAsync
     let op = Op.readEvent _settings stream_id evt_num res_link_tos
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
 
 --------------------------------------------------------------------------------
@@ -422,7 +422,7 @@ readStreamEventsCommon :: Connection
 readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
     (k, as) <- createOpAsync
     let op = Op.readStreamEvents _settings dir stream_id start cnt res_link_tos
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
 
 --------------------------------------------------------------------------------
@@ -455,7 +455,7 @@ readAllEventsCommon :: Connection
 readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
     (k, as) <- createOpAsync
     let op = Op.readAllEvents _settings c_pos p_pos max_c res_link_tos dir
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
   where
     Position c_pos p_pos = pos
@@ -465,18 +465,18 @@ mkSubEnv :: Connection -> SubEnv
 mkSubEnv Connection{..} =
     SubEnv
     { subSettings = _settings
-    , subPushOp = pushOperation _prod
+    , subPushOp = \k op ->  pushCmd _prod (NewOperation k op)
     , subPushConnect = \k cmd ->
           case cmd of
               PushRegular stream tos ->
-                  pushConnectStream _prod k stream tos
+                  pushCmd _prod (ConnectStream k stream tos)
               PushPersistent group stream size ->
-                  pushConnectPersist _prod k group stream size
-    , subPushUnsub = pushUnsubscribe _prod
+                  pushCmd _prod (ConnectPersist k group stream size)
+    , subPushUnsub = pushCmd _prod . Unsubscribe
     , subAckCmd = \cmd run uuids ->
           case cmd of
-              AckCmd -> pushAckPersist _prod run uuids
-              NakCmd act res -> pushNakPersist _prod run act res uuids
+              AckCmd -> pushCmd _prod (AckPersist run uuids)
+              NakCmd act res -> pushCmd _prod (NakPersist run act res uuids)
     , subForceReconnect = \node ->
           pushForceReconnect _prod node
     }
@@ -550,7 +550,7 @@ setStreamMetadata :: Connection
 setStreamMetadata Connection{..} evt_stream exp_ver metadata = do
     (k, as) <- createOpAsync
     let op = Op.setMetaStream _settings evt_stream exp_ver metadata
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
 
 --------------------------------------------------------------------------------
@@ -559,7 +559,7 @@ getStreamMetadata :: Connection -> Text -> IO (Async StreamMetadataResult)
 getStreamMetadata Connection{..} evt_stream = do
     (k, as) <- createOpAsync
     let op = Op.readMetaStream _settings evt_stream
-    pushOperation _prod k op
+    pushCmd _prod (NewOperation k op)
     return as
 
 --------------------------------------------------------------------------------
@@ -575,7 +575,7 @@ createPersistentSubscription Connection{..} group stream sett = do
             case res of
                 Left e -> putTMVar mvar (Just e)
                 _      -> putTMVar mvar Nothing
-    pushCreatePersist _prod _F group stream sett
+    pushCmd _prod (CreatePersist _F group stream sett)
     async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
@@ -591,7 +591,7 @@ updatePersistentSubscription Connection{..} group stream sett = do
             case res of
                 Left e -> putTMVar mvar (Just e)
                 _      -> putTMVar mvar Nothing
-    pushUpdatePersist _prod _F group stream sett
+    pushCmd _prod (UpdatePersist _F group stream sett)
     async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
@@ -606,7 +606,7 @@ deletePersistentSubscription Connection{..} group stream = do
             case res of
                 Left e -> putTMVar mvar (Just e)
                 _      -> putTMVar mvar Nothing
-    pushDeletePersist _prod _F group stream
+    pushCmd _prod (DeletePersist _F group stream)
     async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
