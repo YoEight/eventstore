@@ -201,6 +201,7 @@ import Data.List.NonEmpty(NonEmpty(..), nonEmpty)
 import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
+import           Database.EventStore.Internal.Cmd
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Connection
 import           Database.EventStore.Internal.Discovery
@@ -469,14 +470,15 @@ mkSubEnv Connection{..} =
     , subPushConnect = \k cmd ->
           case cmd of
               PushRegular stream tos ->
-                  pushCmd _prod (ConnectStream k stream tos)
+                  pushCmd _prod (SubCmd $ ConnectStream k stream tos)
               PushPersistent group stream size ->
-                  pushCmd _prod (ConnectPersist k group stream size)
-    , subPushUnsub = pushCmd _prod . Unsubscribe
+                  pushCmd _prod (SubCmd $ ConnectPersist k group stream size)
+    , subPushUnsub = pushCmd _prod . SubCmd . Unsubscribe
     , subAckCmd = \cmd run uuids ->
           case cmd of
-              AckCmd -> pushCmd _prod (AckPersist run uuids)
-              NakCmd act res -> pushCmd _prod (NakPersist run act res uuids)
+              AckCmd -> pushCmd _prod (SubCmd $ AckPersist run uuids)
+              NakCmd act res ->
+                  pushCmd _prod (SubCmd $ NakPersist run act res uuids)
     , subForceReconnect = \node ->
           pushForceReconnect _prod node
     }
@@ -575,7 +577,7 @@ createPersistentSubscription Connection{..} group stream sett = do
             case res of
                 Left e -> putTMVar mvar (Just e)
                 _      -> putTMVar mvar Nothing
-    pushCmd _prod (CreatePersist _F group stream sett)
+    pushCmd _prod (SubCmd $ CreatePersist _F group stream sett)
     async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
@@ -591,7 +593,7 @@ updatePersistentSubscription Connection{..} group stream sett = do
             case res of
                 Left e -> putTMVar mvar (Just e)
                 _      -> putTMVar mvar Nothing
-    pushCmd _prod (UpdatePersist _F group stream sett)
+    pushCmd _prod (SubCmd $ UpdatePersist _F group stream sett)
     async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
@@ -606,7 +608,7 @@ deletePersistentSubscription Connection{..} group stream = do
             case res of
                 Left e -> putTMVar mvar (Just e)
                 _      -> putTMVar mvar Nothing
-    pushCmd _prod (DeletePersist _F group stream)
+    pushCmd _prod (SubCmd $ DeletePersist _F group stream)
     async $ atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------

@@ -42,6 +42,7 @@ import ClassyPrelude
 import Data.UUID
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Cmd
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.EndPoint
@@ -119,31 +120,6 @@ newEnv setts disc = mfix $ \env ->
     newConn = newConnection setts disc >>= newTVarIO
 
 --------------------------------------------------------------------------------
-data Cmd
-    = forall a.
-      NewOperation (Either OperationError a -> IO ()) (Operation a)
-      -- Pushes a new 'Operation' asynchronously.
-    | ConnectStream (SubConnectEvent -> IO ()) Text Bool
-      -- Subscribes to a regular stream.
-    | ConnectPersist (SubConnectEvent -> IO ()) Text Text Int32
-      -- Subscribes to a persistent subscription.
-    | Unsubscribe Running
-      -- Unsubscribe from a subscription.
-    | CreatePersist (Either PersistActionException ConfirmedAction -> IO ())
-          Text Text PersistentSubscriptionSettings
-      -- Creates a persistent subscription.
-    | UpdatePersist (Either PersistActionException ConfirmedAction -> IO ())
-          Text Text PersistentSubscriptionSettings
-      -- Updates a persistent subscription.
-    | DeletePersist (Either PersistActionException ConfirmedAction -> IO ())
-          Text Text
-      -- Deletes a persistent subscription.
-    | AckPersist Running [UUID]
-      -- Acknowledges a set of events has been successfully handled.
-    | NakPersist Running NakAction (Maybe Text) [UUID]
-      -- Acknowledges a set of events hasn't been handled successfully.
-
---------------------------------------------------------------------------------
 data Msg
     = Stopped SomeException
       -- One of a worker thread has died.
@@ -153,7 +129,7 @@ data Msg
       -- Asks to shutdown the connection to the server asynchronously.
     | ForceReconnect NodeEndPoints
       -- Force to reconnect on given node points.
-    | Cmd Cmd
+    | UserCmd Cmd
 
 --------------------------------------------------------------------------------
 pushMsg :: Production -> Msg -> IO ()
@@ -163,7 +139,7 @@ pushMsg (Prod _sender _) msg = do
 
 --------------------------------------------------------------------------------
 pushCmd :: Production -> Cmd -> IO ()
-pushCmd prod = pushMsg prod . Cmd
+pushCmd prod = pushMsg prod . UserCmd
 
 --------------------------------------------------------------------------------
 pushShutdown :: Production -> IO ()
@@ -312,7 +288,7 @@ cruising env@Env{..} = forever $ do
                 modifyTVar' _state $ updateProc new_proc
         ForceReconnect node -> throwIO $ ForceReconnectionException node
         Shutdown -> throwIO ClosedConnection
-        Cmd cmd -> executeCmd env s cmd
+        UserCmd cmd -> executeCmd env s cmd
 
 --------------------------------------------------------------------------------
 -- | Executes command issued by the user.
@@ -324,46 +300,48 @@ executeCmd env@Env{..} s cmd = do
           atomically $ do
               new_proc <- runTransition env sm
               modifyTVar' _state $ updateProc new_proc
-      ConnectStream k n tos -> do
-          let sm = connectRegularStream k n tos $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
-      ConnectPersist k g n b -> do
-          let sm = connectPersistent k g n b $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
-      Unsubscribe r -> do
-          let sm = unsubscribe r $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
-      CreatePersist k g n psetts -> do
-          let sm = createPersistent k g n psetts $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
-      UpdatePersist k g n psetts -> do
-          let sm = updatePersistent k g n psetts $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
-      DeletePersist k g n -> do
-          let sm = deletePersistent k g n $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
-      AckPersist run evts -> do
-          let sm = ackPersist (return ()) run evts $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
-      NakPersist run act res evts -> do
-          let sm = nakPersist (return ()) run act res evts $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
+      SubCmd subCmd ->
+          case subCmd of
+              ConnectStream k n tos -> do
+                  let sm = connectRegularStream k n tos $ _proc s
+                  atomically $ do
+                      new_proc <- runTransition env sm
+                      modifyTVar' _state $ updateProc new_proc
+              ConnectPersist k g n b -> do
+                  let sm = connectPersistent k g n b $ _proc s
+                  atomically $ do
+                      new_proc <- runTransition env sm
+                      modifyTVar' _state $ updateProc new_proc
+              Unsubscribe r -> do
+                  let sm = unsubscribe r $ _proc s
+                  atomically $ do
+                      new_proc <- runTransition env sm
+                      modifyTVar' _state $ updateProc new_proc
+              CreatePersist k g n psetts -> do
+                  let sm = createPersistent k g n psetts $ _proc s
+                  atomically $ do
+                      new_proc <- runTransition env sm
+                      modifyTVar' _state $ updateProc new_proc
+              UpdatePersist k g n psetts -> do
+                  let sm = updatePersistent k g n psetts $ _proc s
+                  atomically $ do
+                      new_proc <- runTransition env sm
+                      modifyTVar' _state $ updateProc new_proc
+              DeletePersist k g n -> do
+                  let sm = deletePersistent k g n $ _proc s
+                  atomically $ do
+                      new_proc <- runTransition env sm
+                      modifyTVar' _state $ updateProc new_proc
+              AckPersist run evts -> do
+                  let sm = ackPersist (return ()) run evts $ _proc s
+                  atomically $ do
+                      new_proc <- runTransition env sm
+                      modifyTVar' _state $ updateProc new_proc
+              NakPersist run act res evts -> do
+                  let sm = nakPersist (return ()) run act res evts $ _proc s
+                  atomically $ do
+                      new_proc <- runTransition env sm
+                      modifyTVar' _state $ updateProc new_proc
 
 --------------------------------------------------------------------------------
 -- | That mode is triggered either because the user asks to shutdown the
@@ -394,11 +372,14 @@ closing env@Env{..} = do
                 return Nothing
             Shutdown -> return Nothing
             Stopped _ -> return Nothing
-            Cmd cmd ->
+            UserCmd cmd ->
                 case cmd of
-                    AckPersist{} -> return Nothing
-                    NakPersist{} -> return Nothing
-                    Unsubscribe{} -> return Nothing
+                    SubCmd subCmd ->
+                        case subCmd of
+                            AckPersist{} -> return Nothing
+                            NakPersist{} -> return Nothing
+                            Unsubscribe{} -> return Nothing
+                            _ -> return $ Just nxt
                     _ -> return $ Just nxt
             ForceReconnect{} -> return $ Just nxt
 

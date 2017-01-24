@@ -62,7 +62,8 @@ library
   exposed-modules: Database.EventStore
                    Database.EventStore.Logging
   -- Modules included in this library but not exported.
-  other-modules:   Database.EventStore.Internal.Command
+  other-modules:   Database.EventStore.Internal.Cmd
+                   Database.EventStore.Internal.Command
                    Database.EventStore.Internal.Connection
                    Database.EventStore.Internal.Discovery
                    Database.EventStore.Internal.EndPoint
@@ -71,6 +72,7 @@ library
                    Database.EventStore.Internal.Generator
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Processor
+                   Database.EventStore.Internal.Publish
                    Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.Subscription
                    Database.EventStore.Internal.Types
