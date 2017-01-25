@@ -41,7 +41,6 @@ data ProcOutcome
   = ProcSendPkg !Package
   | ProcExecJob !(IO ())
   | ProcReconnect !NodeEndPoints
-  | ProcNoop
 
 --------------------------------------------------------------------------------
 data Proc =

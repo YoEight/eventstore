@@ -114,8 +114,6 @@ newEnv setts disc = mfix $ \env ->
                         writeTCQueue (_jobQueue env) (Job job)
                     ProcReconnect node ->
                         writeTCQueue (_queue env) (ForceReconnect node)
-                    ProcNoop ->
-                        return ()
 
         newProc setts pub
 
