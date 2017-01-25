@@ -17,6 +17,7 @@ module Database.EventStore.Internal.Execution.TCQueue
     , clearTCQueue
     , isEmptyTCQueue
     , updateTCQueue
+    , unsafeUpdateTCQueue
     ) where
 
 --------------------------------------------------------------------------------
@@ -72,6 +73,22 @@ updateTCQueue (TCQueue q) k = writeTQueue q End >> go
                 case r of
                     Nothing -> go
                     Just a' -> writeTQueue q (Slot a') >> go
+
+--------------------------------------------------------------------------------
+-- | Like 'updateTCQueue' execpt everything happens in the 'IO' monad. It's no
+--   longer atomic.
+unsafeUpdateTCQueue :: TCQueue a -> (a -> IO (Maybe a)) -> IO ()
+unsafeUpdateTCQueue (TCQueue q) k = atomically (writeTQueue q End) >> go
+  where
+    go = do
+        s <- atomically $ readTQueue q
+        case s of
+            End    -> return ()
+            Slot a -> do
+                r <- k a
+                case r of
+                    Nothing -> go
+                    Just a' -> atomically (writeTQueue q (Slot a')) >> go
 
 --------------------------------------------------------------------------------
 -- | Indicates if a 'TCQueue' is empty.

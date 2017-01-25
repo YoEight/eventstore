@@ -24,7 +24,6 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Execution.Production
     ( Production
-    , Cmd(..)
     , pushCmd
     , newExecutionModel
     , prodWaitTillClosed
@@ -35,11 +34,9 @@ module Database.EventStore.Internal.Execution.Production
 --------------------------------------------------------------------------------
 import Control.Exception (AsyncException(..), asyncExceptionFromException)
 import Control.Monad.Fix
-import Data.Int
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Cmd
@@ -47,17 +44,8 @@ import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Execution.TCQueue
-import Database.EventStore.Internal.Generator
-import Database.EventStore.Internal.Manager.Subscription.Driver hiding
-    ( submitPackage
-    , unsubscribe
-    , ackPersist
-    , nakPersist
-    , abort
-    )
-import Database.EventStore.Internal.Manager.Subscription.Model
-import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Processor
+import Database.EventStore.Internal.Publish
 import Database.EventStore.Internal.Types
 import Database.EventStore.Logging
 
@@ -100,6 +88,7 @@ data Env =
     , _disposed :: TMVar ()
       -- ^ Indicates when the production execution model has been shutdown and
       --   disposed any ongoing operations.
+    , _proc :: Proc
     }
 
 --------------------------------------------------------------------------------
@@ -108,16 +97,27 @@ newEnv setts disc = mfix $ \env ->
     Env setts <$> newTCQueue
               <*> newTCQueue
               <*> newTCQueue
-              <*> newState
+              <*> newTVarIO emptyState
               <*> newTVarIO (atomically . writeTCQueue (_queue env))
               <*> newConn
               <*> newEmptyTMVarIO
+              <*> createProc env
   where
-    newState = do
-        gen <- newGenerator
-        newTVarIO $ emptyState setts gen
-
     newConn = newConnection setts disc >>= newTVarIO
+
+    createProc env = do
+        let pub = Publish $ \outcome -> atomically $
+                case outcome of
+                    ProcSendPkg pkg ->
+                        writeTCQueue (_pkgQueue env) pkg
+                    ProcExecJob job ->
+                        writeTCQueue (_jobQueue env) (Job job)
+                    ProcReconnect node ->
+                        writeTCQueue (_queue env) (ForceReconnect node)
+                    ProcNoop ->
+                        return ()
+
+        newProc setts pub
 
 --------------------------------------------------------------------------------
 data Msg
@@ -163,8 +163,7 @@ newtype Job = Job (IO ())
 --------------------------------------------------------------------------------
 data State =
     State
-    { _proc   :: !(Processor (IO ()))
-    , _reader :: !(Maybe ThreadId)
+    { _reader :: !(Maybe ThreadId)
     , _runner :: !(Maybe ThreadId)
     , _writer :: !(Maybe ThreadId)
     }
@@ -176,12 +175,8 @@ data WorkerType
   | WriterWorker
 
 --------------------------------------------------------------------------------
-emptyState :: Settings -> Generator -> State
-emptyState setts gen = State (newProcessor setts gen) Nothing Nothing Nothing
-
---------------------------------------------------------------------------------
-updateProc :: Processor (IO ()) -> State -> State
-updateProc p s = s { _proc = p }
+emptyState :: State
+emptyState = State Nothing Nothing Nothing
 
 --------------------------------------------------------------------------------
 -- | Reader thread. Keeps reading 'Package' from the server.
@@ -235,24 +230,6 @@ spawn Env{..} typ = do
     return ()
 
 --------------------------------------------------------------------------------
--- | Loops over a 'Processor''s 'Transition' state machine, returning an updated
---   'Processor' model at the end.
-runTransition :: Env -> Transition (IO ()) -> STM (Processor (IO ()))
-runTransition Env{..} = go
-  where
-    go (Produce j nxt) = do
-        let job = Job j
-        writeTCQueue _jobQueue job
-        go nxt
-    go (Transmit pkg nxt) = do
-        writeTCQueue _pkgQueue pkg
-        go nxt
-    go (Await new_proc) = return new_proc
-    go (ForceReconnectCmd node nxt) = do
-        writeTCQueue _queue (ForceReconnect node)
-        go nxt
-
---------------------------------------------------------------------------------
 -- | First execution mode. It spawns initial reader, runner and writer threads.
 --   Then it switches to 'cruising' mode.
 bootstrap :: Env -> IO ()
@@ -276,80 +253,22 @@ instance Exception ForceReconnectException
 --   still live. We might have deconnection once in a while but at the end, if
 --   we managed to reconnect to it, we consider everything is fine.
 cruising :: Env -> IO ()
-cruising env@Env{..} = forever $ do
+cruising Env{..} = forever $ do
     msg <- atomically $ readTCQueue _queue
-    s   <- readTVarIO _state
     case msg of
         Stopped e -> throwIO e
-        Arrived pkg -> do
-            let sm = submitPackage pkg $ _proc s
-            atomically $ do
-                new_proc <- runTransition env sm
-                modifyTVar' _state $ updateProc new_proc
+        Arrived pkg -> executePkg _proc pkg
         ForceReconnect node -> throwIO $ ForceReconnectionException node
         Shutdown -> throwIO ClosedConnection
-        UserCmd cmd -> executeCmd env s cmd
-
---------------------------------------------------------------------------------
--- | Executes command issued by the user.
-executeCmd :: Env -> State -> Cmd -> IO ()
-executeCmd env@Env{..} s cmd = do
-  case cmd of
-      NewOperation k op -> do
-          let sm = newOperation k op $ _proc s
-          atomically $ do
-              new_proc <- runTransition env sm
-              modifyTVar' _state $ updateProc new_proc
-      SubCmd subCmd ->
-          case subCmd of
-              ConnectStream k n tos -> do
-                  let sm = connectRegularStream k n tos $ _proc s
-                  atomically $ do
-                      new_proc <- runTransition env sm
-                      modifyTVar' _state $ updateProc new_proc
-              ConnectPersist k g n b -> do
-                  let sm = connectPersistent k g n b $ _proc s
-                  atomically $ do
-                      new_proc <- runTransition env sm
-                      modifyTVar' _state $ updateProc new_proc
-              Unsubscribe r -> do
-                  let sm = unsubscribe r $ _proc s
-                  atomically $ do
-                      new_proc <- runTransition env sm
-                      modifyTVar' _state $ updateProc new_proc
-              CreatePersist k g n psetts -> do
-                  let sm = createPersistent k g n psetts $ _proc s
-                  atomically $ do
-                      new_proc <- runTransition env sm
-                      modifyTVar' _state $ updateProc new_proc
-              UpdatePersist k g n psetts -> do
-                  let sm = updatePersistent k g n psetts $ _proc s
-                  atomically $ do
-                      new_proc <- runTransition env sm
-                      modifyTVar' _state $ updateProc new_proc
-              DeletePersist k g n -> do
-                  let sm = deletePersistent k g n $ _proc s
-                  atomically $ do
-                      new_proc <- runTransition env sm
-                      modifyTVar' _state $ updateProc new_proc
-              AckPersist run evts -> do
-                  let sm = ackPersist (return ()) run evts $ _proc s
-                  atomically $ do
-                      new_proc <- runTransition env sm
-                      modifyTVar' _state $ updateProc new_proc
-              NakPersist run act res evts -> do
-                  let sm = nakPersist (return ()) run act res evts $ _proc s
-                  atomically $ do
-                      new_proc <- runTransition env sm
-                      modifyTVar' _state $ updateProc new_proc
+        UserCmd cmd -> executeCmd _proc cmd
 
 --------------------------------------------------------------------------------
 -- | That mode is triggered either because the user asks to shutdown the
 --   connection or because the connection to server has been dropped and we
 --   can't reconnect.
 closing :: Env -> IO ()
-closing env@Env{..} = do
-    State _ retid rutid  wutid <- readTVarIO _state
+closing Env{..} = do
+    State retid rutid wutid <- readTVarIO _state
     -- We kill reader and writer threads to avoid in fly package in the cleaning
     -- phase.
     traverse_ killThread retid
@@ -362,13 +281,10 @@ closing env@Env{..} = do
     -- are completing or moving forward ongoing operations. Every ongoing
     -- request is kept for later reconnection. Some transient operations like
     -- Ack, Nak or Unsubscribe are just discard.
-    atomically $ updateTCQueue _queue $ \nxt ->
+    unsafeUpdateTCQueue _queue $ \nxt ->
         case nxt of
             Arrived pkg -> do
-                s <- readTVar _state
-                let sm = submitPackage pkg $ _proc s
-                nxt_proc <- runTransition env sm
-                modifyTVar' _state $ updateProc nxt_proc
+                executePkg _proc pkg
                 return Nothing
             Shutdown -> return Nothing
             Stopped _ -> return Nothing
@@ -387,10 +303,8 @@ closing env@Env{..} = do
     -- make sure it doesn't interfere with the cleaning process.
     conn <- readTVarIO _connVar
     _    <- try $ connClose conn :: (IO (Either ConnectionException ()))
-    atomically $ do
-        s <- readTVar _state
-        _ <- runTransition env $ abort $ _proc s
-        return ()
+
+    executeAbort _proc
 
     -- Waits the runner thread to deal with its jobs list.
     atomically $ do
