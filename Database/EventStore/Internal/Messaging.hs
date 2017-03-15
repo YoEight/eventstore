@@ -149,6 +149,8 @@ instance Show Callback where
 data Bus =
   Bus { busName       :: Text
       , _busCallbacks :: IORef Callbacks
+      , _busQueue     :: TQueue Message
+      , _busRunning   :: TVar Bool
       }
 
 --------------------------------------------------------------------------------
@@ -158,6 +160,35 @@ messageType = getType (FromProxy (Proxy :: Proxy Message))
 --------------------------------------------------------------------------------
 newBus :: Text -> IO Bus
 newBus name = Bus name <$> newIORef mempty
+                       <*> newTQueueIO
+                       <*> newTVarIO False
+
+--------------------------------------------------------------------------------
+worker :: Bus -> IO ()
+worker b@Bus{..} = go
+  where
+    go = do
+
+      let loop = do
+            outcome <- atomically $ tryReadTQueue _busQueue
+            case outcome of
+              Nothing          -> return ()
+              Just (Message a) -> do
+                publishing b a
+                loop
+
+      loop
+      atomically $ writeTVar _busRunning False
+
+      allowedTo <- atomically $ do
+        cleared <- isEmptyTQueue _busQueue
+        running <- readTVar _busRunning
+
+        if not cleared && not running
+          then True <$ writeTVar _busRunning True
+          else return False
+
+      when allowedTo go
 
 --------------------------------------------------------------------------------
 instance Sub Bus where
@@ -173,19 +204,35 @@ instance Sub Bus where
 
 --------------------------------------------------------------------------------
 instance Pub Bus where
-  publish Bus{..} a = do
-    cs <- readIORef _busCallbacks
-    let tpe = getType (FromTypeable a)
+  publish b@Bus{..} a = do
+    canFork <- atomically $ do
+      writeTQueue _busQueue (toMsg a)
+      running <- readTVar _busRunning
 
-    act1 <- traverse (propagate a) (lookup tpe cs)
-    act2 <- if tpe == messageType
-              then return Nothing
-              else traverse (propagate (toMsg a)) (lookup messageType cs)
+      unless running $
+        writeTVar _busRunning True
 
-    for_ act1 $ \callbacks ->
-      atomicModifyIORef' _busCallbacks $ \m ->
-        (insertMap tpe callbacks m, ())
+      return $ not running
 
-    for_ act2 $ \callbacks ->
-      atomicModifyIORef' _busCallbacks $ \m ->
-        (insertMap messageType callbacks m, ())
+    when canFork $ do
+      _ <- fork $ worker b
+      return ()
+
+--------------------------------------------------------------------------------
+publishing :: Typeable a => Bus -> a -> IO ()
+publishing Bus{..} a = do
+  cs <- readIORef _busCallbacks
+  let tpe = getType (FromTypeable a)
+
+  act1 <- traverse (propagate a) (lookup tpe cs)
+  act2 <- if tpe == messageType
+            then return Nothing
+            else traverse (propagate (toMsg a)) (lookup messageType cs)
+
+  for_ act1 $ \callbacks ->
+    atomicModifyIORef' _busCallbacks $ \m ->
+      (insertMap tpe callbacks m, ())
+
+  for_ act2 $ \callbacks ->
+    atomicModifyIORef' _busCallbacks $ \m ->
+      (insertMap messageType callbacks m, ())
