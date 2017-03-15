@@ -12,7 +12,7 @@ name:                eventstore
 --                   | |  | +--- code changes with no API change
 version:             0.15.0.0
 
-tested-with: GHC >= 7.8.3 && < 8.0.2
+tested-with: GHC >= 7.8.3 && < 8.0.3
 
 -- A short (one-line) description of the package.
 synopsis: EventStore TCP Client
@@ -81,6 +81,7 @@ library
                    Database.EventStore.Internal.Manager.Subscription.Model
                    Database.EventStore.Internal.Manager.Subscription.Packages
                    Database.EventStore.Internal.Manager.Subscription.Types
+                   Database.EventStore.Internal.Messaging
                    Database.EventStore.Internal.Operations
                    Database.EventStore.Internal.Operation.Catchup
                    Database.EventStore.Internal.Operation.DeleteStream
