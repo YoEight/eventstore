@@ -15,12 +15,15 @@
 module Database.EventStore.Internal.Messaging
   ( Pub(..)
   , Sub(..)
+  , Subscribe
+  , Publish
   , subscribe
   , SubDecision(..)
   , asPub
   , asSub
   , Bus
   , newBus
+  , busStop
   , busName
   , Message
   , toMsg
@@ -30,6 +33,7 @@ module Database.EventStore.Internal.Messaging
 --------------------------------------------------------------------------------
 import Data.Typeable
 import Data.Typeable.Internal
+import Control.Monad.Fix
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
@@ -151,9 +155,22 @@ instance Show Callback where
 --------------------------------------------------------------------------------
 data Bus =
   Bus { busName       :: Text
+      , _busPid       :: ThreadId
       , _busCallbacks :: IORef Callbacks
       , _busQueue     :: TQueue Message
+      , _busStopped   :: TVar Bool
       }
+
+--------------------------------------------------------------------------------
+busStop :: Bus -> IO ()
+busStop Bus{..} = do
+  atomically $ writeTVar _busStopped True
+
+  atomically $
+    unlessM (isEmptyTQueue _busQueue) $
+      retrySTM
+
+  killThread _busPid
 
 --------------------------------------------------------------------------------
 messageType :: Type
@@ -162,10 +179,13 @@ messageType = getType (FromProxy (Proxy :: Proxy Message))
 --------------------------------------------------------------------------------
 newBus :: Text -> IO Bus
 newBus name = do
-  bus <- Bus name <$> newIORef mempty
-                  <*> newTQueueIO
+  bus <- mfix $ \b -> do
+    pid <- fork (worker b)
 
-  _ <- fork (worker bus)
+    Bus name pid <$> newIORef mempty
+                 <*> newTQueueIO
+                 <*> newTVarIO False
+
   return bus
 
 --------------------------------------------------------------------------------
@@ -190,7 +210,11 @@ instance Sub Bus where
 
 --------------------------------------------------------------------------------
 instance Pub Bus where
-  publish Bus{..} a = atomically $ writeTQueue _busQueue (toMsg a)
+  publish Bus{..} a = atomically $ do
+    stopped <- readTVar _busStopped
+
+    unless stopped $
+      writeTQueue _busQueue (toMsg a)
 
 --------------------------------------------------------------------------------
 publishing :: Typeable a => Bus -> a -> IO ()

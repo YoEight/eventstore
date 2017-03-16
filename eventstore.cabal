@@ -63,11 +63,14 @@ library
                    Database.EventStore.Logging
   -- Modules included in this library but not exported.
   other-modules:   Database.EventStore.Internal.Command
+                   Database.EventStore.Internal.Communication
                    Database.EventStore.Internal.Connection
                    Database.EventStore.Internal.Discovery
+                   Database.EventStore.Internal.Exec
                    Database.EventStore.Internal.EndPoint
                    Database.EventStore.Internal.Execution.Production
                    Database.EventStore.Internal.Generator
+                   Database.EventStore.Internal.Logger
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Stream
@@ -124,6 +127,8 @@ library
                      , connection ==0.2.*
                      , classy-prelude ==1.*
                      , mtl
+                     , fast-logger
+                     , text-format
 
   -- Directories containing source files.
   -- hs-source-dirs:
