@@ -1,4 +1,5 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric             #-}
+{-# LANGUAGE ExistentialQuantification #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Communication
@@ -30,6 +31,7 @@ newtype TcpSend = TcpSend Package
 --------------------------------------------------------------------------------
 data Service
   = OperationManager
+  | ConnectionManager
   deriving (Show, Eq, Enum, Bounded, Generic)
 
 --------------------------------------------------------------------------------
@@ -42,3 +44,7 @@ data Initialized = Initialized Service
 data InitFailed = InitFailed Service
 
 --------------------------------------------------------------------------------
+data FatalException = forall e. Exception e => FatalException e
+
+--------------------------------------------------------------------------------
+data PackageReceived = PackageReceived Package

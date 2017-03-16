@@ -80,6 +80,7 @@ newExec setts logSetts = do
   subscribe mainBus (onInit logger initRef var mainBus)
   subscribe mainBus (onInitFailed logger mainBus var)
   subscribe mainBus (onShutdown logger mainBus)
+  subscribe mainBus (onFatal logger)
 
   publish mainBus SystemInit
 
@@ -114,3 +115,8 @@ onShutdown :: Logger -> Bus -> SystemShutdown -> IO ()
 onShutdown logger bus _ = do
   logMsg logger Info "Driver shutdown by the user"
   busStop bus
+
+--------------------------------------------------------------------------------
+onFatal :: Logger -> FatalException -> IO ()
+onFatal logger (FatalException e) = do
+  logFormat logger Fatal "Fatal exception: {}" (Only $ Shown e)
