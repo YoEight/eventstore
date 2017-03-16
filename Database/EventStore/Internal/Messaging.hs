@@ -130,10 +130,13 @@ propagate a = go mempty
         EmptyL -> return acc
         h@(Callback k) :< rest -> do
           let Just b = cast a
-          decision <- k b
-          case decision of
-            Continue -> go (acc |> h) rest
-            Done     -> go acc rest
+          outcome <- tryAny $ k b
+          case outcome of
+            Left _         -> go acc rest
+            Right decision ->
+              case decision of
+                Continue -> go (acc |> h) rest
+                Done     -> go acc rest
 
 --------------------------------------------------------------------------------
 data Callback =
@@ -150,7 +153,6 @@ data Bus =
   Bus { busName       :: Text
       , _busCallbacks :: IORef Callbacks
       , _busQueue     :: TQueue Message
-      , _busRunning   :: TVar Bool
       }
 
 --------------------------------------------------------------------------------
@@ -159,36 +161,20 @@ messageType = getType (FromProxy (Proxy :: Proxy Message))
 
 --------------------------------------------------------------------------------
 newBus :: Text -> IO Bus
-newBus name = Bus name <$> newIORef mempty
-                       <*> newTQueueIO
-                       <*> newTVarIO False
+newBus name = do
+  bus <- Bus name <$> newIORef mempty
+                  <*> newTQueueIO
+
+  _ <- fork (worker bus)
+  return bus
 
 --------------------------------------------------------------------------------
 worker :: Bus -> IO ()
-worker b@Bus{..} = go
-  where
-    go = do
-
-      let loop = do
-            outcome <- atomically $ tryReadTQueue _busQueue
-            case outcome of
-              Nothing          -> return ()
-              Just (Message a) -> do
-                publishing b a
-                loop
-
-      loop
-      atomically $ writeTVar _busRunning False
-
-      allowedTo <- atomically $ do
-        cleared <- isEmptyTQueue _busQueue
-        running <- readTVar _busRunning
-
-        if not cleared && not running
-          then True <$ writeTVar _busRunning True
-          else return False
-
-      when allowedTo go
+worker b@Bus{..} = forever $ do
+  msg <- atomically $ readTQueue _busQueue
+  case msg of
+    Message a -> do
+      publishing b a
 
 --------------------------------------------------------------------------------
 instance Sub Bus where
@@ -204,19 +190,7 @@ instance Sub Bus where
 
 --------------------------------------------------------------------------------
 instance Pub Bus where
-  publish b@Bus{..} a = do
-    canFork <- atomically $ do
-      writeTQueue _busQueue (toMsg a)
-      running <- readTVar _busRunning
-
-      unless running $
-        writeTVar _busRunning True
-
-      return $ not running
-
-    when canFork $ do
-      _ <- fork $ worker b
-      return ()
+  publish Bus{..} a = atomically $ writeTQueue _busQueue (toMsg a)
 
 --------------------------------------------------------------------------------
 publishing :: Typeable a => Bus -> a -> IO ()
