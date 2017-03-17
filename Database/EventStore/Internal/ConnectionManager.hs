@@ -10,7 +10,8 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.ConnectionManager where
+module Database.EventStore.Internal.ConnectionManager
+  ( connectionManager ) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
@@ -30,8 +31,8 @@ data Connect = Connect
 data ConnectionFailure = ConnectionFailure ConnectionException
 
 --------------------------------------------------------------------------------
-connectionManager :: Settings -> Discovery -> Logger -> Bus -> IO ()
-connectionManager setts disc logger mainBus = do
+connectionManager :: Logger -> Settings -> Discovery -> Bus -> IO ()
+connectionManager logger setts disc mainBus = do
   pkgQueue <- newTQueueIO
 
   subscribe mainBus (onInit mainBus)

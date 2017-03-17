@@ -20,8 +20,10 @@ import ClassyPrelude
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.ConnectionManager
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -67,8 +69,8 @@ initServicePending :: ServicePendingInit
 initServicePending = foldMap (\svc -> singletonMap svc ()) [minBound..]
 
 --------------------------------------------------------------------------------
-newExec :: Settings -> LoggerSettings -> IO Exec
-newExec setts logSetts = do
+newExec :: Settings -> Discovery -> LoggerSettings -> IO Exec
+newExec setts disc logSetts = do
   mainBus <- newBus "main-bus"
   var     <- newTVarIO Init
   exe     <- Exec (stageSTM var) <$> newEmptyTMVarIO
@@ -77,6 +79,7 @@ newExec setts logSetts = do
 
   let logger = getLogger "Exec" logMgr
 
+  connectionManager (getLogger "ConnectionManager" logMgr) setts disc mainBus
   subscribe mainBus (onInit logger initRef var mainBus)
   subscribe mainBus (onInitFailed logger mainBus var)
   subscribe mainBus (onShutdown logger mainBus)
