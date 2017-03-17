@@ -86,6 +86,7 @@ library
                    Database.EventStore.Internal.Manager.Subscription.Packages
                    Database.EventStore.Internal.Manager.Subscription.Types
                    Database.EventStore.Internal.Messaging
+                   Database.EventStore.Internal.OperationManager
                    Database.EventStore.Internal.Operations
                    Database.EventStore.Internal.Operation.Catchup
                    Database.EventStore.Internal.Operation.DeleteStream

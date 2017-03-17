@@ -24,6 +24,7 @@ import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.ConnectionManager
+import Database.EventStore.Internal.OperationManager
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -80,6 +81,8 @@ newExec setts disc logSetts = do
   let logger = getLogger "Exec" logMgr
 
   connectionManager (getLogger "ConnectionManager" logMgr) setts disc mainBus
+  operationManager (getLogger "OperationManager" logMgr) setts mainBus
+
   subscribe mainBus (onInit logger initRef var mainBus)
   subscribe mainBus (onInitFailed logger mainBus var)
   subscribe mainBus (onShutdown logger mainBus)
