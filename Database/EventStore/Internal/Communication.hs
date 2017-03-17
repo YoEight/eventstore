@@ -17,6 +17,8 @@ module Database.EventStore.Internal.Communication where
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Promise
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -48,3 +50,6 @@ data FatalException = forall e. Exception e => FatalException e
 
 --------------------------------------------------------------------------------
 data PackageReceived = PackageReceived Package
+
+--------------------------------------------------------------------------------
+data SubmitOperation = forall a. SubmitOperation (Promise a) (Operation a)
