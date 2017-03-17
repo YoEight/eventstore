@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.ConnectionManager
@@ -20,79 +21,110 @@ import ClassyPrelude
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
+import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-data Connect = Connect
+data Connect = Connect (Maybe NodeEndPoints)
 
 --------------------------------------------------------------------------------
 data ConnectionFailure = ConnectionFailure ConnectionException
 
 --------------------------------------------------------------------------------
+type LastPids = Maybe (ThreadId, ThreadId)
+
+--------------------------------------------------------------------------------
+data Internal =
+  Internal { _setts    :: Settings
+           , _disc     :: Discovery
+           , _logger   :: Logger
+           , _mainBus  :: Bus
+           , _queue    :: TQueue Package
+           , _lastPids :: IORef LastPids
+           }
+
+--------------------------------------------------------------------------------
 connectionManager :: Logger -> Settings -> Discovery -> Bus -> IO ()
 connectionManager logger setts disc mainBus = do
-  pkgQueue <- newTQueueIO
+  internal <- Internal setts disc logger mainBus <$> newTQueueIO
+                                                 <*> newIORef Nothing
 
-  subscribe mainBus (onInit mainBus)
-  subscribe mainBus (onSend pkgQueue)
-  subscribe mainBus (onConnect setts disc mainBus pkgQueue)
-  subscribe mainBus (onConnectFailure logger mainBus)
-
---------------------------------------------------------------------------------
-onInit :: Bus -> SystemInit -> IO ()
-onInit bus _ = do
-  publish bus Connect
-  publish bus (Initialized ConnectionManager)
+  subscribe mainBus (onInit internal)
+  subscribe mainBus (onSend internal)
+  subscribe mainBus (onConnect internal)
+  subscribe mainBus (onConnectFailure internal)
+  subscribe mainBus (onForceReconnect internal)
 
 --------------------------------------------------------------------------------
-onConnect :: Settings
-          -> Discovery
-          -> Bus
-          -> TQueue Package
-          -> Connect
-          -> IO ()
-onConnect setts disc bus queue _ = do
-  conn <- newConnection setts disc
-  _    <- fork (sender conn queue bus)
-  _    <- fork (reader conn bus)
-  return ()
+onInit :: Internal -> SystemInit -> IO ()
+onInit Internal{..} _ = do
+  publish _mainBus (Connect Nothing)
+  publish _mainBus (Initialized ConnectionManager)
 
 --------------------------------------------------------------------------------
-onConnectFailure :: Logger -> Bus -> ConnectionFailure -> IO ()
-onConnectFailure logger bus (ConnectionFailure e) = do
-  logFormat logger Error "Connection error: {}" (Only $ Shown e)
+onConnect :: Internal -> Connect -> IO ()
+onConnect i@Internal{..} (Connect nodeMay) = do
+  conn <- newConnection _setts _disc
+  for_ nodeMay $ \node ->
+    connForceReconnect conn node
+
+  spid <- fork (sender i conn)
+  wpid <- fork (reader i conn)
+
+  atomicWriteIORef _lastPids (Just (spid, wpid))
+
+--------------------------------------------------------------------------------
+onConnectFailure :: Internal -> ConnectionFailure -> IO ()
+onConnectFailure i@Internal{..} (ConnectionFailure e) = do
+  logFormat _logger Error "Connection error: {}" (Only $ Shown e)
+
+  killExchange i
 
   case e of
     PackageParsingError s -> do
-      logFormat logger Error "Malformed package probably a driver issue {}"
+      logFormat _logger Error "Malformed package probably a driver issue {}"
         (Only s)
-      publish bus Connect
-    _ -> publish bus (FatalException e)
+      publish _mainBus (Connect Nothing)
+    _ -> publish _mainBus (FatalException e)
 
 --------------------------------------------------------------------------------
-onSend :: TQueue Package -> TcpSend -> IO ()
-onSend queue (TcpSend pkg) = atomically $ writeTQueue queue pkg
+onSend :: Internal -> TcpSend -> IO ()
+onSend Internal{..} (TcpSend pkg) = atomically $ writeTQueue _queue pkg
 
 --------------------------------------------------------------------------------
-sender :: InternalConnection -> TQueue Package -> Bus -> IO ()
-sender conn queue bus = loop
+onForceReconnect :: Internal -> ForceReconnect -> IO ()
+onForceReconnect i@Internal{..} (ForceReconnect node) = do
+  killExchange i
+  publish _mainBus (Connect $ Just node)
+
+--------------------------------------------------------------------------------
+sender :: Internal -> InternalConnection -> IO ()
+sender Internal{..} conn = loop
   where
     loop = do
-      pkg     <- atomically $ readTQueue queue
+      pkg     <- atomically $ readTQueue _queue
       outcome <- try $ connSend conn pkg
 
       case outcome of
-        Left e  -> publish bus (ConnectionFailure e)
+        Left e  -> publish _mainBus (ConnectionFailure e)
         Right _ -> loop
 
 --------------------------------------------------------------------------------
-reader :: InternalConnection -> Bus -> IO ()
-reader conn bus = loop
+reader :: Internal -> InternalConnection -> IO ()
+reader Internal{..} conn = loop
   where
     loop = do
       outcome <- try $ connRecv conn
       case outcome of
-        Left e    -> publish bus (ConnectionFailure e)
-        Right pkg -> publish bus (PackageReceived pkg) >> loop
+        Left e    -> publish _mainBus (ConnectionFailure e)
+        Right pkg -> publish _mainBus (PackageReceived pkg) >> loop
+
+--------------------------------------------------------------------------------
+killExchange :: Internal -> IO ()
+killExchange Internal{..} = do
+  lastPids <- readIORef _lastPids
+  for_ lastPids $ \(spid, wpid) -> do
+    killThread spid
+    killThread wpid

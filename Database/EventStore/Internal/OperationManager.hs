@@ -40,7 +40,7 @@ data Internal =
 --------------------------------------------------------------------------------
 operationManager :: Logger -> Settings -> Bus -> IO ()
 operationManager logger setts mainBus = do
-  gen <- newGenerator
+  gen      <- newGenerator
   internal <- Internal logger mainBus <$> newIORef (newModel setts gen)
 
   subscribe mainBus (onInit internal)
@@ -69,7 +69,10 @@ onNew i@Internal{..} (SubmitOperation p op) = do
 interpret :: Internal -> OpTransition -> IO OpModel
 interpret Internal{..} = go
   where
-    go (Produce action nxt) = action >> go nxt
-    go (Transmit pkg nxt)   = publish _mainBus (TcpSend pkg) >> go nxt
-    go (Await m)            = return m
-    go (NotHandled _ nxt)   = go nxt
+    go (Produce action nxt)  = action >> go nxt
+    go (Transmit pkg nxt)    = publish _mainBus (TcpSend pkg) >> go nxt
+    go (Await m)             = return m
+    go (NotHandled info nxt) = do
+      let node = masterInfoNodeEndPoints info
+      publish _mainBus (ForceReconnect node)
+      go nxt
