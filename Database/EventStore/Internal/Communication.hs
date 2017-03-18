@@ -57,3 +57,6 @@ data SubmitOperation = forall a. SubmitOperation (Promise a) (Operation a)
 
 --------------------------------------------------------------------------------
 data ForceReconnect = ForceReconnect NodeEndPoints
+
+--------------------------------------------------------------------------------
+data Abort = Abort

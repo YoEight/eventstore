@@ -81,6 +81,7 @@ onConnectFailure i@Internal{..} (ConnectionFailure e) = do
   logFormat _logger Error "Connection error: {}" (Only $ Shown e)
 
   killExchange i
+  publish _mainBus Abort
 
   case e of
     PackageParsingError s -> do

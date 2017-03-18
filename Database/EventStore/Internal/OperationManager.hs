@@ -46,6 +46,7 @@ operationManager logger setts mainBus = do
   subscribe mainBus (onInit internal)
   subscribe mainBus (onNew internal)
   subscribe mainBus (onRecv internal)
+  subscribe mainBus (onAbort internal)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -75,6 +76,13 @@ onRecv i@Internal{..} (PackageReceived pkg) = do
     atomicWriteIORef _ref nextModel
 
 --------------------------------------------------------------------------------
+onAbort :: Internal -> Abort -> IO ()
+onAbort i@Internal{..} _ = do
+  model     <- readIORef _ref
+  nextModel <- interpretAbort i (abort model)
+  atomicWriteIORef _ref nextModel
+
+--------------------------------------------------------------------------------
 interpret :: Internal -> OpTransition -> IO OpModel
 interpret Internal{..} = go
   where
@@ -85,3 +93,12 @@ interpret Internal{..} = go
       let node = masterInfoNodeEndPoints info
       publish _mainBus (ForceReconnect node)
       go nxt
+
+--------------------------------------------------------------------------------
+interpretAbort :: Internal -> OpTransition -> IO OpModel
+interpretAbort Internal{..} = go
+  where
+    go (Produce action nxt) = action >> go nxt
+    go (Transmit _ nxt)     = go nxt
+    go (Await m)            = return m
+    go (NotHandled _ nxt)   = go nxt
