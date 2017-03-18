@@ -25,6 +25,7 @@ import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.ConnectionManager
 import Database.EventStore.Internal.OperationManager
+import Database.EventStore.Internal.SubscriptionManager
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -82,6 +83,7 @@ newExec setts disc logSetts = do
 
   connectionManager (getLogger "ConnectionManager" logMgr) setts disc mainBus
   operationManager (getLogger "OperationManager" logMgr) setts mainBus
+  subscriptionManager (getLogger "SubscriptionManager" logMgr) setts mainBus
 
   subscribe mainBus (onInit logger initRef var mainBus)
   subscribe mainBus (onInitFailed logger mainBus var)

@@ -17,10 +17,15 @@ module Database.EventStore.Internal.Communication where
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
+import Data.UUID
+
+--------------------------------------------------------------------------------
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Promise
 import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Manager.Subscription.Driver
+import Database.EventStore.Internal.Manager.Subscription.Model
 
 --------------------------------------------------------------------------------
 data SystemInit = SystemInit
@@ -35,6 +40,7 @@ newtype TcpSend = TcpSend Package
 data Service
   = OperationManager
   | ConnectionManager
+  | SubscriptionManager
   deriving (Show, Eq, Enum, Bounded, Generic)
 
 --------------------------------------------------------------------------------
@@ -60,3 +66,20 @@ data ForceReconnect = ForceReconnect NodeEndPoints
 
 --------------------------------------------------------------------------------
 data Abort = Abort
+
+--------------------------------------------------------------------------------
+data SubmitSubscription
+  = ConnectStream (Promise SubConnectEvent) Text Bool
+  | ConnectPersist (Promise SubConnectEvent) Text Text Int32
+  | CreatePersist (Promise ConfirmedAction)
+                  Text
+                  Text
+                  PersistentSubscriptionSettings
+  | Unsubscribe Running
+  | UpdatePersist (Promise ConfirmedAction)
+                  Text
+                  Text
+                  PersistentSubscriptionSettings
+  | DeletePersist (Promise ConfirmedAction) Text Text
+  | AckPersist (Promise ()) Running [UUID]
+  | NakPersist (Promise ()) Running NakAction (Maybe Text) [UUID]

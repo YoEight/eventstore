@@ -17,6 +17,7 @@ module Database.EventStore.Internal.Promise
   , reject
   , retrieve
   , tryRetrieve
+  , fromEither
   ) where
 
 --------------------------------------------------------------------------------
@@ -64,3 +65,8 @@ retrieve p = do
   case outcome of
     Left e  -> throwIO e
     Right a -> return a
+
+--------------------------------------------------------------------------------
+fromEither :: Exception e => Promise a -> Either e a -> IO ()
+fromEither p (Left e)  = reject p e
+fromEither p (Right a) = fulfill p a
