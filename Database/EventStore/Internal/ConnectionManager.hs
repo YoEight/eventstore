@@ -119,7 +119,13 @@ reader Internal{..} conn = loop
       outcome <- try $ connRecv conn
       case outcome of
         Left e    -> publish _mainBus (ConnectionFailure e)
-        Right pkg -> publish _mainBus (PackageReceived pkg) >> loop
+        Right pkg -> do
+          if packageCmd pkg == 0x01
+            then let corrId = packageCorrelation pkg
+                     resp   = heartbeatResponsePackage corrId in
+                  atomically $ writeTQueue _queue resp
+            else publish _mainBus (PackageReceived pkg)
+          loop
 
 --------------------------------------------------------------------------------
 killExchange :: Internal -> IO ()
