@@ -45,6 +45,7 @@ operationManager logger setts mainBus = do
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onNew internal)
+  subscribe mainBus (onRecv internal)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -64,6 +65,14 @@ onNew i@Internal{..} (SubmitOperation p op) = do
 
   nextModel <- interpret i (pushOperation callback op model)
   atomicWriteIORef _ref nextModel
+
+--------------------------------------------------------------------------------
+onRecv :: Internal -> PackageReceived -> IO ()
+onRecv i@Internal{..} (PackageReceived pkg) = do
+  model <- readIORef _ref
+  for_ (submitPackage pkg model) $ \outcome -> do
+    nextModel <- interpret i outcome
+    atomicWriteIORef _ref nextModel
 
 --------------------------------------------------------------------------------
 interpret :: Internal -> OpTransition -> IO OpModel
