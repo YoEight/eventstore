@@ -37,6 +37,7 @@ import           Network.Connection (TLSSettings)
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Logger
 import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
@@ -656,6 +657,7 @@ data Settings
       , s_reconnect_delay_secs :: Int -- ^ In seconds
       , s_logger               :: Maybe (Log -> IO ())
       , s_ssl                  :: Maybe TLSSettings
+      , s_loggerSettings       :: LoggerSettings
       }
 
 --------------------------------------------------------------------------------
@@ -677,6 +679,7 @@ defaultSettings  = Settings
                    , s_reconnect_delay_secs = 3
                    , s_logger               = Nothing
                    , s_ssl                  = Nothing
+                   , s_loggerSettings       = defaultLoggerSettings
                    }
 
 --------------------------------------------------------------------------------

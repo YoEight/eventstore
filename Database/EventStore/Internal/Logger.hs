@@ -16,6 +16,7 @@ module Database.EventStore.Internal.Logger
   , Logger
   , LogLevel(..)
   , LoggerSettings(..)
+  , defaultLoggerSettings
   , Shown(..)
   , Only(..)
   , newLogManager
@@ -31,17 +32,29 @@ import Data.Text.Format.Params
 import System.Log.FastLogger
 
 --------------------------------------------------------------------------------
-newtype LoggerSettings =
-  LoggerSettings { loggerType :: LogType }
+data LoggerSettings =
+  LoggerSettings { loggerType  :: LogType
+                 , loggerLevel :: LogLevel
+                 }
+
+--------------------------------------------------------------------------------
+defaultLoggerSettings :: LoggerSettings
+defaultLoggerSettings =
+  LoggerSettings { loggerType  = LogStdout 0
+                 , loggerLevel = Info
+                 }
 
 --------------------------------------------------------------------------------
 data LogManager =
-  LogManager { logCallback :: TimedFastLogger }
+  LogManager { logCallback :: TimedFastLogger
+             , logLevel    :: LogLevel
+             }
 
 --------------------------------------------------------------------------------
 data Logger =
-  Logger { loggerName     :: Text
-         , loggerCallback :: TimedFastLogger
+  Logger { loggerName      :: Text
+         , _loggerCallback :: TimedFastLogger
+         , _loggerLevel    :: LogLevel
          }
 
 --------------------------------------------------------------------------------
@@ -66,23 +79,26 @@ newLogManager :: LoggerSettings -> IO LogManager
 newLogManager setts = do
   cache         <- newTimeCache simpleTimeFormat'
   (callback, _) <- newTimedFastLogger cache (loggerType setts)
-  return (LogManager callback)
+  return (LogManager callback (loggerLevel setts))
 
 --------------------------------------------------------------------------------
 getLogger :: Text -> LogManager -> Logger
 getLogger name mgr =
-  Logger { loggerName     = name
-         , loggerCallback = logCallback mgr
+  Logger { loggerName      = name
+         , _loggerCallback = logCallback mgr
+         , _loggerLevel    = logLevel mgr
          }
 
 --------------------------------------------------------------------------------
 logMsg :: MonadIO m => Logger -> LogLevel -> Text -> m ()
-logMsg Logger{..} lvl msg = liftIO $
-  loggerCallback $ \t ->
-    toLogStr t <> "eventstore:"
-               <> toLogStr (logLvlTxt lvl)
-               <> toLogStr ("[" <> loggerName <> "]:")
-               <> toLogStr msg
+logMsg Logger{..} lvl msg
+  | lvl < _loggerLevel = return ()
+  | otherwise = liftIO $
+    _loggerCallback $ \t ->
+      toLogStr t <> "eventstore:"
+                 <> toLogStr (logLvlTxt lvl)
+                 <> toLogStr ("[" <> loggerName <> "]:")
+                 <> toLogStr msg
 
 --------------------------------------------------------------------------------
 logFormat :: (MonadIO m, Params ps)
@@ -91,9 +107,11 @@ logFormat :: (MonadIO m, Params ps)
           -> Format
           -> ps
           -> m ()
-logFormat Logger{..} lvl fm ps = liftIO $
-  loggerCallback $ \t ->
-    toLogStr t <> "eventstore:"
-               <> toLogStr (logLvlTxt lvl)
-               <> toLogStr ("[" <> loggerName <> "]:")
-               <> toLogStr (format fm ps)
+logFormat Logger{..} lvl fm ps
+  | lvl < _loggerLevel = return ()
+  | otherwise = liftIO $
+    _loggerCallback $ \t ->
+      toLogStr t <> "eventstore:"
+                 <> toLogStr (logLvlTxt lvl)
+                 <> toLogStr ("[" <> loggerName <> "]:")
+                 <> toLogStr (format fm ps)

@@ -71,13 +71,13 @@ initServicePending :: ServicePendingInit
 initServicePending = foldMap (\svc -> singletonMap svc ()) [minBound..]
 
 --------------------------------------------------------------------------------
-newExec :: Settings -> Discovery -> LoggerSettings -> IO Exec
-newExec setts disc logSetts = do
+newExec :: Settings -> Discovery -> IO Exec
+newExec setts disc = do
   mainBus <- newBus "main-bus"
   var     <- newTVarIO Init
   exe     <- Exec (stageSTM var) <$> newEmptyTMVarIO
   initRef <- newIORef initServicePending
-  logMgr  <- newLogManager logSetts
+  logMgr  <- newLogManager (s_loggerSettings setts)
 
   let logger = getLogger "Exec" logMgr
 
