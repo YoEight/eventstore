@@ -95,10 +95,11 @@ logMsg Logger{..} lvl msg
   | lvl < _loggerLevel = return ()
   | otherwise = liftIO $
     _loggerCallback $ \t ->
-      toLogStr t <> "eventstore:"
-                 <> toLogStr (logLvlTxt lvl)
-                 <> toLogStr ("[" <> loggerName <> "]:")
-                 <> toLogStr msg
+      toLogStr ("["<> t <>"]") <> " eventstore "
+                               <> toLogStr (logLvlTxt lvl)
+                               <> toLogStr ("[" <> loggerName <> "] ")
+                               <> toLogStr msg
+                               <> "\n"
 
 --------------------------------------------------------------------------------
 logFormat :: (MonadIO m, Params ps)
@@ -111,7 +112,8 @@ logFormat Logger{..} lvl fm ps
   | lvl < _loggerLevel = return ()
   | otherwise = liftIO $
     _loggerCallback $ \t ->
-      toLogStr t <> "eventstore:"
-                 <> toLogStr (logLvlTxt lvl)
-                 <> toLogStr ("[" <> loggerName <> "]:")
-                 <> toLogStr (format fm ps)
+      toLogStr ("["<> t <>"]") <> " eventstore "
+                               <> toLogStr (logLvlTxt lvl)
+                               <> toLogStr ("[" <> loggerName <> "] ")
+                               <> toLogStr (format fm ps)
+                               <> "\n"
