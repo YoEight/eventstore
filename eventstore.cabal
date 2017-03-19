@@ -72,7 +72,6 @@ library
                    Database.EventStore.Internal.Generator
                    Database.EventStore.Internal.Logger
                    Database.EventStore.Internal.Operation
-                   Database.EventStore.Internal.Processor
                    Database.EventStore.Internal.Stream
                    Database.EventStore.Internal.Subscription
                    Database.EventStore.Internal.SubscriptionManager
