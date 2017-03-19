@@ -202,18 +202,21 @@ import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Command
+import           Database.EventStore.Internal.Communication
 import           Database.EventStore.Internal.Connection
 import           Database.EventStore.Internal.Discovery
+import           Database.EventStore.Internal.Exec
 import           Database.EventStore.Internal.Subscription
 import           Database.EventStore.Internal.Manager.Subscription.Driver hiding (unsubscribe)
 import           Database.EventStore.Internal.Manager.Subscription.Message
+import           Database.EventStore.Internal.Messaging hiding (subscribe)
 import           Database.EventStore.Internal.Operation (OperationError(..))
 import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
+import           Database.EventStore.Internal.Promise
 import           Database.EventStore.Internal.Stream
 import           Database.EventStore.Internal.Types
-import           Database.EventStore.Internal.Execution.Production
 
 --------------------------------------------------------------------------------
 -- Connection
@@ -230,7 +233,7 @@ data ConnectionType
 -- | Represents a connection to a single EventStore node.
 data Connection
     = Connection
-      { _prod     :: Production
+      { _exec     :: Exec
       , _settings :: Settings
       , _type     :: ConnectionType
       }
@@ -254,13 +257,13 @@ connect settings tpe = do
         Static host port -> return $ staticEndPointDiscovery host port
         Cluster setts    -> clusterDnsEndPointDiscovery setts
         Dns dom srv port -> return $ simpleDnsEndPointDiscovery dom srv port
-    prod <- newExecutionModel settings disc
-    return $ Connection prod settings tpe
+    exec <- newExec settings disc
+    return $ Connection exec settings tpe
 
 --------------------------------------------------------------------------------
 -- | Waits the 'Connection' to be closed.
 waitTillClosed :: Connection -> IO ()
-waitTillClosed Connection{..} = prodWaitTillClosed _prod
+waitTillClosed Connection{..} = execWaitTillClosed _exec
 
 --------------------------------------------------------------------------------
 -- | Returns a 'Connection''s 'Settings'.
@@ -270,7 +273,7 @@ connectionSettings = _settings
 --------------------------------------------------------------------------------
 -- | Asynchronously closes the 'Connection'.
 shutdown :: Connection -> IO ()
-shutdown Connection{..} = shutdownExecutionModel _prod
+shutdown Connection{..} = publish _exec SystemShutdown
 
 --------------------------------------------------------------------------------
 -- | Sends a single 'Event' to given stream.
@@ -290,10 +293,10 @@ sendEvents :: Connection
            -> [Event]
            -> IO (Async WriteResult)
 sendEvents Connection{..} evt_stream exp_ver evts = do
-    (k, as)  <- createOpAsync
+    p <- newPromise
     let op = Op.writeEvents _settings evt_stream exp_ver evts
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
 
 --------------------------------------------------------------------------------
 -- | Deletes given stream.
@@ -303,10 +306,10 @@ deleteStream :: Connection
              -> Maybe Bool       -- ^ Hard delete
              -> IO (Async Op.DeleteResult)
 deleteStream Connection{..} evt_stream exp_ver hard_del = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let op = Op.deleteStream _settings evt_stream exp_ver hard_del
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
 
 --------------------------------------------------------------------------------
 -- | Represents a multi-request transaction with the EventStore.
@@ -336,39 +339,39 @@ startTransaction :: Connection
                  -> ExpectedVersion
                  -> IO (Async Transaction)
 startTransaction conn@Connection{..} evt_stream exp_ver = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let op = Op.transactionStart _settings evt_stream exp_ver
-    pushOperation _prod k op
-    let _F trans_id =
-            Transaction
-            { _tStream  = evt_stream
-            , _tTransId = TransactionId trans_id
-            , _tExpVer  = exp_ver
-            , _tConn    = conn
-            }
-    return $ fmap _F as
+    publish _exec (SubmitOperation p op)
+    async $ do
+        tid <- retrieve p
+        return Transaction
+               { _tStream  = evt_stream
+               , _tTransId = TransactionId tid
+               , _tExpVer  = exp_ver
+               , _tConn    = conn
+               }
 
 --------------------------------------------------------------------------------
 -- | Asynchronously writes to a transaction in the EventStore.
 transactionWrite :: Transaction -> [Event] -> IO (Async ())
 transactionWrite Transaction{..} evts = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let Connection{..} = _tConn
         raw_id = _unTransId _tTransId
         op     = Op.transactionWrite _settings _tStream _tExpVer raw_id evts
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
 
 --------------------------------------------------------------------------------
 -- | Asynchronously commits this transaction.
 transactionCommit :: Transaction -> IO (Async WriteResult)
 transactionCommit Transaction{..} = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let Connection{..} = _tConn
         raw_id = _unTransId _tTransId
         op     = Op.transactionCommit _settings _tStream _tExpVer raw_id
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
 
 --------------------------------------------------------------------------------
 -- | There isn't such of thing in EventStore parlance. Basically, if you want to
@@ -384,10 +387,10 @@ readEvent :: Connection
           -> Bool       -- ^ Resolve Link Tos
           -> IO (Async (ReadResult 'RegularStream Op.ReadEvent))
 readEvent Connection{..} stream_id evt_num res_link_tos = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let op = Op.readEvent _settings stream_id evt_num res_link_tos
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
 
 --------------------------------------------------------------------------------
 -- | Reads events from a given stream forward.
@@ -420,10 +423,10 @@ readStreamEventsCommon :: Connection
                        -> Bool
                        -> IO (Async (ReadResult 'RegularStream StreamSlice))
 readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let op = Op.readStreamEvents _settings dir stream_id start cnt res_link_tos
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
 
 --------------------------------------------------------------------------------
 -- | Reads events from the $all stream forward.
@@ -453,10 +456,10 @@ readAllEventsCommon :: Connection
                     -> Bool
                     -> IO (Async AllSlice)
 readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let op = Op.readAllEvents _settings c_pos p_pos max_c res_link_tos dir
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
   where
     Position c_pos p_pos = pos
 
@@ -465,20 +468,36 @@ mkSubEnv :: Connection -> SubEnv
 mkSubEnv Connection{..} =
     SubEnv
     { subSettings = _settings
-    , subPushOp = pushOperation _prod
-    , subPushConnect = \k cmd ->
-          case cmd of
-              PushRegular stream tos ->
-                  pushConnectStream _prod k stream tos
-              PushPersistent group stream size ->
-                  pushConnectPersist _prod k group stream size
-    , subPushUnsub = pushUnsubscribe _prod
-    , subAckCmd = \cmd run uuids ->
-          case cmd of
-              AckCmd -> pushAckPersist _prod run uuids
-              NakCmd act res -> pushNakPersist _prod run act res uuids
+    , subPushOp = \cb op -> do
+        p <- newPromise
+        publish _exec (SubmitOperation p op)
+        _ <- async $ do
+            outcome <- tryRetrieve p
+            case outcome of
+                Right a -> cb (Right a)
+                Left e  -> traverse_ (cb . Left) (fromException e)
+        return ()
+    , subPushConnect = \k cmd -> do
+        p <- newPromise
+        let op =
+                case cmd of
+                    PushRegular stream tos ->
+                        ConnectStream p stream tos
+                    PushPersistent group stream size ->
+                        ConnectPersist p group stream size
+        publish _exec op
+        _ <- async (k =<< retrieve p)
+        return ()
+    , subPushUnsub = \run -> publish _exec (Unsubscribe run)
+    , subAckCmd = \cmd run uuids -> do
+        p <- newPromise
+        let op =
+                case cmd of
+                    AckCmd         -> AckPersist p run uuids
+                    NakCmd act res -> NakPersist p run act res uuids
+        publish _exec op
     , subForceReconnect = \node ->
-          pushForceReconnect _prod node
+          publish _exec (ForceReconnect node)
     }
 
 --------------------------------------------------------------------------------
@@ -548,19 +567,19 @@ setStreamMetadata :: Connection
                   -> StreamMetadata
                   -> IO (Async WriteResult)
 setStreamMetadata Connection{..} evt_stream exp_ver metadata = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let op = Op.setMetaStream _settings evt_stream exp_ver metadata
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
 
 --------------------------------------------------------------------------------
 -- | Asynchronously gets the metadata of a stream.
 getStreamMetadata :: Connection -> Text -> IO (Async StreamMetadataResult)
 getStreamMetadata Connection{..} evt_stream = do
-    (k, as) <- createOpAsync
+    p <- newPromise
     let op = Op.readMetaStream _settings evt_stream
-    pushOperation _prod k op
-    return as
+    publish _exec (SubmitOperation p op)
+    async (retrieve p)
 
 --------------------------------------------------------------------------------
 -- | Asynchronously create a persistent subscription group on a stream.
@@ -570,13 +589,13 @@ createPersistentSubscription :: Connection
                              -> PersistentSubscriptionSettings
                              -> IO (Async (Maybe PersistActionException))
 createPersistentSubscription Connection{..} group stream sett = do
-    mvar <- newEmptyTMVarIO
-    let _F res = atomically $
-            case res of
-                Left e -> putTMVar mvar (Just e)
-                _      -> putTMVar mvar Nothing
-    pushCreatePersist _prod _F group stream sett
-    async $ atomically $ readTMVar mvar
+    p <- newPromise
+    publish _exec (CreatePersist p group stream sett)
+    async $ do
+        outcome <- tryRetrieve p
+        case outcome of
+            Right _ -> return Nothing
+            Left e  -> return $ fromException e
 
 --------------------------------------------------------------------------------
 -- | Asynchronously update a persistent subscription group on a stream.
@@ -586,13 +605,13 @@ updatePersistentSubscription :: Connection
                              -> PersistentSubscriptionSettings
                              -> IO (Async (Maybe PersistActionException))
 updatePersistentSubscription Connection{..} group stream sett = do
-    mvar <- newEmptyTMVarIO
-    let _F res = atomically $
-            case res of
-                Left e -> putTMVar mvar (Just e)
-                _      -> putTMVar mvar Nothing
-    pushUpdatePersist _prod _F group stream sett
-    async $ atomically $ readTMVar mvar
+    p <- newPromise
+    publish _exec (UpdatePersist p group stream sett)
+    async $ do
+        outcome <- tryRetrieve p
+        case outcome of
+            Right _ -> return Nothing
+            Left e  -> return $ fromException e
 
 --------------------------------------------------------------------------------
 -- | Asynchronously delete a persistent subscription group on a stream.
@@ -601,13 +620,13 @@ deletePersistentSubscription :: Connection
                              -> Text
                              -> IO (Async (Maybe PersistActionException))
 deletePersistentSubscription Connection{..} group stream = do
-    mvar <- newEmptyTMVarIO
-    let _F res = atomically $
-            case res of
-                Left e -> putTMVar mvar (Just e)
-                _      -> putTMVar mvar Nothing
-    pushDeletePersist _prod _F group stream
-    async $ atomically $ readTMVar mvar
+    p <- newPromise
+    publish _exec (DeletePersist p group stream)
+    async $ do
+        outcome <- tryRetrieve p
+        case outcome of
+            Right _ -> return Nothing
+            Left e  -> return $ fromException e
 
 --------------------------------------------------------------------------------
 -- | Asynchronously connect to a persistent subscription given a group on a
@@ -619,12 +638,3 @@ connectToPersistentSubscription :: Connection
                                 -> IO (Subscription Persistent)
 connectToPersistentSubscription conn group stream bufSize =
     persistentSub (mkSubEnv conn) group stream bufSize
-
---------------------------------------------------------------------------------
-createOpAsync :: IO (Either OperationError a -> IO (), Async a)
-createOpAsync = do
-    mvar <- newEmptyMVar
-    as   <- async $ do
-        res <- readMVar mvar
-        either throwIO return res
-    return (putMVar mvar, as)

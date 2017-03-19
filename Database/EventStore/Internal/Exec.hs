@@ -13,6 +13,7 @@
 module Database.EventStore.Internal.Exec
   ( Exec
   , newExec
+  , execWaitTillClosed
   ) where
 
 --------------------------------------------------------------------------------
@@ -48,6 +49,16 @@ data Exec =
   Exec { _execPub    :: STM Publish
        , _finishLock :: TMVar ()
        }
+
+--------------------------------------------------------------------------------
+instance Pub Exec where
+  publish e a = do
+    pub <- atomically $ _execPub e
+    publish pub a
+
+--------------------------------------------------------------------------------
+execWaitTillClosed :: Exec -> IO ()
+execWaitTillClosed e = atomically $ readTMVar $ _finishLock e
 
 --------------------------------------------------------------------------------
 stageSTM :: TVar Stage -> STM Publish
