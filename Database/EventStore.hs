@@ -18,7 +18,6 @@ module Database.EventStore
     ( -- * Connection
       Connection
     , ConnectionType(..)
-    , ConnectionException(..)
     , Credentials
     , Settings(..)
     , Retry
@@ -203,7 +202,6 @@ import Network.Connection (TLSSettings)
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Communication
-import           Database.EventStore.Internal.Connection
 import           Database.EventStore.Internal.Discovery
 import           Database.EventStore.Internal.Exec
 import           Database.EventStore.Internal.Subscription

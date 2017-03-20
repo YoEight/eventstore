@@ -92,7 +92,7 @@ newExec setts disc = do
 
   let logger = getLogger "Exec" logMgr
 
-  connectionManager (getLogger "ConnectionManager" logMgr) setts disc mainBus
+  connectionManager logMgr setts disc mainBus
   operationManager (getLogger "OperationManager" logMgr) setts mainBus
   subscriptionManager (getLogger "SubscriptionManager" logMgr) setts mainBus
 
@@ -137,5 +137,9 @@ onShutdown logger bus _ = do
 
 --------------------------------------------------------------------------------
 onFatal :: Logger -> FatalException -> IO ()
-onFatal logger (FatalException e) = do
-  logFormat logger Fatal "Fatal exception: {}" (Only $ Shown e)
+onFatal logger situation =
+  case situation of
+    FatalException e ->
+      logFormat logger Fatal "Fatal exception: {}" (Only $ Shown e)
+    FatalCondition ->
+      logMsg logger Fatal "Driver is in unrecoverable state."

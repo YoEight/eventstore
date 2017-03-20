@@ -20,7 +20,11 @@ data EndPoint =
     EndPoint
     { endPointIp   :: !String
     , endPointPort :: !Int
-    } deriving Show
+    }
+
+--------------------------------------------------------------------------------
+instance Show EndPoint where
+    show (EndPoint h p) = h <> ":" <> show p
 
 --------------------------------------------------------------------------------
 emptyEndPoint :: EndPoint

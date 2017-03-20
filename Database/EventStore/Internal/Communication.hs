@@ -53,7 +53,9 @@ data Initialized = Initialized Service
 data InitFailed = InitFailed Service
 
 --------------------------------------------------------------------------------
-data FatalException = forall e. Exception e => FatalException e
+data FatalException
+  = forall e. Exception e => FatalException e
+  | FatalCondition
 
 --------------------------------------------------------------------------------
 data PackageReceived = PackageReceived Package
