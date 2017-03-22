@@ -481,16 +481,13 @@ mkSubEnv Connection{..} =
                 Left e  -> traverse_ (cb . Left) (fromException e)
         return ()
     , subPushConnect = \k cmd -> do
-        p <- newPromise
         let op =
                 case cmd of
                     PushRegular stream tos ->
-                        ConnectStream p stream tos
+                        ConnectStream k stream tos
                     PushPersistent group stream size ->
-                        ConnectPersist p group stream size
+                        ConnectPersist k group stream size
         publish _exec op
-        _ <- fork (k =<< retrieve p)
-        return ()
     , subPushUnsub = \run -> publish _exec (Unsubscribe run)
     , subAckCmd = \cmd run uuids -> do
         p <- newPromise

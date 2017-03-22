@@ -71,8 +71,8 @@ data Abort = Abort
 
 --------------------------------------------------------------------------------
 data SubmitSubscription
-  = ConnectStream (Promise SubConnectEvent) Text Bool
-  | ConnectPersist (Promise SubConnectEvent) Text Text Int32
+  = ConnectStream (SubConnectEvent -> IO ()) Text Bool
+  | ConnectPersist (SubConnectEvent -> IO ()) Text Text Int32
   | CreatePersist (Promise ConfirmedAction)
                   Text
                   Text

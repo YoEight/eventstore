@@ -59,10 +59,10 @@ onSub Internal{..} cmd = do
   pkg <- atomicModifyIORef' _ref $ \driver ->
     let (pkg, nextDriver) =
           case cmd of
-            ConnectStream p s tos ->
-              connectToStream (fulfill p) s tos driver
-            ConnectPersist p g s b ->
-              connectToPersist (fulfill p) g s b driver
+            ConnectStream k s tos ->
+              connectToStream k s tos driver
+            ConnectPersist k g s b ->
+              connectToPersist k g s b driver
             CreatePersist p g s ss ->
               createPersist (fromEither p) g s ss driver
             UpdatePersist p g s ss ->
