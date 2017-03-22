@@ -484,7 +484,7 @@ mkSubEnv Connection{..} =
                     PushPersistent group stream size ->
                         ConnectPersist p group stream size
         publish _exec op
-        _ <- async (k =<< retrieve p)
+        _ <- fork (k =<< retrieve p)
         return ()
     , subPushUnsub = \run -> publish _exec (Unsubscribe run)
     , subAckCmd = \cmd run uuids -> do

@@ -47,53 +47,58 @@ toSubDropReason D_SubscriberMaxCountReached     = SubSubscriberMaxCountReached
 
 --------------------------------------------------------------------------------
 decodeServerMessage :: Package -> ServerMessage
-decodeServerMessage pkg = fromMaybe (UnknownMsg $ Just cmd) $ go cmd
+decodeServerMessage pkg = fromMaybe (UnknownMsg $ Just (packageCmd pkg)) go
   where
-    cmd = packageCmd pkg
-    go 0xC2 = do
-        msg <- maybeDecodeMessage $ packageData pkg
-        let evt = newResolvedEventFromBuf $ getField $ streamResolvedEvent msg
-        return $ EventAppearedMsg evt
-    go 0xC7 = do
-        msg <- maybeDecodeMessage $ packageData pkg
-        let evt = newResolvedEvent $ getField $ psseaEvt msg
-        return $ PersistentEventAppearedMsg evt
-    go 0xC1 = do
-        msg <- maybeDecodeMessage $ packageData pkg
-        let lcp = getField $ subscribeLastCommitPos msg
-            len = getField $ subscribeLastEventNumber msg
-        return $ ConfirmationMsg lcp len
-    go 0xC6 = do
-        msg <- maybeDecodeMessage $ packageData pkg
-        let lcp = getField $ pscLastCommitPos msg
-            sid = getField $ pscId msg
-            len = getField $ pscLastEvtNumber msg
-        return $ PersistentConfirmationMsg sid lcp len
-    go 0xC9 =
-        fmap (PersistentCreatedMsg . getField . cpscResult)
-            $ maybeDecodeMessage
-            $ packageData pkg
-    go 0xCF =
-        fmap (PersistentUpdatedMsg . getField . upscResult)
-            $ maybeDecodeMessage
-            $ packageData pkg
-    go 0xCB =
-        fmap (PersistentDeletedMsg . getField . dpscResult)
-            $ maybeDecodeMessage
-            $ packageData pkg
-    go 0xC4 = do
-        msg <- maybeDecodeMessage $ packageData pkg
-        let reason  = fromMaybe D_Unsubscribed $ getField $ dropReason msg
-        return $ DroppedMsg $ toSubDropReason reason
-    go 0xF0 = return $ BadRequestMsg $ packageDataAsText pkg
-    go 0xF4 = return $ NotAuthenticatedMsg $ packageDataAsText pkg
-    go 0xF1 = do
-        msg <- maybeDecodeMessage $ packageData pkg
-        let info = fmap masterInfo $ getField $ notHandledAdditionalInfo msg
-            reason = getField $ notHandledReason msg
-        return $ NotHandledMsg reason info
-
-    go _ = Nothing
+    go =
+        case packageCmd pkg of
+            cmd | cmd == streamEventAppearedCmd -> do
+                msg <- maybeDecodeMessage $ packageData pkg
+                let evt = newResolvedEventFromBuf $ getField
+                                                  $ streamResolvedEvent msg
+                return $ EventAppearedMsg evt
+                | cmd == persistentSubscriptionStreamEventAppearedCmd -> do
+                msg <- maybeDecodeMessage $ packageData pkg
+                let evt = newResolvedEvent $ getField $ psseaEvt msg
+                return $ PersistentEventAppearedMsg evt
+                | cmd == subscriptionConfirmationCmd -> do
+                msg <- maybeDecodeMessage $ packageData pkg
+                let lcp = getField $ subscribeLastCommitPos msg
+                    len = getField $ subscribeLastEventNumber msg
+                return $ ConfirmationMsg lcp len
+                | cmd == persistentSubscriptionConfirmationCmd -> do
+                msg <- maybeDecodeMessage $ packageData pkg
+                let lcp = getField $ pscLastCommitPos msg
+                    sid = getField $ pscId msg
+                    len = getField $ pscLastEvtNumber msg
+                return $ PersistentConfirmationMsg sid lcp len
+                | cmd == createPersistentSubscriptionCompletedCmd ->
+                fmap (PersistentCreatedMsg . getField . cpscResult)
+                    $ maybeDecodeMessage
+                    $ packageData pkg
+                | cmd == updatePersistentSubscriptionCompletedCmd ->
+                fmap (PersistentUpdatedMsg . getField . upscResult)
+                    $ maybeDecodeMessage
+                    $ packageData pkg
+                | cmd == deletePersistentSubscriptionCompletedCmd ->
+                fmap (PersistentDeletedMsg . getField . dpscResult)
+                    $ maybeDecodeMessage
+                    $ packageData pkg
+                | cmd == subscriptionDroppedCmd -> do
+                msg <- maybeDecodeMessage $ packageData pkg
+                let reason = fromMaybe D_Unsubscribed $ getField
+                                                      $ dropReason msg
+                return $ DroppedMsg $ toSubDropReason reason
+                | cmd == badRequestCmd ->
+                return $ BadRequestMsg $ packageDataAsText pkg
+                | cmd == notAuthenticatedCmd ->
+                return $ NotAuthenticatedMsg $ packageDataAsText pkg
+                | cmd == notHandledCmd -> do
+                msg <- maybeDecodeMessage $ packageData pkg
+                let info = fmap masterInfo $ getField
+                                           $ notHandledAdditionalInfo msg
+                    reason = getField $ notHandledReason msg
+                return $ NotHandledMsg reason info
+                | otherwise -> Nothing
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a

@@ -193,7 +193,7 @@ onForceReconnect Internal{..} (ForceReconnect node) = do
 --------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> IO ()
 onArrived Internal{..} (PackageArrived pkg) =
-  if packageCmd pkg == 0x01
+  if packageCmd pkg == heartbeatRequestCmd
   then do
     let resp = heartbeatResponsePackage $ packageCorrelation pkg
     publish _mainBus (TcpSend resp)
@@ -303,7 +303,7 @@ getPackage = do
     dta  <- getBytes rest
 
     let pkg = Package
-              { packageCmd         = Command cmd
+              { packageCmd         = getCommand cmd
               , packageCorrelation = col
               , packageData        = dta
               , packageCred        = cred

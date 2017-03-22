@@ -22,6 +22,7 @@ import Data.Serialize
 import Data.UUID
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Manager.Subscription.Message
 import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Types
@@ -31,7 +32,7 @@ import Database.EventStore.Internal.Types
 createConnectRegularPackage :: Settings -> UUID -> Text -> Bool -> Package
 createConnectRegularPackage Settings{..} uuid stream tos =
     Package
-    { packageCmd         = 0xC0
+    { packageCmd         = subscribeToStreamCmd
     , packageCorrelation = uuid
     , packageData        = runPut $ encodeMessage msg
     , packageCred        = s_credentials
@@ -49,7 +50,7 @@ createConnectPersistPackage :: Settings
                             -> Package
 createConnectPersistPackage Settings{..} uuid grp stream bufSize =
     Package
-    { packageCmd         = 0xC5
+    { packageCmd         = connectToPersistentSubscriptionCmd
     , packageCorrelation = uuid
     , packageData        = runPut $ encodeMessage msg
     , packageCred        = s_credentials
@@ -83,16 +84,16 @@ createPersistActionPackage Settings{..} u grp strm tpe =
                 encodeMessage $ _deletePersistentSubscription grp strm
     cmd =
         case tpe of
-            PersistCreate _  -> 0xC8
-            PersistUpdate _  -> 0xCE
-            PersistDelete    -> 0xCA
+            PersistCreate _  -> createPersistentSubscriptionCmd
+            PersistUpdate _  -> updatePersistentSubscriptionCmd
+            PersistDelete    -> deletePersistentSubscriptionCmd
 
 --------------------------------------------------------------------------------
 -- | Creates Ack 'Package'.
 createAckPackage :: Settings -> UUID -> Text -> [UUID] -> Package
 createAckPackage Settings{..} corr sid eids =
     Package
-    { packageCmd         = 0xCC
+    { packageCmd         = persistentSubscriptionAckEventsCmd
     , packageCorrelation = corr
     , packageData        = runPut $ encodeMessage msg
     , packageCred        = s_credentials
@@ -112,7 +113,7 @@ createNakPackage :: Settings
                  -> Package
 createNakPackage Settings{..} corr sid act txt eids =
     Package
-    { packageCmd         = 0xCD
+    { packageCmd         = persistentSubscriptionNakEventsCmd
     , packageCorrelation = corr
     , packageData        = runPut $ encodeMessage msg
     , packageCred        = s_credentials
@@ -126,7 +127,7 @@ createNakPackage Settings{..} corr sid act txt eids =
 createUnsubscribePackage :: Settings -> UUID -> Package
 createUnsubscribePackage Settings{..} uuid =
     Package
-    { packageCmd         = 0xC3
+    { packageCmd         = unsubscribeFromStreamCmd
     , packageCorrelation = uuid
     , packageData        = runPut $ encodeMessage UnsubscribeFromStream
     , packageCred        = s_credentials

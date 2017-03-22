@@ -619,7 +619,7 @@ packageDataAsText = go . decodeUtf8 . packageData
 heartbeatResponsePackage :: UUID -> Package
 heartbeatResponsePackage uuid =
     Package
-    { packageCmd         = 0x02
+    { packageCmd         = heartbeatResponseCmd
     , packageCorrelation = uuid
     , packageData        = ""
     , packageCred        = Nothing

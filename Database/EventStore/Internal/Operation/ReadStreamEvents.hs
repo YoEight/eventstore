@@ -22,6 +22,7 @@ import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadStreamEvents.Message
@@ -40,12 +41,12 @@ readStreamEvents :: Settings
 readStreamEvents Settings{..} dir s st cnt tos = do
     let req_cmd =
             case dir of
-                Forward  -> 0xB2
-                Backward -> 0xB4
+                Forward  -> readStreamEventsForwardCmd
+                Backward -> readStreamEventsBackwardCmd
         resp_cmd =
             case dir of
-                Forward  -> 0xB3
-                Backward -> 0xB5
+                Forward  -> readStreamEventsForwardCompletedCmd
+                Backward -> readStreamEventsBackwardCompletedCmd
 
         msg = newRequest s st cnt tos s_requireMaster
     resp <- send req_cmd resp_cmd msg

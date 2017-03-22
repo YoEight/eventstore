@@ -21,6 +21,7 @@ import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Write.Common
 import Database.EventStore.Internal.Operation.WriteEvents.Message
@@ -37,7 +38,7 @@ writeEvents :: Settings
 writeEvents Settings{..} s v evts = do
     nevts <- traverse eventToNewEvent evts
     let msg = newRequest s (expVersionInt32 v) nevts s_requireMaster
-    resp <- send 0x82 0x83 msg
+    resp <- send writeEventsCmd writeEventsCompletedCmd msg
     let r            = getField $ _result resp
         com_pos      = getField $ _commitPosition resp
         prep_pos     = getField $ _preparePosition resp

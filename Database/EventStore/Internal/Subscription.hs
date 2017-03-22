@@ -423,7 +423,8 @@ catchupOpEventHandler mvarState (Right res) = atomically $ do
 -- | Subscription event handler. Used during a subscription lifetime.
 subEventHandler :: SubLifeCycle a -> SubConnectEvent -> IO ()
 subEventHandler lcycle (SubConfirmed run) = onConfirm lcycle run
-subEventHandler lcycle (EventAppeared e) = atomically $ do
+subEventHandler lcycle (EventAppeared e) = do
+  atomically $ do
     st <- readState lcycle
     case st of
         SubOnline sm ->

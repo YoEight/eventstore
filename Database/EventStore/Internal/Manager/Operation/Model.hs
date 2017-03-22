@@ -145,17 +145,15 @@ runPackage setts st pkg@Package{..} = do
     let nxt_ps = deleteMap packageCorrelation $ _pending st
         nxt_st = st { _pending = nxt_ps }
     case packageCmd of
-        -- Bad request
-        0xF0 -> do
+        cmd | cmd == badRequestCmd -> do
             let reason = packageDataAsText pkg
                 resp  = ServerError reason
                 value = cb $ Left $ resp
             return $ Produce value (Await $ Model $ execute setts nxt_st)
-        0xF4 -> do
+            | cmd == notAuthenticatedCmd -> do
             let value = cb $ Left NotAuthenticatedOp
             return $ Produce value (Await $ Model $ execute setts nxt_st)
-        -- Not handled
-        0xF1 -> do
+            | cmd == notHandledCmd -> do
             msg <- maybeDecodeMessage packageData
             let reason = getField $ notHandledReason msg
             case reason of
