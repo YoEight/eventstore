@@ -227,6 +227,10 @@ sending Internal{..} = loop
 
       for_ outcome $ \(cur, pkg) -> do
         connectionPut (_connect cur) (runPut $ putPackage pkg)
+        logFormat _logger Debug "Package sent {} corrId:[{}]"
+          ( Shown $ packageCmd pkg
+          , Shown $ packageCorrelation pkg
+          )
         loop
 
 --------------------------------------------------------------------------------
@@ -249,7 +253,12 @@ withPkg Internal{..} callback = do
                 Left _ -> do
                   logMsg _logger Fatal "Error when parsing a Package. exiting..."
                   publish _mainBus FatalCondition
-                Right pkg -> callback pkg
+                Right pkg -> do
+                  logFormat _logger Debug "Package received {} corrId:[{}]"
+                    ( Shown $ packageCmd pkg
+                    , Shown $ packageCorrelation pkg
+                    )
+                  callback pkg
     _ -> return ()
 
 --------------------------------------------------------------------------------

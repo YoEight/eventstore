@@ -20,12 +20,16 @@ module Database.EventStore
     , ConnectionType(..)
     , Credentials
     , Settings(..)
+    , LoggerSettings(..)
+    , LogLevel(..)
+    , LogType(..)
     , Retry
     , atMost
     , keepRetrying
     , credentials
     , defaultSettings
     , defaultSSLSettings
+    , defaultLoggerSettings
     , connect
     , shutdown
     , waitTillClosed
@@ -205,6 +209,7 @@ import           Database.EventStore.Internal.Communication
 import           Database.EventStore.Internal.Discovery
 import           Database.EventStore.Internal.Exec
 import           Database.EventStore.Internal.Subscription
+import           Database.EventStore.Internal.Logger
 import           Database.EventStore.Internal.Manager.Subscription.Driver hiding (unsubscribe)
 import           Database.EventStore.Internal.Manager.Subscription.Message
 import           Database.EventStore.Internal.Messaging hiding (subscribe)

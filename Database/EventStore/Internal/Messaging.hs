@@ -210,13 +210,11 @@ instance Sub Bus where
 
 --------------------------------------------------------------------------------
 instance Pub Bus where
-  publish Bus{..} (a :: a) = do
-    print (typeRep (Proxy :: Proxy a))
-    atomically $ do
-      stopped <- readTVar _busStopped
+  publish Bus{..} a = atomically $ do
+    stopped <- readTVar _busStopped
 
-      unless stopped $
-        writeTQueue _busQueue (toMsg a)
+    unless stopped $
+      writeTQueue _busQueue (toMsg a)
 
 --------------------------------------------------------------------------------
 publishing :: Typeable a => Bus -> a -> IO ()

@@ -16,6 +16,7 @@ module Database.EventStore.Internal.Logger
   , Logger
   , LogLevel(..)
   , LoggerSettings(..)
+  , LogType(..)
   , defaultLoggerSettings
   , Shown(..)
   , Only(..)
