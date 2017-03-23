@@ -102,7 +102,7 @@ library
                    Database.EventStore.Internal.Operation.WriteEvents
                    Database.EventStore.Internal.Operation.WriteEvents.Message
                    Database.EventStore.Internal.Operation.Write.Common
-                   Database.EventStore.Internal.Promise
+                   Database.EventStore.Internal.Callback
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:

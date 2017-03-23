@@ -3,6 +3,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore
@@ -217,7 +218,7 @@ import           Database.EventStore.Internal.Operation (OperationError(..))
 import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
-import           Database.EventStore.Internal.Promise
+import           Database.EventStore.Internal.Callback
 import           Database.EventStore.Internal.Stream
 import           Database.EventStore.Internal.Types
 
@@ -472,7 +473,7 @@ mkSubEnv Connection{..} =
     SubEnv
     { subSettings = _settings
     , subPushOp = \cb op -> do
-        p <- newPromise
+        p <- newCallback cb
         publish _exec (SubmitOperation p op)
         _ <- async $ do
             outcome <- tryRetrieve p
@@ -481,12 +482,17 @@ mkSubEnv Connection{..} =
                 Left e  -> traverse_ (cb . Left) (fromException e)
         return ()
     , subPushConnect = \k cmd -> do
+        p <- newCallback $ \outcome ->
+            case outcome of
+                Left (e :: SomeException) -> throw e
+                Right a                   -> k a
+
         let op =
                 case cmd of
                     PushRegular stream tos ->
-                        ConnectStream k stream tos
+                        ConnectStream p stream tos
                     PushPersistent group stream size ->
-                        ConnectPersist k group stream size
+                        ConnectPersist p group stream size
         publish _exec op
     , subPushUnsub = \run -> publish _exec (Unsubscribe run)
     , subAckCmd = \cmd run uuids -> do

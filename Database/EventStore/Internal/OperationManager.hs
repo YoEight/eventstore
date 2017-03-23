@@ -23,7 +23,7 @@ import Database.EventStore.Internal.Generator
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Manager.Operation.Model
 import Database.EventStore.Internal.Messaging
-import Database.EventStore.Internal.Promise
+import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

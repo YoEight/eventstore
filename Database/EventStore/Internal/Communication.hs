@@ -22,7 +22,7 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Operation
-import Database.EventStore.Internal.Promise
+import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Types
 import Database.EventStore.Internal.Manager.Subscription.Driver
 import Database.EventStore.Internal.Manager.Subscription.Model
@@ -61,7 +61,7 @@ data FatalException
 data PackageReceived = PackageReceived Package
 
 --------------------------------------------------------------------------------
-data SubmitOperation = forall a. SubmitOperation (Promise a) (Operation a)
+data SubmitOperation = forall a. SubmitOperation (Callback a) (Operation a)
 
 --------------------------------------------------------------------------------
 data ForceReconnect = ForceReconnect NodeEndPoints
@@ -71,17 +71,17 @@ data Abort = Abort
 
 --------------------------------------------------------------------------------
 data SubmitSubscription
-  = ConnectStream (SubConnectEvent -> IO ()) Text Bool
-  | ConnectPersist (SubConnectEvent -> IO ()) Text Text Int32
-  | CreatePersist (Promise ConfirmedAction)
+  = ConnectStream (Callback SubConnectEvent) Text Bool
+  | ConnectPersist (Callback SubConnectEvent) Text Text Int32
+  | CreatePersist (Callback ConfirmedAction)
                   Text
                   Text
                   PersistentSubscriptionSettings
   | Unsubscribe Running
-  | UpdatePersist (Promise ConfirmedAction)
+  | UpdatePersist (Callback ConfirmedAction)
                   Text
                   Text
                   PersistentSubscriptionSettings
-  | DeletePersist (Promise ConfirmedAction) Text Text
-  | AckPersist (Promise ()) Running [UUID]
-  | NakPersist (Promise ()) Running NakAction (Maybe Text) [UUID]
+  | DeletePersist (Callback ConfirmedAction) Text Text
+  | AckPersist (Callback ()) Running [UUID]
+  | NakPersist (Callback ()) Running NakAction (Maybe Text) [UUID]
