@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Exec
@@ -51,6 +52,15 @@ data Exec =
        }
 
 --------------------------------------------------------------------------------
+data Internal =
+  Internal { _logger    :: Logger
+           , _initRef   :: IORef ServicePendingInit
+           , _stageVar  :: TVar Stage
+           , _mainBus   :: Bus
+           , _finishVar :: TMVar ()
+           }
+
+--------------------------------------------------------------------------------
 instance Pub Exec where
   publish e a = do
     pub <- atomically $ _execPub e
@@ -84,62 +94,61 @@ initServicePending = foldMap (\svc -> singletonMap svc ()) [minBound..]
 --------------------------------------------------------------------------------
 newExec :: Settings -> Discovery -> IO Exec
 newExec setts disc = do
-  mainBus <- newBus "main-bus"
-  var     <- newTVarIO Init
-  exe     <- Exec (stageSTM var) <$> newEmptyTMVarIO
-  initRef <- newIORef initServicePending
-  logMgr  <- newLogManager (s_loggerSettings setts)
-
+  logMgr <- newLogManager (s_loggerSettings setts)
   let logger = getLogger "Exec" logMgr
+
+  internal <- Internal logger <$> newIORef initServicePending
+                              <*> newTVarIO Init
+                              <*> newBus "main-bus"
+                              <*> newEmptyTMVarIO
+
+  let stagePub = stageSTM $ _stageVar internal
+      exe      = Exec stagePub (_finishVar internal)
+      mainBus  = _mainBus internal
 
   connectionManager logMgr setts disc mainBus
   operationManager (getLogger "OperationManager" logMgr) setts mainBus
   subscriptionManager (getLogger "SubscriptionManager" logMgr) setts mainBus
 
-  subscribe mainBus (onInit logger initRef var mainBus)
-  subscribe mainBus (onInitFailed logger mainBus var)
-  subscribe mainBus (onShutdown logger mainBus)
-  subscribe mainBus (onFatal logger)
+  subscribe mainBus (onInit internal)
+  subscribe mainBus (onInitFailed internal)
+  subscribe mainBus (onShutdown internal)
+  subscribe mainBus (onFatal internal)
 
   publish mainBus SystemInit
 
   return exe
 
 --------------------------------------------------------------------------------
-onInit :: Logger
-       -> IORef ServicePendingInit
-       -> TVar Stage
-       -> Bus
-       -> Initialized
-       -> IO ()
-onInit logger ref var bus (Initialized svc) = do
-  logFormat logger Info "Service {} initialized" (Only $ Shown svc)
-  initialized <- atomicModifyIORef' ref $ \m ->
+onInit :: Internal -> Initialized -> IO ()
+onInit Internal{..} (Initialized svc) = do
+  logFormat _logger Info "Service {} initialized" (Only $ Shown svc)
+  initialized <- atomicModifyIORef' _initRef $ \m ->
     let m' = deleteMap svc m in
     (m', null m')
 
   when initialized $ do
-    logMsg logger Info "Entire system initialized properly"
-    atomically $ writeTVar var (Available $ asPub bus)
+    logMsg _logger Info "Entire system initialized properly"
+    atomically $ writeTVar _stageVar (Available $ asPub _mainBus)
 
 --------------------------------------------------------------------------------
-onInitFailed :: Logger -> Bus -> TVar Stage -> InitFailed -> IO ()
-onInitFailed logger bus var (InitFailed svc) = do
-  atomically $ errored var "Driver failed to initialized"
-  logFormat logger Error "Service {} failed to initialize" (Only $ Shown svc)
-  busStop bus
+onInitFailed :: Internal -> InitFailed -> IO ()
+onInitFailed Internal{..} (InitFailed svc) = do
+  atomically $ errored _stageVar "Driver failed to initialized"
+  logFormat _logger Error "Service {} failed to initialize" (Only $ Shown svc)
+  busStop _mainBus
 
 --------------------------------------------------------------------------------
-onShutdown :: Logger -> Bus -> SystemShutdown -> IO ()
-onShutdown logger bus _ = do
-  logMsg logger Info "Driver shutdown by the user"
-  busStop bus
+onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown Internal{..} _ = do
+  logMsg _logger Info "Driver shutdown by the user"
+  busStop _mainBus
 
 --------------------------------------------------------------------------------
-onFatal :: Logger -> FatalException -> IO ()
-onFatal logger situation =
+onFatal :: Internal -> FatalException -> IO ()
+onFatal Internal{..} situation =
   case situation of
     FatalException e ->
-      logFormat logger Fatal "Fatal exception: {}" (Only $ Shown e)
+      logFormat _logger Fatal "Fatal exception: {}" (Only $ Shown e)
     FatalCondition ->
-      logMsg logger Fatal "Driver is in unrecoverable state."
+      logMsg _logger Fatal "Driver is in unrecoverable state."
