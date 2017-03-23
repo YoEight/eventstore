@@ -85,3 +85,6 @@ data SubmitSubscription
   | DeletePersist (Callback ConfirmedAction) Text Text
   | AckPersist (Callback ()) Running [UUID]
   | NakPersist (Callback ()) Running NakAction (Maybe Text) [UUID]
+
+--------------------------------------------------------------------------------
+data ServiceTerminated = ServiceTerminated Service

@@ -167,6 +167,7 @@ busStop Bus{..} = do
   atomically $ writeTVar _busStopped True
 
   atomically $
+    -- This step keep blocking, preventing the driver to gracefully shutdown.
     unlessM (isEmptyTQueue _busQueue) $
       retrySTM
 

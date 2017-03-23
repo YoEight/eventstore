@@ -91,6 +91,7 @@ connectionManager logMgr setts disc mainBus = do
   subscribe mainBus (onEstablish internal)
   subscribe mainBus (onEstablished internal)
   subscribe mainBus (onArrived internal)
+  subscribe mainBus (onShutdown internal)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -198,6 +199,12 @@ onArrived Internal{..} (PackageArrived pkg) =
     let resp = heartbeatResponsePackage $ packageCorrelation pkg
     publish _mainBus (TcpSend resp)
   else publish _mainBus (PackageReceived pkg)
+
+--------------------------------------------------------------------------------
+onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown Internal{..} _ = do
+  logMsg _logger Info "Shutting down..."
+  publish _mainBus (ServiceTerminated ConnectionManager)
 
 --------------------------------------------------------------------------------
 receiving :: Internal -> IO ()

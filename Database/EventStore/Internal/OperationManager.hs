@@ -47,6 +47,7 @@ operationManager logger setts mainBus = do
   subscribe mainBus (onNew internal)
   subscribe mainBus (onRecv internal)
   subscribe mainBus (onAbort internal)
+  subscribe mainBus (onShutdown internal)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -81,6 +82,12 @@ onAbort i@Internal{..} _ = do
   model     <- readIORef _ref
   nextModel <- interpretAbort i (abort model)
   atomicWriteIORef _ref nextModel
+
+--------------------------------------------------------------------------------
+onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown Internal{..} _ = do
+  logMsg _logger Info "Shutting down..."
+  publish _mainBus (ServiceTerminated OperationManager)
 
 --------------------------------------------------------------------------------
 interpret :: Internal -> OpTransition -> IO OpModel

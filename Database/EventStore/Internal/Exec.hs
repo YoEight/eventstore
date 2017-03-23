@@ -55,6 +55,7 @@ data Exec =
 data Internal =
   Internal { _logger    :: Logger
            , _initRef   :: IORef ServicePendingInit
+           , _finishRef :: IORef ServicePendingInit
            , _stageVar  :: TVar Stage
            , _mainBus   :: Bus
            , _finishVar :: TMVar ()
@@ -98,6 +99,7 @@ newExec setts disc = do
   let logger = getLogger "Exec" logMgr
 
   internal <- Internal logger <$> newIORef initServicePending
+                              <*> newIORef initServicePending
                               <*> newTVarIO Init
                               <*> newBus "main-bus"
                               <*> newEmptyTMVarIO
@@ -114,6 +116,7 @@ newExec setts disc = do
   subscribe mainBus (onInitFailed internal)
   subscribe mainBus (onShutdown internal)
   subscribe mainBus (onFatal internal)
+  subscribe mainBus (onTerminated internal)
 
   publish mainBus SystemInit
 
@@ -142,13 +145,29 @@ onInitFailed Internal{..} (InitFailed svc) = do
 onShutdown :: Internal -> SystemShutdown -> IO ()
 onShutdown Internal{..} _ = do
   logMsg _logger Info "Driver shutdown by the user"
-  busStop _mainBus
+  atomically $ writeTVar _stageVar (Errored "Connection closed")
 
 --------------------------------------------------------------------------------
 onFatal :: Internal -> FatalException -> IO ()
-onFatal Internal{..} situation =
+onFatal Internal{..} situation = do
   case situation of
     FatalException e ->
       logFormat _logger Fatal "Fatal exception: {}" (Only $ Shown e)
     FatalCondition ->
       logMsg _logger Fatal "Driver is in unrecoverable state."
+
+  publish _mainBus SystemShutdown
+
+--------------------------------------------------------------------------------
+onTerminated :: Internal -> ServiceTerminated -> IO ()
+onTerminated Internal{..} (ServiceTerminated svc) = do
+  logFormat _logger Info "Service {} terminated." (Only $ Shown svc)
+  shutdown <- atomicModifyIORef' _finishRef $ \m ->
+    let m' = deleteMap svc m in
+    (m', null m')
+
+  when shutdown $ do
+    logMsg _logger Info "Entire system shutdown properly"
+    -- FIXME - It locks the driver when enabled.
+    -- busStop _mainBus
+    atomically $ putTMVar _finishVar ()
