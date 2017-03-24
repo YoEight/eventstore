@@ -149,7 +149,7 @@ test-suite integration-tests
 
     other-modules: Tests
 
-    ghc-options: -Wall
+    ghc-options: -Wall -threaded
 
     build-depends: base,
                    eventstore,

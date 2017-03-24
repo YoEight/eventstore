@@ -1,4 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 --------------------------------------------------------------------------------
@@ -38,6 +39,9 @@ import Control.Monad.Fix
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Data.Sequence (ViewL(..), viewl, (|>))
+
+--------------------------------------------------------------------------------
+import Database.EventStore.Internal.Logger
 
 --------------------------------------------------------------------------------
 data Message = forall a. Typeable a => Message a
@@ -155,7 +159,7 @@ instance Show Callback where
 --------------------------------------------------------------------------------
 data Bus =
   Bus { busName       :: Text
-      , _busPid       :: ThreadId
+      , _logger       :: Logger
       , _busCallbacks :: IORef Callbacks
       , _busQueue     :: TQueue Message
       , _busStopped   :: TVar Bool
@@ -167,35 +171,44 @@ busStop Bus{..} = do
   atomically $ writeTVar _busStopped True
 
   atomically $
-    -- This step keep blocking, preventing the driver to gracefully shutdown.
     unlessM (isEmptyTQueue _busQueue) $
       retrySTM
-
-  killThread _busPid
 
 --------------------------------------------------------------------------------
 messageType :: Type
 messageType = getType (FromProxy (Proxy :: Proxy Message))
 
 --------------------------------------------------------------------------------
-newBus :: Text -> IO Bus
-newBus name = do
+newBus :: LogManager -> Text -> IO Bus
+newBus logMgr name = do
   bus <- mfix $ \b -> do
-    pid <- fork (worker b)
+    _ <- fork (worker b)
 
-    Bus name pid <$> newIORef mempty
-                 <*> newTQueueIO
-                 <*> newTVarIO False
+    let logger = getLogger name logMgr
+    Bus name logger <$> newIORef mempty
+                    <*> newTQueueIO
+                    <*> newTVarIO False
 
   return bus
 
 --------------------------------------------------------------------------------
 worker :: Bus -> IO ()
-worker b@Bus{..} = forever $ do
-  msg <- atomically $ readTQueue _busQueue
-  case msg of
-    Message a -> do
-      publishing b a
+worker b@Bus{..} = loop
+  where
+    loop = do
+      decision <- atomically $ do
+        stopped <- readTVar _busStopped
+        outcome <- tryReadTQueue _busQueue
+        case outcome of
+          Nothing
+            | stopped   -> return Nothing
+            | otherwise -> retrySTM
+          Just msg -> return $ Just msg
+      case decision of
+        Nothing          -> return ()
+        Just (Message a) -> do
+          publishing b a
+          loop
 
 --------------------------------------------------------------------------------
 instance Sub Bus where

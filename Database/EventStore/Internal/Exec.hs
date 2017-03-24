@@ -101,7 +101,7 @@ newExec setts disc = do
   internal <- Internal logger <$> newIORef initServicePending
                               <*> newIORef initServicePending
                               <*> newTVarIO Init
-                              <*> newBus "main-bus"
+                              <*> newBus logMgr "main-bus"
                               <*> newEmptyTMVarIO
 
   let stagePub = stageSTM $ _stageVar internal
@@ -167,7 +167,6 @@ onTerminated Internal{..} (ServiceTerminated svc) = do
     (m', null m')
 
   when shutdown $ do
-    logMsg _logger Info "Entire system shutdown properly"
-    -- FIXME - It locks the driver when enabled.
-    -- busStop _mainBus
+    busStop _mainBus
     atomically $ putTMVar _finishVar ()
+    logMsg _logger Info "Entire system shutdown properly"
