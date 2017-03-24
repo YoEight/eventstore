@@ -475,12 +475,6 @@ mkSubEnv Connection{..} =
     , subPushOp = \cb op -> do
         p <- newCallback cb
         publish _exec (SubmitOperation p op)
-        _ <- async $ do
-            outcome <- tryRetrieve p
-            case outcome of
-                Right a -> cb (Right a)
-                Left e  -> traverse_ (cb . Left) (fromException e)
-        return ()
     , subPushConnect = \k cmd -> do
         p <- newCallback $ \outcome ->
             case outcome of
