@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE RecordWildCards    #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Exec
@@ -16,6 +17,9 @@ module Database.EventStore.Internal.Exec
   , newExec
   , execWaitTillClosed
   ) where
+
+--------------------------------------------------------------------------------
+import Data.Typeable
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
@@ -40,7 +44,7 @@ data Stage
   | Errored String
 
 --------------------------------------------------------------------------------
-newtype Terminated = Terminated String deriving Show
+newtype Terminated = Terminated String deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
 instance Exception Terminated

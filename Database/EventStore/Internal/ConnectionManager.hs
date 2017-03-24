@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE RecordWildCards    #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.ConnectionManager
@@ -15,6 +16,7 @@ module Database.EventStore.Internal.ConnectionManager
   ( connectionManager ) where
 
 --------------------------------------------------------------------------------
+import Data.Typeable
 import Text.Printf
 
 --------------------------------------------------------------------------------
@@ -41,16 +43,17 @@ data Stage
   | Closed
 
 --------------------------------------------------------------------------------
-data StartConnect = StartConnect
+data StartConnect = StartConnect deriving Typeable
 
 --------------------------------------------------------------------------------
-data EstablishConnection = EstablishConnection EndPoint
+data EstablishConnection = EstablishConnection EndPoint deriving Typeable
 
 --------------------------------------------------------------------------------
-data ConnectionEstablished = ConnectionEstablished CurrentConnection
+data ConnectionEstablished =
+  ConnectionEstablished CurrentConnection deriving Typeable
 
 --------------------------------------------------------------------------------
-data PackageArrived = PackageArrived Package
+data PackageArrived = PackageArrived Package deriving Typeable
 
 --------------------------------------------------------------------------------
 data CurrentConnection =

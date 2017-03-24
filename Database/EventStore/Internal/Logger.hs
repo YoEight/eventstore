@@ -27,7 +27,10 @@ module Database.EventStore.Internal.Logger
   ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Data.Monoid ((<>))
+
+--------------------------------------------------------------------------------
+import ClassyPrelude hiding ((<>))
 import Data.Text.Format
 import Data.Text.Format.Params
 import System.Log.FastLogger

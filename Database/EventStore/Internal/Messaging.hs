@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP                       #-}
+{-# LANGUAGE DeriveDataTypeable        #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RecordWildCards           #-}
@@ -44,7 +46,7 @@ import Data.Sequence (ViewL(..), viewl, (|>))
 import Database.EventStore.Internal.Logger
 
 --------------------------------------------------------------------------------
-data Message = forall a. Typeable a => Message a
+data Message = forall a. Typeable a => Message a deriving Typeable
 
 --------------------------------------------------------------------------------
 instance Show Message where
@@ -122,9 +124,20 @@ data GetType
   | forall prx a. Typeable a => FromProxy (prx a)
 
 --------------------------------------------------------------------------------
+getFingerprint :: TypeRep -> Fingerprint
+#if __GLASGOW_HASKELL__ == 708
+getFingerprint (TypeRep fp _ _) = fp
+#else
+getFingerprint = typeRepFingerprint
+#endif
+
+--------------------------------------------------------------------------------
 getType :: GetType -> Type
-getType (FromTypeable a) = let t@(TypeRep fp _ _ _) = typeOf a in Type t fp
-getType (FromProxy prx)  = let t@(TypeRep fp _ _ _) = typeRep prx in Type t fp
+getType op = Type t (getFingerprint t)
+  where
+    t = case op of
+          FromTypeable a -> typeOf a
+          FromProxy prx  -> typeRep prx
 
 --------------------------------------------------------------------------------
 type Callbacks = HashMap Type (Seq Callback)

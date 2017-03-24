@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric             #-}
+{-# LANGUAGE DeriveDataTypeable        #-}
 {-# LANGUAGE ExistentialQuantification #-}
 --------------------------------------------------------------------------------
 -- |
@@ -14,9 +15,10 @@
 module Database.EventStore.Internal.Communication where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Data.Typeable
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
 import Data.UUID
 
 --------------------------------------------------------------------------------
@@ -28,46 +30,49 @@ import Database.EventStore.Internal.Manager.Subscription.Driver
 import Database.EventStore.Internal.Manager.Subscription.Model
 
 --------------------------------------------------------------------------------
-data SystemInit = SystemInit
+data SystemInit = SystemInit deriving Typeable
 
 --------------------------------------------------------------------------------
-data SystemShutdown = SystemShutdown
+data SystemShutdown = SystemShutdown deriving Typeable
 
 --------------------------------------------------------------------------------
-newtype TcpSend = TcpSend Package
+newtype TcpSend = TcpSend Package deriving Typeable
 
 --------------------------------------------------------------------------------
 data Service
   = OperationManager
   | ConnectionManager
   | SubscriptionManager
-  deriving (Show, Eq, Enum, Bounded, Generic)
+  deriving (Show, Eq, Enum, Bounded, Typeable, Generic)
 
 --------------------------------------------------------------------------------
 instance Hashable Service
 
 --------------------------------------------------------------------------------
-data Initialized = Initialized Service
+data Initialized = Initialized Service deriving Typeable
 
 --------------------------------------------------------------------------------
-data InitFailed = InitFailed Service
+data InitFailed = InitFailed Service deriving Typeable
 
 --------------------------------------------------------------------------------
 data FatalException
   = forall e. Exception e => FatalException e
   | FatalCondition
+  deriving Typeable
 
 --------------------------------------------------------------------------------
-data PackageReceived = PackageReceived Package
+data PackageReceived = PackageReceived Package deriving Typeable
 
 --------------------------------------------------------------------------------
-data SubmitOperation = forall a. SubmitOperation (Callback a) (Operation a)
+data SubmitOperation =
+  forall a. SubmitOperation (Callback a) (Operation a)
+  deriving Typeable
 
 --------------------------------------------------------------------------------
-data ForceReconnect = ForceReconnect NodeEndPoints
+data ForceReconnect = ForceReconnect NodeEndPoints deriving Typeable
 
 --------------------------------------------------------------------------------
-data Abort = Abort
+data Abort = Abort deriving Typeable
 
 --------------------------------------------------------------------------------
 data SubmitSubscription
@@ -85,6 +90,7 @@ data SubmitSubscription
   | DeletePersist (Callback ConfirmedAction) Text Text
   | AckPersist (Callback ()) Running [UUID]
   | NakPersist (Callback ()) Running NakAction (Maybe Text) [UUID]
+  deriving Typeable
 
 --------------------------------------------------------------------------------
-data ServiceTerminated = ServiceTerminated Service
+data ServiceTerminated = ServiceTerminated Service deriving Typeable

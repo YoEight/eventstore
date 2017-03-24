@@ -1,6 +1,11 @@
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE CPP           #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DataKinds     #-}
+#if __GLASGOW_HASKELL__ < 800
 {-# OPTIONS_GHC -fcontext-stack=26 #-}
+#else
+{-# OPTIONS_GHC -freduction-depth=26 #-}
+#endif
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation.ReadEvent.Message
