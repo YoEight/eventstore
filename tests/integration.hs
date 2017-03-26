@@ -27,7 +27,7 @@ main :: IO ()
 main = do
     let setts = defaultSettings
                 { s_credentials = Just $ credentials "admin" "changeit"
-                , s_reconnect_delay_secs = 1
+                , s_reconnect_delay = 3
                 , s_logger = Nothing
                 , s_loggerSettings = defaultLoggerSettings
                                      { loggerLevel = Debug }

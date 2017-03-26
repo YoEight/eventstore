@@ -24,6 +24,7 @@ import ClassyPrelude
 import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
+import Data.Time
 import Network.Connection
 
 --------------------------------------------------------------------------------
@@ -38,9 +39,39 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 data Stage
   = Init
-  | Connecting
+  | Connecting Attempts ConnectingState
   | Connected CurrentConnection
   | Closed
+
+--------------------------------------------------------------------------------
+instance Show Stage where
+  show Init = "Init"
+  show (Connecting a s) = "Connecting: " ++ show (a, s)
+  show Connected{}      = "Connected"
+  show Closed           = "Closed"
+
+--------------------------------------------------------------------------------
+data ConnectingState
+  = Reconnecting
+  | EndpointDiscovery
+  | ConnectionEstablishing
+  deriving Show
+
+--------------------------------------------------------------------------------
+data Attempts =
+  Attempts { attemptCount     :: !Int
+           , attemptLastStart :: !UTCTime
+           } deriving Show
+
+--------------------------------------------------------------------------------
+freshAttempt :: IO Attempts
+freshAttempt = Attempts 1 <$> getCurrentTime
+
+--------------------------------------------------------------------------------
+data UnableToConnect = UnableToConnect deriving Show
+
+--------------------------------------------------------------------------------
+instance Exception UnableToConnect
 
 --------------------------------------------------------------------------------
 data StartConnect = StartConnect deriving Typeable
@@ -54,6 +85,16 @@ data ConnectionEstablished =
 
 --------------------------------------------------------------------------------
 data PackageArrived = PackageArrived Package deriving Typeable
+
+--------------------------------------------------------------------------------
+data CloseConnection = CloseConnection (Maybe SomeException) deriving Typeable
+
+--------------------------------------------------------------------------------
+data Tick = Tick deriving Typeable
+
+--------------------------------------------------------------------------------
+timerPeriod :: Duration
+timerPeriod = msDuration 200
 
 --------------------------------------------------------------------------------
 data CurrentConnection =
@@ -95,6 +136,10 @@ connectionManager logMgr setts disc mainBus = do
   subscribe mainBus (onEstablished internal)
   subscribe mainBus (onArrived internal)
   subscribe mainBus (onShutdown internal)
+  subscribe mainBus (onCloseConnection internal)
+  subscribe mainBus (onTick internal)
+
+  publish mainBus (NewTimer Tick timerPeriod False)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -105,46 +150,97 @@ onInit Internal{..} _ = do
 --------------------------------------------------------------------------------
 onStartConnect :: Internal -> StartConnect -> IO ()
 onStartConnect i@Internal{..} _ = do
-  atomically $ writeTVar _stage Connecting
+  att <- freshAttempt
+  atomically $ writeTVar _stage (Connecting att Reconnecting)
   discover i
+
+--------------------------------------------------------------------------------
+onCloseConnection :: Internal -> CloseConnection -> IO ()
+onCloseConnection Internal{..} (CloseConnection reason) = do
+  att <- freshAttempt
+
+  case reason of
+    Just e ->
+      logFormat _logger Error "Connection closed, reason: {}" (Only $ Shown e)
+    _ ->
+      logMsg _logger Error "Connection closed"
+
+  outcome <- atomically $ do
+    stage <- readTVar _stage
+    writeTVar _stage Closed
+    case stage of
+      Connected conn -> do
+        writeTVar _stage (Connecting att Reconnecting)
+        return $ Just conn
+      _ -> return Nothing
+
+  traverse_ (connectionClose . _connect) outcome
 
 --------------------------------------------------------------------------------
 discover :: Internal -> IO ()
 discover Internal{..} = do
-  _ <- fork $ do
-    old     <- readTVarIO _last
-    outcome <- tryAny $ runDiscovery _disc old
-    case outcome of
-      Left e -> do
-        let msg = "Failed to resolve TCP end point to which to connect: {}"
-        logFormat _logger Error msg (Only $ Shown e)
-        publish _mainBus (FatalException e)
-      Right opt ->
-        case opt of
-          Nothing -> do
-            let msg = "Failed to resolve TCP end point to which to connect"
-            logMsg _logger Error msg
-            publish _mainBus FatalCondition
-          Just endpoint -> do
-            publish _mainBus (EstablishConnection endpoint)
+  canProceed <- atomically $ do
+    stage <- readTVar _stage
+    case stage of
+      Connecting att state ->
+        case state of
+          Reconnecting -> do
+            writeTVar _stage (Connecting att EndpointDiscovery)
+            return True
+          _ -> return False
+      _ -> return False
 
-  return ()
+  when canProceed $ do
+    _ <- fork $ do
+      old     <- readTVarIO _last
+      outcome <- tryAny $ runDiscovery _disc old
+      case outcome of
+        Left e -> do
+          let msg = "Failed to resolve TCP end point to which to connect: {}"
+          logFormat _logger Error msg (Only $ Shown e)
+          publish _mainBus (CloseConnection $ Just e)
+        Right opt ->
+          case opt of
+            Nothing -> do
+              let msg = "Failed to resolve TCP end point to which to connect"
+              logMsg _logger Error msg
+              publish _mainBus (CloseConnection Nothing)
+            Just endpoint -> do
+              publish _mainBus (EstablishConnection endpoint)
+
+    return ()
 
 --------------------------------------------------------------------------------
 onEstablish :: Internal -> EstablishConnection -> IO ()
 onEstablish Internal{..} (EstablishConnection ept) = do
-  _ <- fork $ do
-    let params = ConnectionParams host port (s_ssl _setts) Nothing
-    outcome <- tryAny $ connectTo _ctx params
-    case outcome of
-      Left _ -> return ()
-      Right conn -> do
-        cid <- nextRandom
-        let cur = CurrentConnection ept cid conn
-        atomically $ writeTVar _last (Just ept)
-        publish _mainBus (ConnectionEstablished cur)
+  canProceed <- atomically $ do
+    stage <- readTVar _stage
+    case stage of
+      Connecting att state ->
+        case state of
+          EndpointDiscovery -> do
+            writeTVar _stage (Connecting att ConnectionEstablishing)
+            return True
+          _ -> return False
+      _ -> return False
 
-  return ()
+  when canProceed $ do
+    _ <- fork $ do
+      let params = ConnectionParams host port (s_ssl _setts) Nothing
+      outcome <- tryAny $ connectTo _ctx params
+      case outcome of
+        Left _ -> atomically $ do
+          stage <- readTVar _stage
+          case stage of
+            Connecting att _ -> writeTVar _stage (Connecting att Reconnecting)
+            _                -> return ()
+        Right conn -> do
+          cid <- nextRandom
+          let cur = CurrentConnection ept cid conn
+          atomically $ writeTVar _last (Just ept)
+          publish _mainBus (ConnectionEstablished cur)
+
+    return ()
   where
     host = endPointIp ept
     port = fromIntegral $ endPointPort ept
@@ -152,38 +248,40 @@ onEstablish Internal{..} (EstablishConnection ept) = do
 --------------------------------------------------------------------------------
 onEstablished :: Internal -> ConnectionEstablished -> IO ()
 onEstablished i@Internal{..} (ConnectionEstablished connection) = do
-  atomically $ writeTVar _stage (Connected connection)
-  logFormat _logger Info "Connection established on {}." (Only $ Shown ept)
-  _ <- fork $ receiving i
-  return ()
+  canProceed <- atomically $ do
+    stage <- readTVar _stage
+    case stage of
+      Connecting{} -> do
+        writeTVar _stage (Connected connection)
+        return True
+      _ -> return False
+
+  when canProceed $ do
+    logFormat _logger Info "Connection established on {}." (Only $ Shown ept)
+    _ <- fork $ receiving i
+    return ()
   where
     ept = _endpoint connection
 
 --------------------------------------------------------------------------------
 onSend :: Internal -> TcpSend -> IO ()
 onSend i@Internal{..} (TcpSend pkg) = do
-  stage <- readTVarIO _stage
-  case stage of
-    Init ->
-      logMsg _logger Warn "Could not send Package at this stage. discarding."
-    Closed ->
-      logMsg _logger Warn "Connection already closed. Package discarded."
-    Connecting ->  atomically $ writeTQueue _queue pkg
-    Connected _ -> do
-      canSend <- atomically $ do
-        stage2  <- readTVar _stage
-        case stage2 of
-          Connecting -> False <$ writeTQueue _queue pkg
-          Connected _ -> do
-            running <- readTVar _sending
-            writeTQueue _queue pkg
-            when (not running) $ writeTVar _sending True
-            return $ not running
-          _ -> return False
+  canProceed <- atomically $ do
+    stage <- readTVar _stage
+    case stage of
+      Connecting{} -> False <$ writeTQueue _queue pkg
+      Connected _ -> do
+        running <- readTVar _sending
+        writeTQueue _queue pkg
+        when (not running) $
+          writeTVar _sending True
 
-      when canSend $ do
-        _ <- fork $ sending i
-        return ()
+        return $ not running
+      _ -> return False
+
+  when canProceed $ do
+    _ <- fork $ sending i
+    return ()
 
 --------------------------------------------------------------------------------
 onForceReconnect :: Internal -> ForceReconnect -> IO ()
@@ -192,6 +290,8 @@ onForceReconnect Internal{..} (ForceReconnect node) = do
             then let Just pt = secureEndPoint node in pt
             else tcpEndPoint node
 
+  att <- freshAttempt
+  atomically $ writeTVar _stage (Connecting att EndpointDiscovery)
   publish _mainBus (EstablishConnection ept)
 
 --------------------------------------------------------------------------------
@@ -208,6 +308,55 @@ onShutdown :: Internal -> SystemShutdown -> IO ()
 onShutdown Internal{..} _ = do
   logMsg _logger Info "Shutting down..."
   publish _mainBus (ServiceTerminated ConnectionManager)
+
+--------------------------------------------------------------------------------
+data TickOutcome
+  = TickClose
+  | TickNoop
+  | TickProceed ConnectingState
+  | TickConnected
+  deriving Show
+
+--------------------------------------------------------------------------------
+onTick :: Internal -> Tick -> IO ()
+onTick i@Internal{..} _ = do
+  now <- getCurrentTime
+
+  outcome <- atomically $ do
+    stage <- readTVar _stage
+    case stage of
+      Connecting att Reconnecting -> do
+        let count   = attemptCount att
+            started = attemptLastStart att
+            delay   = s_reconnect_delay _setts
+
+        if diffUTCTime now started >= delay
+          then
+            let proceeding = do
+                  let newAtt = att { attemptCount     = count + 1
+                                   , attemptLastStart = now }
+                  writeTVar _stage (Connecting newAtt Reconnecting)
+                  return $ TickProceed Reconnecting in
+            case s_retry _setts of
+              AtMost maxTrial
+                | count <= maxTrial -> proceeding
+                | otherwise         -> return TickClose
+              KeepRetrying -> proceeding
+          else return TickNoop
+      Connected{} -> return TickConnected
+      _           -> return TickNoop
+
+  case outcome of
+    TickClose -> do
+      publish _mainBus CloseConnection
+      publish _mainBus SystemShutdown
+    TickProceed state ->
+      case state of
+        Reconnecting -> do
+          logMsg _logger Info "Try reconnecting..."
+          discover i
+        _ -> return ()
+    _ -> return ()
 
 --------------------------------------------------------------------------------
 receiving :: Internal -> IO ()

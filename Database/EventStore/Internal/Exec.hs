@@ -32,6 +32,7 @@ import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.ConnectionManager
 import Database.EventStore.Internal.OperationManager
 import Database.EventStore.Internal.SubscriptionManager
+import Database.EventStore.Internal.TimerService
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -112,6 +113,7 @@ newExec setts disc = do
       exe      = Exec stagePub (_finishVar internal)
       mainBus  = _mainBus internal
 
+  timerService (getLogger "TimerService" logMgr) mainBus
   connectionManager logMgr setts disc mainBus
   operationManager (getLogger "OperationManager" logMgr) setts mainBus
   subscriptionManager (getLogger "SubscriptionManager" logMgr) setts mainBus
@@ -147,8 +149,7 @@ onInitFailed Internal{..} (InitFailed svc) = do
 
 --------------------------------------------------------------------------------
 onShutdown :: Internal -> SystemShutdown -> IO ()
-onShutdown Internal{..} _ = do
-  logMsg _logger Info "Driver shutdown by the user"
+onShutdown Internal{..} _ =
   atomically $ writeTVar _stageVar (Errored "Connection closed")
 
 --------------------------------------------------------------------------------

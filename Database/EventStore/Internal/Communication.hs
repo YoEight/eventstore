@@ -43,6 +43,7 @@ data Service
   = OperationManager
   | ConnectionManager
   | SubscriptionManager
+  | TimerService
   deriving (Show, Eq, Enum, Bounded, Typeable, Generic)
 
 --------------------------------------------------------------------------------
@@ -94,3 +95,8 @@ data SubmitSubscription
 
 --------------------------------------------------------------------------------
 data ServiceTerminated = ServiceTerminated Service deriving Typeable
+
+--------------------------------------------------------------------------------
+data NewTimer =
+  forall e. Typeable e => NewTimer e Duration Bool
+  deriving Typeable
