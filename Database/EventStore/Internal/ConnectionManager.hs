@@ -68,7 +68,7 @@ freshAttempt :: IO Attempts
 freshAttempt = Attempts 1 <$> getCurrentTime
 
 --------------------------------------------------------------------------------
-data UnableToConnect = UnableToConnect deriving Show
+data UnableToConnect = UnableToConnect deriving (Show, Typeable)
 
 --------------------------------------------------------------------------------
 instance Exception UnableToConnect
