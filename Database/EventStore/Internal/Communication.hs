@@ -73,9 +73,6 @@ data SubmitOperation =
 data ForceReconnect = ForceReconnect NodeEndPoints deriving Typeable
 
 --------------------------------------------------------------------------------
-data Abort = Abort deriving Typeable
-
---------------------------------------------------------------------------------
 data SubmitSubscription
   = ConnectStream (Callback SubConnectEvent) Text Bool
   | ConnectPersist (Callback SubConnectEvent) Text Text Int32

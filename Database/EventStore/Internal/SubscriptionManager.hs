@@ -46,7 +46,6 @@ subscriptionManager logger setts mainBus = do
   subscribe mainBus (onInit internal)
   subscribe mainBus (onSub internal)
   subscribe mainBus (onRecv internal)
-  subscribe mainBus (onAbort internal)
   subscribe mainBus (onShutdown internal)
 
 --------------------------------------------------------------------------------
@@ -91,14 +90,15 @@ onRecv Internal{..} (PackageReceived pkg) = do
   fold outcome
 
 --------------------------------------------------------------------------------
-onAbort :: Internal -> Abort -> IO ()
-onAbort Internal{..} _ = do
+doAbort :: Internal -> IO ()
+doAbort Internal{..} = do
   driver <- readIORef _ref
 
   fold (abort driver)
 
 --------------------------------------------------------------------------------
 onShutdown :: Internal -> SystemShutdown -> IO ()
-onShutdown Internal{..} _ = do
+onShutdown i@Internal{..} _ = do
   logMsg _logger Info "Shutting down..."
+  doAbort i
   publish _mainBus (ServiceTerminated SubscriptionManager)
