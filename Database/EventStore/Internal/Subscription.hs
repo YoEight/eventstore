@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable  #-}
 {-# LANGUAGE GADTs               #-}
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE Rank2Types          #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -68,6 +69,7 @@ import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Exec
 import Database.EventStore.Internal.Manager.Subscription.Driver hiding (unsubscribe)
 import Database.EventStore.Internal.Manager.Subscription.Model
 import Database.EventStore.Internal.Operation
@@ -101,6 +103,10 @@ data Catchup = Catchup
 data Persistent = Persistent { _perGroup  :: Text }
 
 --------------------------------------------------------------------------------
+data PersistentSubscription =
+    PersistentSubscription
+
+--------------------------------------------------------------------------------
 -- | Represents the different type of inputs a subscription state-machine can
 --   handle.
 data Input t a where
@@ -129,6 +135,21 @@ newtype SubStateMachine t = SubStateMachine (forall a. Input t a -> a)
 
 --------------------------------------------------------------------------------
 type PushOp a = (Either OperationError a -> IO ()) -> Operation a -> IO ()
+
+--------------------------------------------------------------------------------
+pushOp :: Exec -> Operation a -> Callback a -> IO ()
+pushOp exec op cb = publish exec (SubmitOperation cb op)
+
+--------------------------------------------------------------------------------
+pushConnect :: Exec -> PushCmd -> Callback SubAction -> IO ()
+pushConnect exec cmd cb = publish exec op
+  where
+    op =
+        case cmd of
+            PushRegular stream tos ->
+                ConnectStream p stream tos
+            PushPersistent group stream size ->
+                ConnectPersist p group stream size
 
 --------------------------------------------------------------------------------
 type PushConnect = (SubConnectEvent -> IO ()) -> PushCmd -> IO ()
@@ -224,7 +245,7 @@ data SubscriptionClosed
 instance Exception SubscriptionClosed
 
 --------------------------------------------------------------------------------
-catchupSub :: SubEnv -> CatchupParams -> IO (Subscription Catchup)
+catchupSub :: Exec -> CatchupParams -> IO (Subscription Catchup)
 catchupSub env params = do
     mvarRun <- newEmptyTMVarIO
     mvarState <- newEmptyTMVarIO
@@ -257,8 +278,11 @@ catchupSub env params = do
 
         op = createCatchupOperation env params
 
-    subPushOp env (catchupOpEventHandler mvarState) op
-    subPushConnect env (subEventHandler lcycle) pushCmd
+    opCb  <- newCallback (catchupOpEventHandler mvarState)
+    subCb <- newCallbackSimple (subEventHandler lcycle)
+
+    publish exec (SubmitOperation opCb op)
+    publish exec (ConnectStream subCb streamId (catchupResLnkTos params))
     return $ Subscription streamId lcycle env mvarRun Catchup
 
 --------------------------------------------------------------------------------

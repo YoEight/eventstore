@@ -72,17 +72,11 @@ library
                    Database.EventStore.Internal.Logger
                    Database.EventStore.Internal.Operation
                    Database.EventStore.Internal.Stream
-                   Database.EventStore.Internal.Subscription
                    Database.EventStore.Internal.SubscriptionManager
                    Database.EventStore.Internal.Types
                    Database.EventStore.Internal.Utils
                    Database.EventStore.Internal.Manager.Operation.Model
-                   Database.EventStore.Internal.Manager.Subscription.Command
-                   Database.EventStore.Internal.Manager.Subscription.Driver
-                   Database.EventStore.Internal.Manager.Subscription.Message
                    Database.EventStore.Internal.Manager.Subscription.Model
-                   Database.EventStore.Internal.Manager.Subscription.Packages
-                   Database.EventStore.Internal.Manager.Subscription.Types
                    Database.EventStore.Internal.Messaging
                    Database.EventStore.Internal.OperationManager
                    Database.EventStore.Internal.Operations

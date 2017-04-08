@@ -1,7 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Manager.Subscription.Packages
+-- Module : Database.EventStore.Internal.Subscription.Packages
 -- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -10,7 +10,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Manager.Subscription.Packages where
+module Database.EventStore.Internal.Subscription.Packages where
 
 --------------------------------------------------------------------------------
 import Data.Int
@@ -23,8 +23,8 @@ import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
-import Database.EventStore.Internal.Manager.Subscription.Message
-import Database.EventStore.Internal.Manager.Subscription.Model
+import Database.EventStore.Internal.Subscription.Message
+import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

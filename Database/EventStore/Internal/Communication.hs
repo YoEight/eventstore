@@ -22,12 +22,12 @@ import ClassyPrelude
 import Data.UUID
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Operation
-import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Types
-import Database.EventStore.Internal.Manager.Subscription.Driver
-import Database.EventStore.Internal.Manager.Subscription.Model
+import Database.EventStore.Internal.Subscription.Message
+import Database.EventStore.Internal.Subscription.Types
 
 --------------------------------------------------------------------------------
 data SystemInit = SystemInit deriving Typeable
@@ -74,20 +74,20 @@ data ForceReconnect = ForceReconnect NodeEndPoints deriving Typeable
 
 --------------------------------------------------------------------------------
 data SubmitSubscription
-  = ConnectStream (Callback SubConnectEvent) Text Bool
-  | ConnectPersist (Callback SubConnectEvent) Text Text Int32
-  | CreatePersist (Callback ConfirmedAction)
+  = ConnectStream (Callback SubAction) Text Bool
+  | ConnectPersist (Callback SubAction) Text Text Int32
+  | CreatePersist (Callback ())
                   Text
                   Text
                   PersistentSubscriptionSettings
-  | Unsubscribe Running
-  | UpdatePersist (Callback ConfirmedAction)
+  | Unsubscribe SubDetails
+  | UpdatePersist (Callback ())
                   Text
                   Text
                   PersistentSubscriptionSettings
-  | DeletePersist (Callback ConfirmedAction) Text Text
-  | AckPersist (Callback ()) Running [UUID]
-  | NakPersist (Callback ()) Running NakAction (Maybe Text) [UUID]
+  | DeletePersist (Callback ()) Text Text
+  | AckPersist SubDetails [UUID]
+  | NakPersist SubDetails NakAction (Maybe Text) [UUID]
   deriving Typeable
 
 --------------------------------------------------------------------------------

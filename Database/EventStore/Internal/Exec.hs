@@ -15,6 +15,7 @@
 module Database.EventStore.Internal.Exec
   ( Exec
   , newExec
+  , execSettings
   , execWaitTillClosed
   ) where
 
@@ -52,8 +53,9 @@ instance Exception Terminated
 
 --------------------------------------------------------------------------------
 data Exec =
-  Exec { _execPub    :: STM Publish
-       , _finishLock :: TMVar ()
+  Exec { execSettings :: Settings
+       , _execPub     :: STM Publish
+       , _finishLock  :: TMVar ()
        }
 
 --------------------------------------------------------------------------------
@@ -110,7 +112,7 @@ newExec setts disc = do
                               <*> newEmptyTMVarIO
 
   let stagePub = stageSTM $ _stageVar internal
-      exe      = Exec stagePub (_finishVar internal)
+      exe      = Exec setts stagePub (_finishVar internal)
       mainBus  = _mainBus internal
 
   timerService (getLogger "TimerService" logMgr) mainBus

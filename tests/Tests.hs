@@ -56,8 +56,8 @@ tests conn = testGroup "EventStore actions tests"
 
 
 --------------------------------------------------------------------------------
-freshStreamId :: IO Text
-freshStreamId = fmap toText nextRandom
+freshStreamId :: IO StreamName
+freshStreamId = fmap (StreamName . toText) nextRandom
 
 --------------------------------------------------------------------------------
 writeEventTest :: Connection -> IO ()
@@ -294,7 +294,7 @@ getStreamMetadataTest conn = do
             case getCustomProperty m "foo" of
                 Just i -> assertEqual "Should have equal value" (1 :: Int) i
                 _      -> fail "Can't find foo property"
-        _ -> fail $ "Stream " <>  unpack stream  <>" doesn't exist"
+        _ -> fail $ "Stream " <> show stream <> " doesn't exist"
 
 --------------------------------------------------------------------------------
 createPersistentTest :: Connection -> IO ()
@@ -379,7 +379,7 @@ maxAgeTest conn = do
         StreamMetadataResult _ _ m ->
             assertEqual "Should have equal timespan" (Just timespan)
             (streamMetadataMaxAge m)
-        _ -> fail $ "Stream " <> unpack stream <> " doesn't exist"
+        _ -> fail $ "Stream " <> show stream <> " doesn't exist"
 
 --------------------------------------------------------------------------------
 shutdownTest :: Connection -> IO ()

@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Manager.Subscription.Command
+-- Module : Database.EventStore.Internal.Subscription.Command
 -- Copyright : (C) 2016 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,7 +9,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Manager.Subscription.Command where
+module Database.EventStore.Internal.Subscription.Command where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
@@ -18,8 +18,8 @@ import Data.Serialize
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
-import Database.EventStore.Internal.Manager.Subscription.Message
-import Database.EventStore.Internal.Manager.Subscription.Types
+import Database.EventStore.Internal.Subscription.Message
+import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
