@@ -25,9 +25,6 @@ module Database.EventStore.Internal.Callback
   ) where
 
 --------------------------------------------------------------------------------
-import Data.Typeable
-
---------------------------------------------------------------------------------
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
@@ -73,7 +70,7 @@ newPromise = do
   return $ promise mvar
 
 --------------------------------------------------------------------------------
-newCallback :: Exception e => (Either e a -> IO ()) -> IO (Callback a)
+newCallback :: (Either SomeException a -> IO ()) -> IO (Callback a)
 newCallback k = do
   mvar <- newEmptyTMVarIO
   return $ callback mvar k
@@ -101,9 +98,8 @@ promise mvar = Callback go
     go Retrieve = atomically $ readTMVar mvar
 
 --------------------------------------------------------------------------------
-callback :: forall a e. Exception e
-         => TMVar (Either SomeException a)
-         -> (Either e a -> IO ())
+callback :: forall a. TMVar (Either SomeException a)
+         -> (Either SomeException a -> IO ())
          -> Callback a
 callback mvar k = Callback go
   where
@@ -114,13 +110,12 @@ callback mvar k = Callback go
           _ <- swapTMVar mvar (Right a)
           return ()
       k (Right a)
-    go (Reject err) = do
+    go (Reject e) = do
+      let err = Left $ toException e
       atomically $ do
-        let value = Left $ toException err
-        unlessM (tryPutTMVar mvar value) $ do
-          _ <- swapTMVar mvar value
+        unlessM (tryPutTMVar mvar err) $ do
+          _ <- swapTMVar mvar err
+
           return ()
-      case cast err of
-        Just e  -> k (Left e)
-        Nothing -> return ()
+      k err
     go Retrieve = atomically $ readTMVar mvar

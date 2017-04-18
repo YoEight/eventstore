@@ -247,7 +247,6 @@ subscribeFromTest conn = do
 --------------------------------------------------------------------------------
 data SubNoStreamTest
   = SubNoStreamTestSuccess
-  | SubNoStreamTestWrongException
   | SubNoStreamTestTimeout
   deriving (Eq, Show)
 
@@ -260,11 +259,30 @@ subscribeFromNoStreamTest :: Connection -> IO ()
 subscribeFromNoStreamTest conn = do
   stream <- freshStreamId
   sub <- subscribeFrom conn stream False Nothing Nothing
-  let subAction = do
-          res <- try $ waitTillCatchup sub
-          case res of
-              Left InvalidOperation{} -> return SubNoStreamTestSuccess
-              _ -> return SubNoStreamTestWrongException
+  let loop [] = do
+          m <- nextEventMaybe sub
+          case m of
+              Just _  -> fail "should not have more events at the point."
+              Nothing -> return ()
+      loop (x:xs) = do
+          evt <- nextEvent sub
+          case recordedEventDataAsJson $ resolvedEventOriginal evt of
+              Just e | e == x    -> loop xs
+                     | otherwise -> fail "Out of order event's appeared."
+              _ -> fail "Can't deserialized event"
+
+      subAction = do
+          waitTillCatchup sub
+          let jss = [ object [ "1" .= (1 :: Int)]
+                    , object [ "2" .= (2 :: Int)]
+                    , object [ "3" .= (3 :: Int)]
+                    ]
+
+              evts = fmap (createEvent "foo" Nothing . withJson) jss
+
+          _ <- sendEvents conn stream anyVersion evts >>= waitAsync
+          loop jss
+          return SubNoStreamTestSuccess
       timeout = do
           threadDelay (10 * secs)
           return SubNoStreamTestTimeout

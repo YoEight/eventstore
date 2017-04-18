@@ -21,7 +21,9 @@ import ClassyPrelude
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Exec
+import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Catchup
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Api
@@ -90,7 +92,8 @@ newCatchupSubscription exec tos batch state = do
       AllCatchup c p          -> Chk 0 (Position c p)
 
 
-  let stream =
+  let logger = getLogger "CatchupSubscription" (_logMgr exec)
+      stream =
         case state of
            RegularCatchup s _ -> StreamName s
            _                  -> AllStream
@@ -138,10 +141,23 @@ newCatchupSubscription exec tos batch state = do
         cb <- newCallback opCallback
         publish exec (SubmitOperation cb newOp)
 
-      opCallback (Left (_ :: SomeException)) = do
-        atomically $ writeTVar phaseVar Pending
-        cb <- newCallbackSimple callback
-        publish exec (ConnectStream cb name tos)
+      opCallback (Left e) = do
+        let onError :: forall e. Exception e => e -> IO ()
+            onError err = do
+              atomically $ writeTVar phaseVar (Closed Nothing)
+              logFormat logger Error
+                "Something wrong happened during catching up phase: {}"
+                (Only $ Shown err)
+
+        case fromException e of
+          Just (ope :: OperationError) ->
+            case ope of
+              InvalidOperation{} -> do
+                atomically $ writeTVar phaseVar Pending
+                cb <- newCallbackSimple callback
+                publish exec (ConnectStream cb name tos)
+              _ -> onError ope
+          _ -> onError e
       opCallback (Right res) = do
         atomically $ do
           writeTVar chkVar (fromCheckPoint $ catchupCheckpoint res)
