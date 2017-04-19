@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Subscription.Types
