@@ -1,0 +1,129 @@
+-- This file has been generated from package.yaml by hpack version 0.15.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           eventstore
+version:        0.15.0.0
+synopsis:       EventStore TCP Client
+description:    EventStore TCP Client <http://geteventstore.com>
+category:       Database
+homepage:       https://github.com/YoEight/eventstore#readme
+bug-reports:    https://github.com/YoEight/eventstore/issues
+author:         Yorick Laupa
+maintainer:     yo.eight@gmail.com
+copyright:      Yorick Laupa
+license:        BSD3
+license-file:   LICENSE
+tested-with:    GHC >= 7.8.3 && < 8.0.3
+build-type:     Simple
+cabal-version:  >= 1.10
+
+extra-source-files:
+    .gitignore
+    .travis.yml
+    CHANGELOG.markdown
+    eventstore-test-setup.sh
+    README.md
+
+source-repository head
+  type: git
+  location: https://github.com/YoEight/eventstore
+
+library
+  hs-source-dirs:
+      .
+  default-extensions: NoImplicitPrelude
+  build-depends:
+      base >=4.7 && <5
+    , aeson >=0.8 && <1.2
+    , classy-prelude ==1.*
+    , connection ==0.2.*
+    , dotnet-timespan
+    , stm
+    , time >=1.4 && <1.7
+    , uuid ==1.3.*
+    , cereal >=0.4 && <0.6
+    , containers ==0.5.*
+    , protobuf >=0.2.1.1 && <0.3
+    , random ==1.*
+    , unordered-containers
+    , semigroups >=0.5
+    , dns
+    , array
+    , http-client == 0.5.*
+    , mtl
+    , fast-logger
+    , text-format
+    , clock
+  exposed-modules:
+      Database.EventStore
+      Database.EventStore.Internal.Callback
+      Database.EventStore.Internal.Command
+      Database.EventStore.Internal.Communication
+      Database.EventStore.Internal.ConnectionManager
+      Database.EventStore.Internal.Discovery
+      Database.EventStore.Internal.EndPoint
+      Database.EventStore.Internal.Exec
+      Database.EventStore.Internal.Generator
+      Database.EventStore.Internal.Logger
+      Database.EventStore.Internal.Manager.Operation.Model
+      Database.EventStore.Internal.Manager.Subscription.Model
+      Database.EventStore.Internal.Messaging
+      Database.EventStore.Internal.Operation
+      Database.EventStore.Internal.Operation.Catchup
+      Database.EventStore.Internal.Operation.DeleteStream
+      Database.EventStore.Internal.Operation.DeleteStream.Message
+      Database.EventStore.Internal.Operation.Read.Common
+      Database.EventStore.Internal.Operation.ReadAllEvents
+      Database.EventStore.Internal.Operation.ReadAllEvents.Message
+      Database.EventStore.Internal.Operation.ReadEvent
+      Database.EventStore.Internal.Operation.ReadEvent.Message
+      Database.EventStore.Internal.Operation.ReadStreamEvents
+      Database.EventStore.Internal.Operation.ReadStreamEvents.Message
+      Database.EventStore.Internal.Operation.StreamMetadata
+      Database.EventStore.Internal.Operation.Transaction
+      Database.EventStore.Internal.Operation.Transaction.Message
+      Database.EventStore.Internal.Operation.Write.Common
+      Database.EventStore.Internal.Operation.WriteEvents
+      Database.EventStore.Internal.Operation.WriteEvents.Message
+      Database.EventStore.Internal.OperationManager
+      Database.EventStore.Internal.Operations
+      Database.EventStore.Internal.Stream
+      Database.EventStore.Internal.Subscription.Api
+      Database.EventStore.Internal.Subscription.Catchup
+      Database.EventStore.Internal.Subscription.Command
+      Database.EventStore.Internal.Subscription.Message
+      Database.EventStore.Internal.Subscription.Packages
+      Database.EventStore.Internal.Subscription.Persistent
+      Database.EventStore.Internal.Subscription.Regular
+      Database.EventStore.Internal.Subscription.Types
+      Database.EventStore.Internal.SubscriptionManager
+      Database.EventStore.Internal.TimerService
+      Database.EventStore.Internal.Types
+      Database.EventStore.Internal.Utils
+      Database.EventStore.Logging
+  default-language: Haskell2010
+
+test-suite integration-tests
+  type: exitcode-stdio-1.0
+  main-is: integration.hs
+  hs-source-dirs:
+      tests
+  default-extensions: NoImplicitPrelude
+  build-depends:
+      base >=4.7 && <5
+    , aeson >=0.8 && <1.2
+    , classy-prelude ==1.*
+    , connection ==0.2.*
+    , dotnet-timespan
+    , stm
+    , time >=1.4 && <1.7
+    , uuid ==1.3.*
+    , eventstore
+    , tasty
+    , tasty-hunit
+    , aeson
+    , text
+  other-modules:
+      Tests
+  default-language: Haskell2010
