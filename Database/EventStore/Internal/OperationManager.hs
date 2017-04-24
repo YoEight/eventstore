@@ -47,6 +47,7 @@ operationManager logger setts mainBus = do
   subscribe mainBus (onNew internal)
   subscribe mainBus (onRecv internal)
   subscribe mainBus (onShutdown internal)
+  subscribe mainBus (onCheck internal)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -88,6 +89,10 @@ onShutdown i@Internal{..} _ = do
   logMsg _logger Info "Shutting down..."
   doAbort i
   publish _mainBus (ServiceTerminated OperationManager)
+
+--------------------------------------------------------------------------------
+onCheck :: Internal -> Check -> IO ()
+onCheck _ _ = return ()
 
 --------------------------------------------------------------------------------
 interpret :: Internal -> OpTransition -> IO OpModel

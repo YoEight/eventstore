@@ -356,6 +356,8 @@ onTick i@Internal{..} _ = do
           logMsg _logger Info "Try reconnecting..."
           discover i
         _ -> return ()
+    TickConnected -> do
+      publish _mainBus Check
     _ -> return ()
 
 --------------------------------------------------------------------------------

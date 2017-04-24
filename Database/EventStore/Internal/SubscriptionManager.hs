@@ -80,6 +80,7 @@ subscriptionManager logger setts mainBus = do
   subscribe mainBus (onSub internal)
   subscribe mainBus (onRecv internal)
   subscribe mainBus (onShutdown internal)
+  subscribe mainBus (onCheck internal)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -314,3 +315,7 @@ onShutdown :: Internal -> SystemShutdown -> IO ()
 onShutdown Internal{..} _ = do
   logMsg _logger Info "Shutting down..."
   publish _mainBus (ServiceTerminated SubscriptionManager)
+
+--------------------------------------------------------------------------------
+onCheck :: Internal -> Check -> IO ()
+onCheck _ _ = return ()
