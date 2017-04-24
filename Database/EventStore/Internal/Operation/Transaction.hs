@@ -29,6 +29,7 @@ import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Transaction.Message
 import Database.EventStore.Internal.Operation.Write.Common
@@ -40,7 +41,7 @@ import Database.EventStore.Internal.Types
 transactionStart :: Settings -> Text -> ExpectedVersion -> Operation Int64
 transactionStart Settings{..} stream exp_v = do
     let msg = newStart stream (expVersionInt32 exp_v) s_requireMaster
-    resp <- send 0x84 0x85 msg
+    resp <- send transactionStartCmd transactionStartCompletedCmd msg
     let tid = getField $ _transId resp
         r   = getField $ _result resp
     case r of
@@ -64,7 +65,7 @@ transactionWrite :: Settings
 transactionWrite Settings{..} stream exp_v trans_id evts = do
     nevts <- traverse eventToNewEvent evts
     let msg = newWrite trans_id nevts s_requireMaster
-    resp <- send 0x86 0x87 msg
+    resp <- send transactionWriteCmd transactionWriteCompletedCmd msg
     let r = getField $ _wwResult resp
     case r of
         OP_PREPARE_TIMEOUT        -> retry
@@ -85,7 +86,7 @@ transactionCommit :: Settings
                   -> Operation WriteResult
 transactionCommit Settings{..} stream exp_v trans_id = do
     let msg = newCommit trans_id s_requireMaster
-    resp <- send 0x88 0x89 msg
+    resp <- send transactionCommitCmd transactionCommitCompletedCmd msg
     let r = getField $ _ccResult resp
         com_pos = getField $ _commitPosition resp
         pre_pos = getField $ _preparePosition resp

@@ -16,7 +16,6 @@ module Main where
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Database.EventStore
-import Database.EventStore.Logging
 import Test.Tasty
 import Test.Tasty.Ingredients.Basic
 
@@ -28,26 +27,11 @@ main :: IO ()
 main = do
     let setts = defaultSettings
                 { s_credentials = Just $ credentials "admin" "changeit"
-                , s_reconnect_delay_secs = 1
+                , s_reconnect_delay = 3
                 , s_logger = Nothing
+                , s_loggerSettings = defaultLoggerSettings
+                                     { loggerLevel = Debug }
                 }
     conn <- connect setts (Static "127.0.0.1" 1113)
     let tree = tests conn
     defaultMainWithIngredients [consoleTestReporter] tree
-
---------------------------------------------------------------------------------
-_logger :: Log -> IO ()
-_logger l = do
-    t <- getCurrentTime
-    putStr "["
-    putStr $ pack $ show t
-    putStr "]  "
-    showLog l
-  where
-    showLog (Info m) = do
-        putStr "[INFO] "
-        print m
-
-    showLog (Error m) = do
-        putStr "!!! ERROR !!! "
-        print m

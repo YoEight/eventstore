@@ -1,5 +1,5 @@
 #!/bin/sh
 
-wget http://download.geteventstore.com/binaries/EventStore-OSS-Ubuntu-v3.3.0.tar.gz
-tar -xf EventStore-OSS-Ubuntu-v3.3.0.tar.gz
-EventStore-OSS-Ubuntu-v3.3.0/run-node.sh --mem-db &
+wget http://download.geteventstore.com/binaries/EventStore-OSS-Ubuntu-14.04-v3.9.3.tar.gz
+tar -xf EventStore-OSS-Ubuntu-14.04-v3.9.3.tar.gz
+EventStore-OSS-Ubuntu-14.04-v3.9.3/run-node.sh --mem-db &

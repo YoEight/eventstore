@@ -1,6 +1,7 @@
-{-# LANGUAGE GADTs          #-}
-{-# LANGUAGE DataKinds      #-}
-{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE DataKinds         #-}
+{-# LANGUAGE KindSignatures    #-}
+{-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Stream
@@ -26,6 +27,16 @@ data StreamType = All | RegularStream deriving (Eq, Ord)
 data StreamName = StreamName Text | AllStream deriving Eq
 
 --------------------------------------------------------------------------------
+streamNameRaw :: StreamName -> Text
+streamNameRaw (StreamName n) = n
+streamNameRaw AllStream      = ""
+
+--------------------------------------------------------------------------------
 instance Show StreamName where
     show (StreamName t) = show t
     show AllStream      = "$all"
+
+--------------------------------------------------------------------------------
+instance IsString StreamName where
+    fromString "$all" = AllStream
+    fromString stream = StreamName $ pack stream

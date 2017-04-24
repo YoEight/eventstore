@@ -24,6 +24,7 @@ import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.ReadEvent.Message
 import Database.EventStore.Internal.Operation.Read.Common
@@ -52,7 +53,7 @@ readEvent :: Settings
           -> Operation (ReadResult 'RegularStream ReadEvent)
 readEvent Settings{..} s evtn tos = do
     let msg = newRequest s evtn tos s_requireMaster
-    resp <- send 0xB0 0xB1 msg
+    resp <- send readEventCmd readEventCompletedCmd msg
     let r         = getField $ _result resp
         evt       = newResolvedEvent $ getField $ _indexedEvent resp
         err       = getField $ _error resp

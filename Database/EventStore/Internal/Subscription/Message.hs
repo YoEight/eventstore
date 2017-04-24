@@ -1,9 +1,14 @@
-{-# LANGUAGE DataKinds                 #-}
-{-# LANGUAGE DeriveGeneric             #-}
-{-# OPTIONS_GHC -fcontext-stack=26     #-}
+{-# LANGUAGE CPP           #-}
+{-# LANGUAGE DataKinds     #-}
+{-# LANGUAGE DeriveGeneric #-}
+#if __GLASGOW_HASKELL__ < 800
+{-# OPTIONS_GHC -fcontext-stack=26 #-}
+#else
+{-# OPTIONS_GHC -freduction-depth=26 #-}
+#endif
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Manager.Subscription.Message
+-- Module : Database.EventStore.Internal.Subscription.Message
 -- Copyright : (C) 2015 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -12,7 +17,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Manager.Subscription.Message where
+module Database.EventStore.Internal.Subscription.Message where
 
 --------------------------------------------------------------------------------
 import Data.Int

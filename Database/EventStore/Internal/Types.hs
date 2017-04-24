@@ -37,6 +37,7 @@ import           Network.Connection (TLSSettings)
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Logger
 import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
@@ -618,7 +619,7 @@ packageDataAsText = go . decodeUtf8 . packageData
 heartbeatResponsePackage :: UUID -> Package
 heartbeatResponsePackage uuid =
     Package
-    { packageCmd         = 0x02
+    { packageCmd         = heartbeatResponseCmd
     , packageCorrelation = uuid
     , packageData        = ""
     , packageCred        = Nothing
@@ -653,9 +654,10 @@ data Settings
       , s_requireMaster        :: Bool
       , s_credentials          :: Maybe Credentials
       , s_retry                :: Retry
-      , s_reconnect_delay_secs :: Int -- ^ In seconds
+      , s_reconnect_delay      :: NominalDiffTime
       , s_logger               :: Maybe (Log -> IO ())
       , s_ssl                  :: Maybe TLSSettings
+      , s_loggerSettings       :: LoggerSettings
       }
 
 --------------------------------------------------------------------------------
@@ -665,7 +667,7 @@ data Settings
 --   s_requireMaster        = True
 --   s_credentials          = Nothing
 --   s_retry                = 'atMost' 3
---   s_reconnect_delay_secs = 3
+--   s_reconnect_delay      = 3 -- seconds
 --   s_logger               = Nothing
 defaultSettings :: Settings
 defaultSettings  = Settings
@@ -674,9 +676,10 @@ defaultSettings  = Settings
                    , s_requireMaster        = True
                    , s_credentials          = Nothing
                    , s_retry                = atMost 3
-                   , s_reconnect_delay_secs = 3
+                   , s_reconnect_delay      = 3
                    , s_logger               = Nothing
                    , s_ssl                  = Nothing
+                   , s_loggerSettings       = defaultLoggerSettings
                    }
 
 --------------------------------------------------------------------------------
@@ -1163,3 +1166,14 @@ defaultPersistentSubscriptionSettings =
     , psSettingsMaxSubsCount          = 0
     , psSettingsNamedConsumerStrategy = RoundRobin
     }
+
+--------------------------------------------------------------------------------
+newtype Duration = Duration Int64 deriving Show
+
+--------------------------------------------------------------------------------
+msDuration :: Int64 -> Duration
+msDuration = Duration . (1000 *)
+
+--------------------------------------------------------------------------------
+secsDuration :: Int64 -> Duration
+secsDuration = msDuration . (1000 *)

@@ -22,6 +22,7 @@ import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadAllEvents.Message
@@ -40,12 +41,12 @@ readAllEvents :: Settings
 readAllEvents Settings{..} c_pos p_pos max_c tos dir = do
     let msg = newRequest c_pos p_pos max_c tos s_requireMaster
         cmd = case dir of
-            Forward  -> 0xB6
-            Backward -> 0xB8
+            Forward  -> readAllEventsForwardCmd
+            Backward -> readAllEventsBackwardCmd
 
         resp_cmd = case dir of
-            Forward  -> 0xB7
-            Backward -> 0xB9
+            Forward  -> readAllEventsForwardCompletedCmd
+            Backward -> readAllEventsBackwardCompletedCmd
     resp <- send cmd resp_cmd msg
     let r      = getField $ _Result resp
         err    = getField $ _Error resp

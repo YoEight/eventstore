@@ -26,6 +26,7 @@ import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.DeleteStream.Message
 import Database.EventStore.Internal.Stream
@@ -44,7 +45,7 @@ deleteStream :: Settings
              -> Operation DeleteResult
 deleteStream Settings{..} s v hard = do
     let msg = newRequest s (expVersionInt32 v) s_requireMaster hard
-    resp <- send 0x8A 0x8B msg
+    resp <- send deleteStreamCmd deleteStreamCompletedCmd msg
     let r            = getField $ _result resp
         com_pos      = getField $ _commitPosition resp
         prep_pos     = getField $ _preparePosition resp
