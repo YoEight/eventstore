@@ -64,9 +64,8 @@ library
       Database.EventStore.Internal.Discovery
       Database.EventStore.Internal.EndPoint
       Database.EventStore.Internal.Exec
-      Database.EventStore.Internal.Generator
       Database.EventStore.Internal.Logger
-      Database.EventStore.Internal.Manager.Operation.Model
+      Database.EventStore.Internal.Manager.Operation.Registry
       Database.EventStore.Internal.Manager.Subscription.Model
       Database.EventStore.Internal.Messaging
       Database.EventStore.Internal.Operation
