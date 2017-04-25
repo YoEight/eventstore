@@ -75,6 +75,45 @@ register :: Registry -> Operation a -> Callback a -> IO ()
 register reg op cb = evaluate reg op cb op
 
 --------------------------------------------------------------------------------
+handlePackage :: Registry -> Package -> IO ()
+handlePackage reg@Registry{..} pkg@Package{..} = do
+  m <- readIORef _regPendings
+
+  atomicModifyIORef' _regPendings $ \m ->
+    (deleteMap packageCorrelation m, ())
+
+  for_ (lookup packageCorrelation m) $ \Pending{..} ->
+    case packageCmd of
+      cmd
+        | cmd == badRequestCmd -> do
+          let reason = packageDataAsText pkg
+
+          reject _pendingCallback (ServerError reason)
+        | cmd == notAuthenticatedCmd ->
+          reject _pendingCallback NotAuthenticatedOp
+        | cmd == notHandledCmd -> do
+          let Just msg = maybeDecodeMessage packageData
+              reason   = getField $ notHandledReason msg
+          case reason of
+            N_NotMaster -> do
+              let Just details = getField $ notHandledAdditionalInfo msg
+                  info         = masterInfo details
+                  node         = masterInfoNodeEndPoints info
+
+              publish _regBus (ForceReconnect node)
+              evaluate reg _pendingOp _pendingCallback _pendingOp
+            -- In this case with just retry the operation.
+            _ -> evaluate reg _pendingOp _pendingCallback _pendingOp
+        | cmd /= _pendingRespCmd ->
+          reject _pendingCallback (InvalidServerResponse _pendingRespCmd cmd)
+        | otherwise ->
+          case runGet decodeMessage packageData of
+            Left e ->
+              reject _pendingCallback (ProtobufDecodingError e)
+            Right resp ->
+              evaluate reg _pendingOp _pendingCallback (_pendingResume resp)
+
+--------------------------------------------------------------------------------
 evaluate :: Registry
          -> Operation a
          -> Callback a
