@@ -75,6 +75,14 @@ register :: Registry -> Operation a -> Callback a -> IO ()
 register reg op cb = evaluate reg op cb op
 
 --------------------------------------------------------------------------------
+abortPendingRequests :: Registry -> IO ()
+abortPendingRequests Registry{..} = do
+  m <- readIORef _regPendings
+  atomicWriteIORef _regPendings mempty
+
+  for_ m $ \Pending{..} -> reject _pendingCallback Aborted
+
+--------------------------------------------------------------------------------
 handlePackage :: Registry -> Package -> IO ()
 handlePackage reg@Registry{..} pkg@Package{..} = do
   m <- readIORef _regPendings
