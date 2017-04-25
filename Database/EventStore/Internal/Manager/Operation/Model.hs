@@ -26,10 +26,14 @@ import ClassyPrelude
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.UUID
+import Data.UUID.V4
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Generator
+import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 
@@ -38,25 +42,90 @@ import Database.EventStore.Internal.Types
 data Elem r =
     forall a resp. Decode resp =>
     Elem
-    { _opOp   :: Operation a
-    , _opCmd  :: Command
-    , _opCont :: resp -> SM a ()
-    , _opCb   :: Either OperationError a -> r
+    { _opOp      :: !(Operation a)
+    , _opCmd     :: !Command
+    , _opRetries :: !Int
+    , _opCont    :: resp -> SM a ()
+    , _opCb      :: Either OperationError a -> r
     }
+
+--------------------------------------------------------------------------------
+data Pending =
+    forall result response. Decode response =>
+    Pending { _pendingOp       :: !(Operation result)
+            , _pendingRespCmd  :: !Command
+            , _pendingRetries  :: !Int
+            , _pendingResume   :: response -> SM result ()
+            , _pendingCallback :: !(Callback result)
+            }
+
+--------------------------------------------------------------------------------
+data Registry =
+    Registry { _regSettings :: Settings
+              , _regBus      :: Bus
+              , _regPendings :: IORef (HashMap UUID Pending)
+              }
+
+--------------------------------------------------------------------------------
+newRegistry :: Settings -> Bus -> IO Registry
+newRegistry setts bus = Registry setts bus <$> newIORef mempty
+
+--------------------------------------------------------------------------------
+register :: Registry -> Operation a -> Callback a -> IO ()
+register reg op cb = evaluate reg op cb op
+
+--------------------------------------------------------------------------------
+evaluate :: Registry
+         -> Operation a
+         -> Callback a
+         -> SM a ()
+         -> IO ()
+evaluate Registry{..} op cb = go
+  where
+    go (Return _)  = return ()
+    go (Yield a next) = do
+      fulfill cb a
+      go next
+    go (FreshId k) = do
+      uuid <- nextRandom
+      go (k uuid)
+    go (SendPkg cmdReq cmdResp req next) = do
+      uuid <- nextRandom
+      let pkg = Package { packageCmd         = cmdReq
+                        , packageCorrelation = uuid
+                        , packageData        = runPut $ encodeMessage req
+                        , packageCred        = s_credentials _regSettings
+                        }
+
+          pending = Pending { _pendingOp       = op
+                            , _pendingRespCmd  = cmdResp
+                            , _pendingRetries  = 1
+                            , _pendingResume   = next
+                            , _pendingCallback = cb
+                            }
+      atomicModifyIORef' _regPendings $ \m ->
+        (insertMap uuid pending m, ())
+
+      publish _regBus (TcpSend pkg)
+    go (Failure outcome) =
+      case outcome of
+        Just e  -> reject cb e
+        Nothing -> go op
 
 --------------------------------------------------------------------------------
 -- | Operation internal state.
 data State r =
     State
-    { _gen :: Generator
+    { _setts :: Settings
+    , _gen :: Generator
       -- ^ 'UUID' generator.
     , _pending :: HashMap UUID (Elem r)
       -- ^ Contains all running 'Operation's.
     }
 
 --------------------------------------------------------------------------------
-initState :: Generator -> State r
-initState g = State g mempty
+initState :: Settings -> Generator -> State r
+initState setts g = State setts g mempty
 
 --------------------------------------------------------------------------------
 -- | Type of requests handled by the model.
@@ -127,7 +196,7 @@ runOperation setts cb op start init_st = go init_st start
                   , packageData        = runPut $ encodeMessage rq
                   , packageCred        = s_credentials setts
                   }
-            elm    = Elem op co k cb
+            elm    = Elem op co 1 k cb
             ps     = insertMap new_uuid elm $ _pending st
             nxt_st = st { _pending = ps
                         , _gen     = nxt_gen
@@ -141,17 +210,17 @@ runOperation setts cb op start init_st = go init_st start
 --------------------------------------------------------------------------------
 runPackage :: Settings -> State r -> Package -> Maybe (Transition r)
 runPackage setts st pkg@Package{..} = do
-    Elem op resp_cmd cont cb <- lookup packageCorrelation $ _pending st
+    Elem{..} <- lookup packageCorrelation $ _pending st
     let nxt_ps = deleteMap packageCorrelation $ _pending st
         nxt_st = st { _pending = nxt_ps }
     case packageCmd of
         cmd | cmd == badRequestCmd -> do
             let reason = packageDataAsText pkg
                 resp  = ServerError reason
-                value = cb $ Left $ resp
+                value = _opCb $ Left $ resp
             return $ Produce value (Await $ Model $ execute setts nxt_st)
             | cmd == notAuthenticatedCmd -> do
-            let value = cb $ Left NotAuthenticatedOp
+            let value = _opCb $ Left NotAuthenticatedOp
             return $ Produce value (Await $ Model $ execute setts nxt_st)
             | cmd == notHandledCmd -> do
             msg <- maybeDecodeMessage packageData
@@ -159,34 +228,35 @@ runPackage setts st pkg@Package{..} = do
             case reason of
                 N_NotMaster -> do
                     info <- getField $ notHandledAdditionalInfo msg
-                    let next = runOperation setts cb op op nxt_st
+                    let next = runOperation setts _opCb _opOp _opOp nxt_st
                     return $ NotHandled (masterInfo info) next
                 -- In this case with just retry the operation.
-                _ -> return $ runOperation setts cb op op nxt_st
-        _ | packageCmd /= resp_cmd -> do
-              let r = cb $ Left $ InvalidServerResponse resp_cmd packageCmd
+                _ -> return $ runOperation setts _opCb _opOp _opOp nxt_st
+        _ | packageCmd /= _opCmd -> do
+              let r = _opCb $ Left $ InvalidServerResponse _opCmd packageCmd
               return $ Produce r (Await $ Model $ execute setts nxt_st)
           | otherwise ->
               case runGet decodeMessage packageData of
                   Left e  ->
-                    let r = cb $ Left $ ProtobufDecodingError e in
-                    return $ Produce r (Await $ Model $ execute setts nxt_st)
-                  Right m -> return $ runOperation setts cb op (cont m) nxt_st
+                      let r = _opCb $ Left $ ProtobufDecodingError e in
+                      return $ Produce r (Await $ Model $ execute setts nxt_st)
+                  Right m -> return $
+                      runOperation setts _opCb _opOp (_opCont m) nxt_st
 
 --------------------------------------------------------------------------------
 abortOperations :: Settings -> State r -> Transition r
 abortOperations setts init_st = go init_st $ mapToList $ _pending init_st
   where
-    go st ((key, Elem _ _ _ k):xs) =
+    go st ((key, Elem{..}):xs) =
         let ps     = deleteMap key $ _pending st
             nxt_st = st { _pending = ps } in
-        Produce (k $ Left Aborted) $ go nxt_st xs
+        Produce (_opCb $ Left Aborted) $ go nxt_st xs
     go st [] = Await $ Model $ execute setts st
 
 --------------------------------------------------------------------------------
 -- | Creates a new 'Operation' model state-machine.
 newModel :: Settings -> Generator -> Model r
-newModel setts g = Model $ execute setts $ initState g
+newModel setts g = Model $ execute setts $ initState setts g
 
 --------------------------------------------------------------------------------
 execute :: Settings -> State r -> Request r -> Maybe (Transition r)
