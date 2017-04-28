@@ -67,7 +67,7 @@ main = do
     -- automatically to the server if the connection dropped. Of course that behavior can be tuned
     -- through some settings.
     conn <- connect defaultSettings (Static "127.0.0.1" 1113)
-    let js  = "isHaskellTheBest" .= True -- (.=) comes from Data.Aeson module.
+    let js  = object ["isHaskellTheBest" .= True] -- (.=) comes from Data.Aeson module.
         evt = createEvent "programming" Nothing (withJson js)
 
     -- Appends an event to a stream named `languages`.
