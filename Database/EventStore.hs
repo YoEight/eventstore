@@ -55,6 +55,8 @@ module Database.EventStore
     , withJsonAndMetadata
     , withBinary
     , withBinaryAndMetadata
+     -- * Common Operation types
+    , OperationMaxAttemptReached(..)
      -- * Read Operations
     , StreamMetadataResult(..)
     , readEvent
@@ -218,6 +220,7 @@ import           Database.EventStore.Internal.Operation (OperationError(..))
 import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
+import           Database.EventStore.Internal.Manager.Operation.Registry
 import           Database.EventStore.Internal.Callback
 import           Database.EventStore.Internal.Stream
 import           Database.EventStore.Internal.Types

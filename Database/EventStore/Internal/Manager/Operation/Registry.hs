@@ -1,5 +1,7 @@
+{-# LANGUAGE DeriveDataTypeable        #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE TypeFamilies              #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Manager.Operation.Registry
@@ -14,16 +16,19 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Manager.Operation.Registry
     ( Registry
+    , OperationMaxAttemptReached(..)
     , newRegistry
     , register
     , handlePackage
     , abortPendingRequests
+    , checkAndRetry
     ) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Data.ProtocolBuffers
 import Data.Serialize
+import Data.Time
 import Data.UUID
 import Data.UUID.V4
 
@@ -32,7 +37,7 @@ import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Messaging
-import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Operation hiding (retry)
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -41,13 +46,19 @@ data Pending =
     Pending { _pendingOp       :: !(Operation result)
             , _pendingRespCmd  :: !Command
             , _pendingRetries  :: !Int
+            , _pendingLastTry  :: !UTCTime
+            , _pendingLastPkg  :: !Package
             , _pendingResume   :: response -> SM result ()
             , _pendingCallback :: !(Callback result)
             }
 
 --------------------------------------------------------------------------------
+rejectPending :: Exception e => Pending -> e -> IO ()
+rejectPending Pending{..} e = reject _pendingCallback e
+
+--------------------------------------------------------------------------------
 data Registry =
-    Registry { _regSettings :: Settings
+    Registry  { _regSettings :: Settings
               , _regBus      :: Bus
               , _regPendings :: IORef (HashMap UUID Pending)
               }
@@ -73,8 +84,8 @@ handlePackage :: Registry -> Package -> IO ()
 handlePackage reg@Registry{..} pkg@Package{..} = do
   m <- readIORef _regPendings
 
-  atomicModifyIORef' _regPendings $ \m ->
-    (deleteMap packageCorrelation m, ())
+  atomicModifyIORef' _regPendings $ \pendings ->
+    (deleteMap packageCorrelation pendings, ())
 
   for_ (lookup packageCorrelation m) $ \Pending{..} ->
     case packageCmd of
@@ -124,6 +135,7 @@ evaluate Registry{..} op cb = go
       go (k uuid)
     go (SendPkg cmdReq cmdResp req next) = do
       uuid <- nextRandom
+      now  <- getCurrentTime
       let pkg = Package { packageCmd         = cmdReq
                         , packageCorrelation = uuid
                         , packageData        = runPut $ encodeMessage req
@@ -133,6 +145,8 @@ evaluate Registry{..} op cb = go
           pending = Pending { _pendingOp       = op
                             , _pendingRespCmd  = cmdResp
                             , _pendingRetries  = 1
+                            , _pendingLastTry  = now
+                            , _pendingLastPkg  = pkg
                             , _pendingResume   = next
                             , _pendingCallback = cb
                             }
@@ -144,6 +158,51 @@ evaluate Registry{..} op cb = go
       case outcome of
         Just e  -> reject cb e
         Nothing -> go op
+
+--------------------------------------------------------------------------------
+-- | Occurs when an operation has been retried more than 's_operationRetry'.
+data OperationMaxAttemptReached =
+  OperationMaxAttemptReached UUID Command
+  deriving (Show, Typeable)
+
+--------------------------------------------------------------------------------
+instance Exception OperationMaxAttemptReached
+
+--------------------------------------------------------------------------------
+checkAndRetry :: Registry -> IO ()
+checkAndRetry Registry{..} = do
+  reg    <- readIORef _regPendings
+  now    <- getCurrentTime
+  newReg <- foldM (checking now) reg (mapToList reg)
+
+  atomicWriteIORef _regPendings newReg
+  where
+    checking time reg (key, p)
+      | diffUTCTime time (_pendingLastTry p) > s_operationTimeout _regSettings =
+        let retry = do
+              corrId <- nextRandom
+              let oldPkg     = _pendingLastPkg p
+                  newPkg     = oldPkg { packageCorrelation = corrId }
+                  newPending = p { _pendingLastPkg = newPkg
+                                 , _pendingLastTry = time
+                                 , _pendingRetries = _pendingRetries p + 1
+                                 }
+                  nextReg    = deleteMap key $ insertMap corrId newPending reg
+
+              publish _regBus (TcpSend newPkg)
+              return nextReg in
+        case s_operationRetry _regSettings of
+          AtMost maxAttempts
+            | _pendingRetries p <= maxAttempts
+              -> retry
+            | otherwise
+              -> do let initialCmd = packageCmd (_pendingLastPkg p)
+                    rejectPending p
+                      (OperationMaxAttemptReached key initialCmd)
+
+                    return $ deleteMap key reg
+          KeepRetrying -> retry
+      | otherwise = return reg
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a

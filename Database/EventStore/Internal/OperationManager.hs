@@ -22,7 +22,6 @@ import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Manager.Operation.Registry
 import Database.EventStore.Internal.Messaging
-import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -64,4 +63,4 @@ onShutdown Internal{..} _ = do
 
 --------------------------------------------------------------------------------
 onCheck :: Internal -> Check -> IO ()
-onCheck _ _ = return ()
+onCheck Internal{..} _ = checkAndRetry _reg
