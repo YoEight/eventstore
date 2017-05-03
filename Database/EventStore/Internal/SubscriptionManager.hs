@@ -1,5 +1,7 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE TypeFamilies       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.SubscriptionManager
@@ -12,10 +14,14 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.SubscriptionManager
-  ( subscriptionManager ) where
+  ( PersistActionMaxAttemptReached(..)
+  , SubscriptionMaxAttemptReached(..)
+  , subscriptionManager
+  ) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.Time
 import Data.UUID
 import Data.UUID.V4
 
@@ -42,6 +48,8 @@ data Pending =
   Pending { _pendingConnId  :: !UUID
           , _pendingSubId   :: !UUID
           , _pendingCreated :: !UTCTime
+          , _pendingRetries :: !Int
+          , _pendingPackage :: !Package
           , _pendingSub     :: !(Callback SubAction)
           }
 
@@ -49,6 +57,8 @@ data Pending =
 data PersistActionRequest =
   PersistActionRequest { _actionId      :: !UUID
                        , _actionCreated :: !UTCTime
+                       , _actionRetries :: !Int
+                       , _actionPackage :: !Package
                        , _actionCb      :: !(Callback ())
                        }
 
@@ -67,6 +77,103 @@ data Internal =
            , _requests :: TVar ActionRequests
            , _connId   :: TVar UUID
            }
+
+--------------------------------------------------------------------------------
+-- | Occurs when a subscription has been retried more than
+--   's_subscriptionRetry'.
+newtype SubscriptionMaxAttemptReached =
+  SubscriptionMaxAttemptReached UUID
+  deriving (Show, Typeable)
+
+--------------------------------------------------------------------------------
+instance Exception SubscriptionMaxAttemptReached
+
+--------------------------------------------------------------------------------
+checkAndRetrySubs :: Settings -> Bus -> Pendings -> IO Pendings
+checkAndRetrySubs setts bus pendings = do
+  now <- getCurrentTime
+  foldM (go now) pendings (mapToList pendings)
+  where
+    go now current (key, p)
+      | diffUTCTime now (_pendingCreated p) >= maxDelay =
+        let retry = do
+              corrId <- nextRandom
+              let oldPkg     = _pendingPackage p
+                  newPkg     = oldPkg { packageCorrelation = corrId }
+                  newPending = p { _pendingPackage = newPkg
+                                 , _pendingCreated = now
+                                 , _pendingRetries = _pendingRetries p + 1
+                                 }
+                  next = deleteMap key $ insertMap corrId newPending current
+
+              publish bus (TcpSend newPkg)
+              return next in
+        case s_subscriptionRetry setts of
+          AtMost maxAttempts
+            | _pendingRetries p <= maxAttempts
+              -> retry
+            | otherwise
+              -> do reject (_pendingSub p)
+                      (SubscriptionMaxAttemptReached key)
+
+                    return $ deleteMap key current
+          KeepRetrying -> retry
+      | otherwise = return current
+
+    maxDelay = s_subscriptionTimeout setts
+
+--------------------------------------------------------------------------------
+-- | Occurs when a persistent action has been retried more than
+--   's_subscriptionRetry'.
+newtype PersistActionMaxAttemptReached =
+  PersistActionMaxAttemptReached UUID
+  deriving (Show, Typeable)
+
+--------------------------------------------------------------------------------
+instance Exception PersistActionMaxAttemptReached
+
+--------------------------------------------------------------------------------
+checkAndRetryActions :: Settings -> Bus -> ActionRequests -> IO ActionRequests
+checkAndRetryActions setts bus pendings = do
+  now <- getCurrentTime
+  foldM (go now) pendings (mapToList pendings)
+  where
+    go now current (key, p)
+      | diffUTCTime now (_actionCreated p) >= maxDelay =
+        let retry = do
+              corrId <- nextRandom
+              let oldPkg     = _actionPackage p
+                  newPkg     = oldPkg { packageCorrelation = corrId }
+                  newPending = p { _actionPackage = newPkg
+                                 , _actionCreated = now
+                                 , _actionRetries = _actionRetries p + 1
+                                 }
+                  next = deleteMap key $ insertMap corrId newPending current
+
+              publish bus (TcpSend newPkg)
+              return next in
+        case s_subscriptionRetry setts of
+          AtMost maxAttempts
+            | _actionRetries p <= maxAttempts
+              -> retry
+            | otherwise
+              -> do reject (_actionCb p) (PersistActionMaxAttemptReached key)
+                    return $ deleteMap key current
+          KeepRetrying -> retry
+      | otherwise = return current
+
+    maxDelay = s_subscriptionTimeout setts
+
+--------------------------------------------------------------------------------
+checkAndRetry :: Internal -> IO ()
+checkAndRetry Internal{..} = do
+  pendings    <- readTVarIO _pendings
+  newPendings <- checkAndRetrySubs _setts _mainBus pendings
+  atomically $ writeTVar _pendings newPendings
+
+  requests    <- readTVarIO _requests
+  newRequests <- checkAndRetryActions _setts _mainBus requests
+  atomically $ writeTVar _requests newRequests
 
 --------------------------------------------------------------------------------
 subscriptionManager :: Logger -> Settings -> Bus -> IO ()
@@ -100,6 +207,8 @@ onSub Internal{..} cmd = do
             p   = Pending { _pendingConnId  = cid
                           , _pendingSubId   = corrId
                           , _pendingCreated = now
+                          , _pendingRetries = 1
+                          , _pendingPackage = pkg
                           , _pendingSub     = cb
                           }
 
@@ -111,6 +220,8 @@ onSub Internal{..} cmd = do
             p   = Pending { _pendingConnId  = cid
                           , _pendingSubId   = corrId
                           , _pendingCreated = now
+                          , _pendingRetries = 1
+                          , _pendingPackage = pkg
                           , _pendingSub     = cb
                           }
 
@@ -122,6 +233,8 @@ onSub Internal{..} cmd = do
             pkg = createPersistActionPackage _setts corrId g s tpe
             p   = PersistActionRequest { _actionId      = corrId
                                        , _actionCreated = now
+                                       , _actionRetries = 1
+                                       , _actionPackage = pkg
                                        , _actionCb      = cb
                                        }
 
@@ -133,6 +246,8 @@ onSub Internal{..} cmd = do
             pkg = createPersistActionPackage _setts corrId g s tpe
             p   = PersistActionRequest { _actionId      = corrId
                                        , _actionCreated = now
+                                       , _actionRetries = 1
+                                       , _actionPackage = pkg
                                        , _actionCb      = cb
                                        }
 
@@ -143,6 +258,8 @@ onSub Internal{..} cmd = do
         let pkg = createPersistActionPackage _setts corrId g s PersistDelete
             p   = PersistActionRequest { _actionId      = corrId
                                        , _actionCreated = now
+                                       , _actionRetries = 1
+                                       , _actionPackage = pkg
                                        , _actionCb      = cb
                                        }
 
@@ -318,4 +435,4 @@ onShutdown Internal{..} _ = do
 
 --------------------------------------------------------------------------------
 onCheck :: Internal -> Check -> IO ()
-onCheck _ _ = return ()
+onCheck i _ = checkAndRetry i
