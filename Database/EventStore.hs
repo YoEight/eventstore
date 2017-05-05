@@ -184,6 +184,7 @@ module Database.EventStore
     , emptyStreamVersion
     , exactEventVersion
     , streamExists
+    , msDiffTime
       -- * Re-export
     , waitAsync
     , (<>)
