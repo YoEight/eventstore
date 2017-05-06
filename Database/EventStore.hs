@@ -191,12 +191,13 @@ module Database.EventStore
     , NonEmpty(..)
     , nonEmpty
     , TLSSettings
+    , NominalDiffTime
     ) where
 
 --------------------------------------------------------------------------------
 import Data.Int
 import Data.Maybe
-
+import Data.Time (NominalDiffTime)
 --------------------------------------------------------------------------------
 import ClassyPrelude hiding (Builder, group)
 import Data.List.NonEmpty(NonEmpty(..), nonEmpty)
