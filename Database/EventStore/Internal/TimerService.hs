@@ -30,11 +30,11 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 data Internal =
   Internal { _logger  :: Logger
-           , _mainBus :: Bus
+           , _mainBus :: Hub
            }
 
 --------------------------------------------------------------------------------
-timerService :: Logger -> Bus -> IO ()
+timerService :: Logger -> Hub -> IO ()
 timerService logger mainBus = do
 
   let internal = Internal logger mainBus
@@ -69,4 +69,3 @@ onShutdown Internal{..} _ = do
 --------------------------------------------------------------------------------
 onNew :: Internal -> NewTimer -> IO ()
 onNew i (NewTimer msg duration oneOff) = delayed i msg duration oneOff
-

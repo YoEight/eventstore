@@ -18,12 +18,14 @@
 module Database.EventStore.Internal.Messaging
   ( Pub(..)
   , Sub(..)
+  , Hub
   , Subscribe
   , Publish
   , subscribe
   , SubDecision(..)
   , asPub
   , asSub
+  , asHub
   , Bus
   , newBus
   , busStop
@@ -92,12 +94,27 @@ instance Sub Subscribe where
   subscribeTo (Subscribe p) a = subscribeTo p a
 
 --------------------------------------------------------------------------------
+data Hub = forall h. (Sub h, Pub h) => Hub h
+
+--------------------------------------------------------------------------------
+instance Sub Hub where
+  subscribeTo (Hub h) = subscribeTo h
+
+--------------------------------------------------------------------------------
+instance Pub Hub where
+  publish (Hub h) = publish h
+
+--------------------------------------------------------------------------------
 asSub :: Sub s => s -> Subscribe
 asSub = Subscribe
 
 --------------------------------------------------------------------------------
 asPub :: Pub p => p -> Publish
 asPub = Publish
+
+--------------------------------------------------------------------------------
+asHub :: (Sub h, Pub h) => h -> Hub
+asHub = Hub
 
 --------------------------------------------------------------------------------
 data Type = Type TypeRep Fingerprint

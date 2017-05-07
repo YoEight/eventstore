@@ -113,7 +113,7 @@ newExec setts disc = do
 
   let stagePub = stageSTM $ _stageVar internal
       exe      = Exec setts stagePub (_finishVar internal) logMgr
-      mainBus  = _mainBus internal
+      mainBus  = asHub $ _mainBus internal
 
   timerService (getLogger "TimerService" logMgr) mainBus
   connectionManager logMgr setts disc mainBus

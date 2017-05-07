@@ -27,14 +27,14 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 data Internal =
   Internal { _logger  :: Logger
-           , _mainBus :: Bus
+           , _mainBus :: Hub
            , _reg     :: Registry
            }
 
 --------------------------------------------------------------------------------
-operationManager :: Logger -> Settings -> Bus -> IO ()
+operationManager :: Logger -> Settings -> Hub -> IO ()
 operationManager logger setts mainBus = do
-  internal <- Internal logger mainBus <$> newRegistry setts mainBus
+  internal <- Internal logger mainBus <$> newRegistry setts (asPub mainBus)
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onNew internal)

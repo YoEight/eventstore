@@ -109,7 +109,7 @@ data Internal =
            , _disc     :: Discovery
            , _logger   :: Logger
            , _logMgr   :: LogManager
-           , _mainBus  :: Bus
+           , _mainBus  :: Hub
            , _queue    :: TQueue Package
            , _stage    :: TVar Stage
            , _last     :: TVar (Maybe EndPoint)
@@ -118,7 +118,7 @@ data Internal =
            }
 
 --------------------------------------------------------------------------------
-connectionManager :: LogManager -> Settings -> Discovery -> Bus -> IO ()
+connectionManager :: LogManager -> Settings -> Discovery -> Hub -> IO ()
 connectionManager logMgr setts disc mainBus = do
   let logger     = getLogger "ConnectionManager" logMgr
       mkInternal = Internal setts disc logger logMgr mainBus

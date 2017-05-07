@@ -71,7 +71,7 @@ type ActionRequests = HashMap UUID PersistActionRequest
 data Internal =
   Internal { _setts    :: Settings
            , _logger   :: Logger
-           , _mainBus  :: Bus
+           , _mainBus  :: Hub
            , _pendings :: TVar Pendings
            , _actives  :: TVar Actives
            , _requests :: TVar ActionRequests
@@ -89,7 +89,7 @@ newtype SubscriptionMaxAttemptReached =
 instance Exception SubscriptionMaxAttemptReached
 
 --------------------------------------------------------------------------------
-checkAndRetrySubs :: Settings -> Bus -> Pendings -> IO Pendings
+checkAndRetrySubs :: Settings -> Hub -> Pendings -> IO Pendings
 checkAndRetrySubs setts bus pendings = do
   now <- getCurrentTime
   foldM (go now) pendings (mapToList pendings)
@@ -133,7 +133,7 @@ newtype PersistActionMaxAttemptReached =
 instance Exception PersistActionMaxAttemptReached
 
 --------------------------------------------------------------------------------
-checkAndRetryActions :: Settings -> Bus -> ActionRequests -> IO ActionRequests
+checkAndRetryActions :: Settings -> Hub -> ActionRequests -> IO ActionRequests
 checkAndRetryActions setts bus pendings = do
   now <- getCurrentTime
   foldM (go now) pendings (mapToList pendings)
@@ -176,7 +176,7 @@ checkAndRetry Internal{..} = do
   atomically $ writeTVar _requests newRequests
 
 --------------------------------------------------------------------------------
-subscriptionManager :: Logger -> Settings -> Bus -> IO ()
+subscriptionManager :: Logger -> Settings -> Hub -> IO ()
 subscriptionManager logger setts mainBus = do
   internal <- Internal setts logger mainBus <$> newTVarIO mempty
                                             <*> newTVarIO mempty

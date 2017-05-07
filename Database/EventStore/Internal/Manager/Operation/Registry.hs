@@ -59,12 +59,12 @@ rejectPending Pending{..} e = reject _pendingCallback e
 --------------------------------------------------------------------------------
 data Registry =
     Registry  { _regSettings :: Settings
-              , _regBus      :: Bus
+              , _regBus      :: Publish
               , _regPendings :: IORef (HashMap UUID Pending)
               }
 
 --------------------------------------------------------------------------------
-newRegistry :: Settings -> Bus -> IO Registry
+newRegistry :: Settings -> Publish -> IO Registry
 newRegistry setts bus = Registry setts bus <$> newIORef mempty
 
 --------------------------------------------------------------------------------
