@@ -97,3 +97,6 @@ data ServiceTerminated = ServiceTerminated Service deriving Typeable
 data NewTimer =
   forall e. Typeable e => NewTimer e Duration Bool
   deriving Typeable
+
+--------------------------------------------------------------------------------
+data Check = Check deriving Typeable
