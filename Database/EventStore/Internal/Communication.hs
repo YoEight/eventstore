@@ -100,3 +100,7 @@ data NewTimer =
 
 --------------------------------------------------------------------------------
 data Check = Check deriving Typeable
+
+--------------------------------------------------------------------------------
+data ConnectionChanged = ConnectionChanged
+  deriving Typeable

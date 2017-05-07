@@ -188,6 +188,7 @@ subscriptionManager logger setts mainBus = do
   subscribe mainBus (onRecv internal)
   subscribe mainBus (onShutdown internal)
   subscribe mainBus (onCheck internal)
+  subscribe mainBus (onConnectionChanged internal)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -457,3 +458,16 @@ onShutdown Internal{..} _ = do
 --------------------------------------------------------------------------------
 onCheck :: Internal -> Check -> IO ()
 onCheck i _ = checkAndRetry i
+
+--------------------------------------------------------------------------------
+onConnectionChanged :: Internal -> ConnectionChanged -> IO ()
+onConnectionChanged Internal{..} _ = do
+  cleaning <- atomically $ do
+    actives <- readTVar _actives
+    writeTVar _actives mempty
+
+    return $
+      for_ actives $ \Active{..} ->
+        fulfill _activeSub (Dropped SubAborted)
+
+  cleaning

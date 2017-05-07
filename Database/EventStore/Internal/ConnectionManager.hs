@@ -258,6 +258,7 @@ onEstablished i@Internal{..} (ConnectionEstablished connection) = do
 
   when canProceed $ do
     logFormat _logger Info "Connection established on {}." (Only $ Shown ept)
+    publish _mainBus ConnectionChanged
     _ <- fork $ receiving i
     return ()
   where
