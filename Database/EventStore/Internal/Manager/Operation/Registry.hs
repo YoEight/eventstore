@@ -74,18 +74,15 @@ register reg op cb = evaluate reg op cb op
 --------------------------------------------------------------------------------
 abortPendingRequests :: Registry -> IO ()
 abortPendingRequests Registry{..} = do
-  m <- readIORef _regPendings
-  atomicWriteIORef _regPendings mempty
+  m <- atomicModifyIORef' _regPendings $ \pendings -> (mempty, pendings)
 
   for_ m $ \Pending{..} -> reject _pendingCallback Aborted
 
 --------------------------------------------------------------------------------
 handlePackage :: Registry -> Package -> IO ()
 handlePackage reg@Registry{..} pkg@Package{..} = do
-  m <- readIORef _regPendings
-
-  atomicModifyIORef' _regPendings $ \pendings ->
-    (deleteMap packageCorrelation pendings, ())
+  m <- atomicModifyIORef' _regPendings $ \pendings ->
+    (deleteMap packageCorrelation pendings, pendings)
 
   for_ (lookup packageCorrelation m) $ \Pending{..} ->
     case packageCmd of
