@@ -307,6 +307,17 @@ onArrived Internal{..} (PackageArrived pkg) =
 onShutdown :: Internal -> SystemShutdown -> IO ()
 onShutdown Internal{..} _ = do
   logMsg _logger Info "Shutting down..."
+  atomically $ writeTVar _stage Closed
+
+  let cleaning = do
+        outcome <- atomically $ tryReadTQueue _queue
+        for_ outcome $ \pkg -> do
+          when (packageCmd pkg /= heartbeatRequestCmd) $
+            publish _mainBus (PackageReceived pkg)
+
+          cleaning
+
+  cleaning
   publish _mainBus (ServiceTerminated ConnectionManager)
 
 --------------------------------------------------------------------------------

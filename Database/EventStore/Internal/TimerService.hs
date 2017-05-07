@@ -31,13 +31,14 @@ import Database.EventStore.Internal.Types
 data Internal =
   Internal { _logger  :: Logger
            , _mainBus :: Hub
+           , _stopped :: IORef Bool
            }
 
 --------------------------------------------------------------------------------
 timerService :: Logger -> Hub -> IO ()
 timerService logger mainBus = do
 
-  let internal = Internal logger mainBus
+  internal <- Internal logger mainBus <$> newIORef False
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onShutdown internal)
@@ -54,7 +55,8 @@ delayed Internal{..} msg (Duration timespan) oneOff = () <$ fork (go timespan)
         go (timespan - wait)
 
       publish _mainBus msg
-      unless oneOff $ go timespan
+      stopped <- readIORef _stopped
+      unless (oneOff || stopped) $ go timespan
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
@@ -64,6 +66,7 @@ onInit Internal{..} _ = publish _mainBus (Initialized TimerService)
 onShutdown :: Internal -> SystemShutdown -> IO ()
 onShutdown Internal{..} _ = do
   logMsg _logger Info "Shutting down..."
+  atomicWriteIORef _stopped True
   publish _mainBus (ServiceTerminated TimerService)
 
 --------------------------------------------------------------------------------

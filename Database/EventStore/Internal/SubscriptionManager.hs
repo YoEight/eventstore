@@ -431,6 +431,27 @@ completeRequest p (Just e) = reject p e
 onShutdown :: Internal -> SystemShutdown -> IO ()
 onShutdown Internal{..} _ = do
   logMsg _logger Info "Shutting down..."
+
+  cleaning <- atomically $ do
+    pendings <- readTVar _pendings
+    requests <- readTVar _requests
+    actives  <- readTVar _actives
+
+    writeTVar _pendings mempty
+    writeTVar _requests mempty
+    writeTVar _actives  mempty
+
+    return $ do
+      for_ pendings $ \Pending{..} ->
+        fulfill _pendingSub (Dropped SubAborted)
+
+      for_ actives $ \Active{..}  ->
+        fulfill _activeSub (Dropped SubAborted)
+
+      for_ requests $ \PersistActionRequest{..} ->
+        reject _actionCb PersistActionAborted
+
+  cleaning
   publish _mainBus (ServiceTerminated SubscriptionManager)
 
 --------------------------------------------------------------------------------

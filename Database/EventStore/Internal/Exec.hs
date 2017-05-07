@@ -148,6 +148,7 @@ onInitFailed Internal{..} (InitFailed svc) = do
   atomically $ errored _stageVar "Driver failed to initialized"
   logFormat _logger Error "Service {} failed to initialize" (Only $ Shown svc)
   busStop _mainBus
+  logMsg _logger Error "System can't start."
 
 --------------------------------------------------------------------------------
 onShutdown :: Internal -> SystemShutdown -> IO ()
