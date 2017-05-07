@@ -26,6 +26,7 @@ import ClassyPrelude
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
@@ -100,8 +101,8 @@ initServicePending :: ServicePendingInit
 initServicePending = foldMap (\svc -> singletonMap svc ()) [minBound..]
 
 --------------------------------------------------------------------------------
-newExec :: Settings -> Discovery -> IO Exec
-newExec setts disc = do
+newExec :: Settings -> ConnectionBuilder -> Discovery -> IO Exec
+newExec setts builder disc = do
   logMgr <- newLogManager (s_loggerSettings setts)
   let logger = getLogger "Exec" logMgr
 
@@ -116,7 +117,7 @@ newExec setts disc = do
       mainBus  = asHub $ _mainBus internal
 
   timerService (getLogger "TimerService" logMgr) mainBus
-  connectionManager logMgr setts disc mainBus
+  connectionManager logMgr setts builder disc mainBus
   operationManager (getLogger "OperationManager" logMgr) setts mainBus
   subscriptionManager (getLogger "SubscriptionManager" logMgr) setts mainBus
 

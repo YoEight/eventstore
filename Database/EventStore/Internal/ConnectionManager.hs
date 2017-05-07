@@ -21,15 +21,14 @@ import Text.Printf
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
 import Data.Time
-import Network.Connection
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
@@ -110,22 +109,26 @@ data Internal =
            , _logger   :: Logger
            , _logMgr   :: LogManager
            , _mainBus  :: Hub
+           , _builder  :: ConnectionBuilder
            , _queue    :: TQueue Package
            , _stage    :: TVar Stage
            , _last     :: TVar (Maybe EndPoint)
-           , _ctx      :: ConnectionContext
            , _sending  :: TVar Bool
            }
 
 --------------------------------------------------------------------------------
-connectionManager :: LogManager -> Settings -> Discovery -> Hub -> IO ()
-connectionManager logMgr setts disc mainBus = do
+connectionManager :: LogManager
+                  -> Settings
+                  -> ConnectionBuilder
+                  -> Discovery
+                  -> Hub
+                  -> IO ()
+connectionManager logMgr setts builder disc mainBus = do
   let logger     = getLogger "ConnectionManager" logMgr
-      mkInternal = Internal setts disc logger logMgr mainBus
+      mkInternal = Internal setts disc logger logMgr mainBus builder
   internal <- mkInternal <$> newTQueueIO
                          <*> newTVarIO Init
                          <*> newTVarIO Nothing
-                         <*> initConnectionContext
                          <*> newTVarIO False
 
   subscribe mainBus (onInit internal)
@@ -174,7 +177,7 @@ onCloseConnection Internal{..} (CloseConnection reason) = do
         return $ Just conn
       _ -> return Nothing
 
-  traverse_ (connectionClose . _connect) outcome
+  traverse_ (dispose . _connect) outcome
 
 --------------------------------------------------------------------------------
 discover :: Internal -> IO ()
@@ -226,8 +229,7 @@ onEstablish Internal{..} (EstablishConnection ept) = do
 
   when canProceed $ do
     _ <- fork $ do
-      let params = ConnectionParams host port (s_ssl _setts) Nothing
-      outcome <- tryAny $ connectTo _ctx params
+      outcome <- tryAny $ connect _builder ept
       case outcome of
         Left _ -> atomically $ do
           stage <- readTVar _stage
@@ -241,9 +243,6 @@ onEstablish Internal{..} (EstablishConnection ept) = do
           publish _mainBus (ConnectionEstablished cur)
 
     return ()
-  where
-    host = endPointIp ept
-    port = fromIntegral $ endPointPort ept
 
 --------------------------------------------------------------------------------
 onEstablished :: Internal -> ConnectionEstablished -> IO ()
@@ -399,7 +398,7 @@ sending Internal{..} = loop
             return Nothing
 
       for_ outcome $ \(cur, pkg) -> do
-        connectionPut (_connect cur) (runPut $ putPackage pkg)
+        sendPackage (_connect cur) pkg
         logFormat _logger Debug "Package sent {} corrId:[{}]"
           ( Shown $ packageCmd pkg
           , Shown $ packageCorrelation pkg
@@ -412,114 +411,20 @@ withPkg Internal{..} callback = do
   stage <- atomically $ readTVar _stage
   case stage of
     Connected cur -> do
-      outcome <- tryAny $ connectionGetExact (_connect cur) 4
+      outcome <- receivePackage (_connect cur)
       case outcome of
-        Left _         -> return ()
-        Right headerBs -> do
-          case runGet getLengthPrefix headerBs of
-            Left _ -> do
-              logMsg _logger Fatal "Wrong package framing. exiting..."
-              publish _mainBus FatalCondition
-            Right length_prefix -> do
-              bs <- connectionGetExact (_connect cur) length_prefix
-              case runGet getPackage bs of
-                Left _ -> do
-                  logMsg _logger Fatal "Error when parsing a Package. exiting..."
-                  publish _mainBus FatalCondition
-                Right pkg -> do
-                  logFormat _logger Debug "Package received {} corrId:[{}]"
-                    ( Shown $ packageCmd pkg
-                    , Shown $ packageCorrelation pkg
-                    )
-                  callback pkg
+        ResetByPeer  -> return ()
+        WrongFraming -> do
+          logMsg _logger Fatal "Wrong package framing. exiting..."
+          publish _mainBus FatalCondition
+        ParsingError -> do
+          logMsg _logger Fatal "Error when parsing a Package. exiting..."
+          publish _mainBus FatalCondition
+        Recv pkg -> do
+          let cmdParam = Shown $ packageCmd pkg
+              idParam  = Shown $ packageCorrelation pkg
+
+          logFormat _logger Debug "Package received {} corrId:[{}]"
+            (cmdParam, idParam)
+          callback pkg
     _ -> return ()
-
---------------------------------------------------------------------------------
--- Serialization
---------------------------------------------------------------------------------
--- | Serializes a 'Package' into raw bytes.
-putPackage :: Package -> Put
-putPackage pkg = do
-    putWord32le length_prefix
-    putWord8 (cmdWord8 $ packageCmd pkg)
-    putWord8 flag_word8
-    putLazyByteString corr_bytes
-    for_ cred_m $ \(Credentials login passw) -> do
-        putWord8 $ fromIntegral $ olength login
-        putByteString login
-        putWord8 $ fromIntegral $ olength passw
-        putByteString passw
-    putByteString pack_data
-  where
-    pack_data     = packageData pkg
-    cred_len      = maybe 0 credSize cred_m
-    length_prefix = fromIntegral (olength pack_data + mandatorySize + cred_len)
-    cred_m        = packageCred pkg
-    flag_word8    = maybe 0x00 (const 0x01) cred_m
-    corr_bytes    = toByteString $ packageCorrelation pkg
-
---------------------------------------------------------------------------------
-credSize :: Credentials -> Int
-credSize (Credentials login passw) = olength login + olength passw + 2
-
---------------------------------------------------------------------------------
--- | The minimun size a 'Package' should have. It's basically a command byte,
---   correlation bytes ('UUID') and a 'Flag' byte.
-mandatorySize :: Int
-mandatorySize = 18
-
---------------------------------------------------------------------------------
--- Parsing
---------------------------------------------------------------------------------
-getLengthPrefix :: Get Int
-getLengthPrefix = fmap fromIntegral getWord32le
-
---------------------------------------------------------------------------------
-getPackage :: Get Package
-getPackage = do
-    cmd  <- getWord8
-    flg  <- getFlag
-    col  <- getUUID
-    cred <- getCredentials flg
-    rest <- remaining
-    dta  <- getBytes rest
-
-    let pkg = Package
-              { packageCmd         = getCommand cmd
-              , packageCorrelation = col
-              , packageData        = dta
-              , packageCred        = cred
-              }
-
-    return pkg
-
---------------------------------------------------------------------------------
-getFlag :: Get Flag
-getFlag = do
-    wd <- getWord8
-    case wd of
-        0x00 -> return None
-        0x01 -> return Authenticated
-        _    -> fail $ printf "TCP: Unhandled flag value 0x%x" wd
-
---------------------------------------------------------------------------------
-getCredEntryLength :: Get Int
-getCredEntryLength = fmap fromIntegral getWord8
-
---------------------------------------------------------------------------------
-getCredentials :: Flag -> Get (Maybe Credentials)
-getCredentials None = return Nothing
-getCredentials _ = do
-    loginLen <- getCredEntryLength
-    login    <- getBytes loginLen
-    passwLen <- getCredEntryLength
-    passw    <- getBytes passwLen
-    return $ Just $ credentials login passw
-
---------------------------------------------------------------------------------
-getUUID :: Get UUID
-getUUID = do
-    bs <- getLazyByteString 16
-    case fromByteString bs of
-        Just uuid -> return uuid
-        _         -> fail "TCP: Wrong UUID format"

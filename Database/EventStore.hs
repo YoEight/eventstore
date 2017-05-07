@@ -211,6 +211,7 @@ import Network.Connection (TLSSettings)
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Communication
+import           Database.EventStore.Internal.Connection (connectionBuilder)
 import           Database.EventStore.Internal.Discovery
 import           Database.EventStore.Internal.Exec
 import           Database.EventStore.Internal.Subscription.Api
@@ -270,7 +271,9 @@ connect settings tpe = do
         Static host port -> return $ staticEndPointDiscovery host port
         Cluster setts    -> clusterDnsEndPointDiscovery setts
         Dns dom srv port -> return $ simpleDnsEndPointDiscovery dom srv port
-    exec <- newExec settings disc
+
+    builder <- connectionBuilder settings
+    exec    <- newExec settings builder disc
     return $ Connection exec settings tpe
 
 --------------------------------------------------------------------------------
