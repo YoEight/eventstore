@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Main
--- Copyright : (C) 2015 Yorick Laupa
+-- Module : Test.Integration
+-- Copyright : (C) 2017 Yorick Laupa
 -- License : (see the file LICENSE)
 --
 -- Maintainer : Yorick Laupa <yo.eight@gmail.com>
@@ -11,27 +11,26 @@
 --
 -- Main integration entry point.
 --------------------------------------------------------------------------------
-module Main where
+module Test.Integration (tests) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Database.EventStore
 import Test.Tasty
-import Test.Tasty.Ingredients.Basic
 
 --------------------------------------------------------------------------------
-import Tests
+import qualified Test.Integration.Tests as Tests
 
 --------------------------------------------------------------------------------
-main :: IO ()
-main = do
+tests :: IO [TestTree]
+tests = do
     let setts = defaultSettings
                 { s_credentials = Just $ credentials "admin" "changeit"
                 , s_reconnect_delay = 3
                 , s_logger = Nothing
                 , s_loggerSettings = defaultLoggerSettings
-                                     { loggerLevel = Debug }
+                                     { loggerType = LogNone }
                 }
+
     conn <- connect setts (Static "127.0.0.1" 1113)
-    let tree = tests conn
-    defaultMainWithIngredients [consoleTestReporter] tree
+    return $ Tests.tests conn

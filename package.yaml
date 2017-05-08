@@ -50,12 +50,13 @@ library:
     - clock
 
 tests:
-  integration-tests:
+  eventstore-tests:
     source-dirs: tests
-    main: integration.hs
+    main: Main.hs
     dependencies:
       - eventstore
       - tasty
       - tasty-hunit
+      - tasty-hspec
       - aeson
       - text

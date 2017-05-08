@@ -3,8 +3,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Tests
--- Copyright : (C) 2015 Yorick Laupa
+-- Module : Test.Integration.Tests
+-- Copyright : (C) 2017 Yorick Laupa
 -- License : (see the file LICENSE)
 --
 -- Maintainer : Yorick Laupa <yo.eight@gmail.com>
@@ -13,7 +13,7 @@
 --
 -- Gathers all EventStore operations tests.
 --------------------------------------------------------------------------------
-module Tests where
+module Test.Integration.Tests (tests) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
@@ -30,8 +30,8 @@ import Test.Tasty.HUnit
 import Database.EventStore
 
 --------------------------------------------------------------------------------
-tests :: Connection -> TestTree
-tests conn = testGroup "EventStore actions tests"
+tests :: Connection -> [TestTree]
+tests conn =
     [ testCase "Write event" $ writeEventTest conn
     , testCase "Read event" $ readEventTest conn
     , testCase "Delete stream" $ deleteStreamTest conn

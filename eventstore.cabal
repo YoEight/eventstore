@@ -104,9 +104,9 @@ library
       Database.EventStore.Logging
   default-language: Haskell2010
 
-test-suite integration-tests
+test-suite eventstore-tests
   type: exitcode-stdio-1.0
-  main-is: integration.hs
+  main-is: Main.hs
   hs-source-dirs:
       tests
   default-extensions: NoImplicitPrelude
@@ -122,8 +122,11 @@ test-suite integration-tests
     , eventstore
     , tasty
     , tasty-hunit
+    , tasty-hspec
     , aeson
     , text
   other-modules:
-      Tests
+      Test.Connection
+      Test.Integration
+      Test.Integration.Tests
   default-language: Haskell2010
