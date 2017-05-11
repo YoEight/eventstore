@@ -30,6 +30,7 @@ extra-source-files:
 
 default-extensions:
   - NoImplicitPrelude
+  - OverloadedStrings
 
 library:
   source-dirs:
@@ -60,3 +61,6 @@ tests:
       - tasty-hspec
       - aeson
       - text
+      - protobuf
+      - cereal
+      - uuid

@@ -323,6 +323,8 @@ data MasterInfoBuf
 
 --------------------------------------------------------------------------------
 instance Decode MasterInfoBuf
+-- For testing purpose.
+instance Encode MasterInfoBuf
 
 --------------------------------------------------------------------------------
 data MasterInfo
@@ -374,6 +376,8 @@ data NotHandledBuf
 
 --------------------------------------------------------------------------------
 instance Decode NotHandledBuf
+-- Testing purpose only
+instance Encode NotHandledBuf
 
 --------------------------------------------------------------------------------
 -- | Represents a serialized event sent by the server in a subscription context.

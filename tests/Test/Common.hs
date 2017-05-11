@@ -13,6 +13,9 @@ module Test.Common where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Database.EventStore.Internal.Discovery
+import Database.EventStore.Internal.Logger
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 newtype Counter = Counter (TVar Int)
@@ -30,3 +33,14 @@ incrCounter (Counter var) = atomically $ do
 --------------------------------------------------------------------------------
 readCounterSTM :: Counter -> STM Int
 readCounterSTM (Counter var) = readTVar var
+
+--------------------------------------------------------------------------------
+testDisc :: Discovery
+testDisc = staticEndPointDiscovery "localhost" 1234
+
+--------------------------------------------------------------------------------
+testSettings :: Settings
+testSettings =
+  defaultSettings { s_loggerSettings =
+                      defaultLoggerSettings { loggerType = LogNone }
+                  }

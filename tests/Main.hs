@@ -22,11 +22,15 @@ import Test.Tasty.Hspec
 --------------------------------------------------------------------------------
 import qualified Test.Connection  as Connection
 import qualified Test.Integration as Integration
+import qualified Test.Operation   as Operation
 
 --------------------------------------------------------------------------------
 main :: IO ()
 main = do
-  internal    <- sequence [ testSpec "Connection" Connection.spec ]
+  internal    <- sequence [ testSpec "Connection" Connection.spec
+                          , testSpec "Operation" Operation.spec
+                          ]
+
   integration <- Integration.tests
 
   let tree = [ testGroup "Internal" internal

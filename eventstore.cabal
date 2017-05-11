@@ -32,7 +32,7 @@ source-repository head
 library
   hs-source-dirs:
       .
-  default-extensions: NoImplicitPrelude
+  default-extensions: NoImplicitPrelude OverloadedStrings
   build-depends:
       base >=4.7 && <5
     , aeson >=0.8 && <1.2
@@ -109,7 +109,7 @@ test-suite eventstore-tests
   main-is: Main.hs
   hs-source-dirs:
       tests
-  default-extensions: NoImplicitPrelude
+  default-extensions: NoImplicitPrelude OverloadedStrings
   build-depends:
       base >=4.7 && <5
     , aeson >=0.8 && <1.2
@@ -125,6 +125,9 @@ test-suite eventstore-tests
     , tasty-hspec
     , aeson
     , text
+    , protobuf
+    , cereal
+    , uuid
   other-modules:
       Test.Bogus.Connection
       Test.Common

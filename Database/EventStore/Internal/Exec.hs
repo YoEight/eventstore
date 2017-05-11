@@ -57,6 +57,7 @@ data Exec =
        , _execPub     :: STM Publish
        , _finishLock  :: TMVar ()
        , _logMgr      :: LogManager
+       , _internal    :: Internal
        }
 
 --------------------------------------------------------------------------------
@@ -74,6 +75,10 @@ instance Pub Exec where
   publish e a = do
     pub <- atomically $ _execPub e
     publish pub a
+
+--------------------------------------------------------------------------------
+instance Sub Exec where
+  subscribeTo Exec{..} = subscribeTo (_mainBus _internal)
 
 --------------------------------------------------------------------------------
 execWaitTillClosed :: Exec -> IO ()
@@ -113,7 +118,7 @@ newExec setts builder disc = do
                               <*> newEmptyTMVarIO
 
   let stagePub = stageSTM $ _stageVar internal
-      exe      = Exec setts stagePub (_finishVar internal) logMgr
+      exe      = Exec setts stagePub (_finishVar internal) logMgr internal
       mainBus  = asHub $ _mainBus internal
 
   timerService (getLogger "TimerService" logMgr) mainBus
