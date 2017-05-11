@@ -126,7 +126,10 @@ test-suite eventstore-tests
     , aeson
     , text
   other-modules:
+      Test.Bogus.Connection
+      Test.Common
       Test.Connection
       Test.Integration
       Test.Integration.Tests
+      Test.Operation
   default-language: Haskell2010
