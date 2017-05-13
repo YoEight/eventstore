@@ -44,3 +44,14 @@ testSettings =
   defaultSettings { s_loggerSettings =
                       defaultLoggerSettings { loggerType = LogNone }
                   }
+
+--------------------------------------------------------------------------------
+secs :: Int
+secs = 1000 * 1000
+
+--------------------------------------------------------------------------------
+testLoggerSettings :: LoggerSettings
+testLoggerSettings = LoggerSettings
+                     { loggerLevel = Debug
+                     , loggerType  = LogNone
+                     }

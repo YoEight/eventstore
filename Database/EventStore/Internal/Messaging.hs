@@ -21,8 +21,6 @@ module Database.EventStore.Internal.Messaging
   , Hub
   , Subscribe
   , Publish
-  , subscribe
-  , SubDecision(..)
   , asPub
   , asSub
   , asHub
@@ -67,17 +65,8 @@ class Pub p where
   publish :: Typeable a => p -> a -> IO ()
 
 --------------------------------------------------------------------------------
-data SubDecision
-  = Continue
-  | Done
-
---------------------------------------------------------------------------------
 class Sub s where
-  subscribeTo :: Typeable a => s -> (a -> IO SubDecision) -> IO ()
-
---------------------------------------------------------------------------------
-subscribe :: (Sub s, Typeable a) => s -> (a -> IO ()) -> IO ()
-subscribe s k = subscribeTo s $ \msg -> Continue <$ k msg
+  subscribe :: Typeable a => s -> (a -> IO ()) -> IO ()
 
 --------------------------------------------------------------------------------
 data Publish = forall p. Pub p => Publish p
@@ -91,14 +80,14 @@ data Subscribe = forall p. Sub p => Subscribe p
 
 --------------------------------------------------------------------------------
 instance Sub Subscribe where
-  subscribeTo (Subscribe p) a = subscribeTo p a
+  subscribe (Subscribe p) a = subscribe p a
 
 --------------------------------------------------------------------------------
 data Hub = forall h. (Sub h, Pub h) => Hub h
 
 --------------------------------------------------------------------------------
 instance Sub Hub where
-  subscribeTo (Hub h) = subscribeTo h
+  subscribe (Hub h) = subscribe h
 
 --------------------------------------------------------------------------------
 instance Pub Hub where
@@ -160,39 +149,33 @@ getType op = Type t (getFingerprint t)
 type Callbacks = HashMap Type (Seq Callback)
 
 --------------------------------------------------------------------------------
-propagate :: Typeable a => a -> Seq Callback -> IO (Seq Callback)
-propagate a = go mempty
-  where
-    go acc cur =
-      case viewl cur of
-        EmptyL -> return acc
-        h@(Callback k) :< rest -> do
-          let Just b = cast a
-          outcome <- tryAny $ k b
-          case outcome of
-            Left _         -> go acc rest
-            Right decision ->
-              case decision of
-                Continue -> go (acc |> h) rest
-                Done     -> go acc rest
+propagate :: Typeable a => Logger -> a -> Seq Callback -> IO ()
+propagate logger a = traverse_ $ \(Callback k) -> do
+  let Just b = cast a
+  outcome <- tryAny $ k b
+  case outcome of
+    Right _ ->
+      return ()
+    Left e ->
+      logFormat logger Error "Exception when propagating {}" (Only $ Shown e)
 
 --------------------------------------------------------------------------------
 data Callback =
-  forall a. Typeable a =>
-  Callback { _callbackKey :: a -> IO SubDecision }
+  forall a. Typeable a => Callback { _callbackKey :: a -> IO () }
 
 --------------------------------------------------------------------------------
 instance Show Callback where
-  show (Callback (_ :: a -> IO SubDecision)) =
+  show (Callback (_ :: a -> IO ())) =
     "Handle " <> show (typeRep (Proxy :: Proxy a))
 
 --------------------------------------------------------------------------------
 data Bus =
-  Bus { busName       :: Text
-      , _logger       :: Logger
-      , _busCallbacks :: IORef Callbacks
-      , _busQueue     :: TQueue Message
-      , _busStopped   :: TVar Bool
+  Bus { busName        :: Text
+      , _logger        :: Logger
+      , _busCallbacks  :: TVar Callbacks
+      , _busQueue      :: TQueue Message
+      , _busStopped    :: TVar Bool
+      , _workerRunning :: TVar Bool
       }
 
 --------------------------------------------------------------------------------
@@ -201,7 +184,7 @@ busStop Bus{..} = do
   atomically $ writeTVar _busStopped True
 
   atomically $
-    unlessM (isEmptyTQueue _busQueue) $
+    whenM (readTVar _workerRunning) $
       retrySTM
 
 --------------------------------------------------------------------------------
@@ -215,9 +198,10 @@ newBus logMgr name = do
     _ <- fork (worker b)
 
     let logger = getLogger name logMgr
-    Bus name logger <$> newIORef mempty
+    Bus name logger <$> newTVarIO mempty
                     <*> newTQueueIO
                     <*> newTVarIO False
+                    <*> newTVarIO True
 
   return bus
 
@@ -227,30 +211,37 @@ worker b@Bus{..} = loop
   where
     loop = do
       decision <- atomically $ do
-        stopped <- readTVar _busStopped
-        outcome <- tryReadTQueue _busQueue
+        stopped   <- readTVar _busStopped
+        outcome   <- tryReadTQueue _busQueue
+        callbacks <- readTVar _busCallbacks
         case outcome of
           Nothing
-            | stopped   -> return Nothing
+            | stopped -> do
+                writeTVar _workerRunning False
+                return Nothing
             | otherwise -> retrySTM
-          Just msg -> return $ Just msg
+          Just (Message a) -> return $ Just (publishing _logger callbacks a)
       case decision of
-        Nothing          -> return ()
-        Just (Message a) -> do
-          publishing b a
+        Nothing     -> return ()
+        Just action -> do
+          action
           loop
 
 --------------------------------------------------------------------------------
 instance Sub Bus where
-  subscribeTo Bus{..} (k :: a -> IO SubDecision) =
-    atomicModifyIORef' _busCallbacks $ \m ->
-      let tpe  = getType (FromProxy (Proxy :: Proxy a))
-          hdl  = Callback k
-          next = alterMap $ \input ->
-            case input of
-              Nothing -> Just (singleton hdl)
-              Just hs -> Just (snoc hs hdl) in
-      (next tpe m, ())
+  subscribe Bus{..} (k :: a -> IO ()) = atomically $ do
+      stopped <- readTVar _busStopped
+
+      unless stopped $ do
+        m <- readTVar _busCallbacks
+        let tpe  = getType (FromProxy (Proxy :: Proxy a))
+            hdl  = Callback k
+            next = alterMap $ \input ->
+              case input of
+                Nothing -> Just (singleton hdl)
+                Just hs -> Just (snoc hs hdl)
+
+        writeTVar _busCallbacks (next tpe m)
 
 --------------------------------------------------------------------------------
 instance Pub Bus where
@@ -261,20 +252,11 @@ instance Pub Bus where
       writeTQueue _busQueue (toMsg a)
 
 --------------------------------------------------------------------------------
-publishing :: Typeable a => Bus -> a -> IO ()
-publishing Bus{..} a = do
-  cs <- readIORef _busCallbacks
+publishing :: Typeable a => Logger -> Callbacks -> a -> IO ()
+publishing logger callbacks a = do
   let tpe = getType (FromTypeable a)
 
-  act1 <- traverse (propagate a) (lookup tpe cs)
-  act2 <- if tpe == messageType
-            then return Nothing
-            else traverse (propagate (toMsg a)) (lookup messageType cs)
-
-  for_ act1 $ \callbacks ->
-    atomicModifyIORef' _busCallbacks $ \m ->
-      (insertMap tpe callbacks m, ())
-
-  for_ act2 $ \callbacks ->
-    atomicModifyIORef' _busCallbacks $ \m ->
-      (insertMap messageType callbacks m, ())
+  traverse_ (propagate logger a) (lookup tpe callbacks)
+  if tpe == messageType
+    then return ()
+    else traverse_ (propagate logger (toMsg a)) (lookup messageType callbacks)

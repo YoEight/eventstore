@@ -78,7 +78,7 @@ instance Pub Exec where
 
 --------------------------------------------------------------------------------
 instance Sub Exec where
-  subscribeTo Exec{..} = subscribeTo (_mainBus _internal)
+  subscribe Exec{..} = subscribe (_mainBus _internal)
 
 --------------------------------------------------------------------------------
 execWaitTillClosed :: Exec -> IO ()
