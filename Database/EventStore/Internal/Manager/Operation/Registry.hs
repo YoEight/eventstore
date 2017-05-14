@@ -31,6 +31,7 @@ import Data.Serialize
 import Data.Time
 import Data.UUID
 import Data.UUID.V4
+import System.Random
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
@@ -53,6 +54,9 @@ data Pending =
             }
 
 --------------------------------------------------------------------------------
+type Pendings = HashMap UUID Pending
+
+--------------------------------------------------------------------------------
 rejectPending :: Exception e => Pending -> e -> IO ()
 rejectPending Pending{..} e = reject _pendingCallback e
 
@@ -60,79 +64,109 @@ rejectPending Pending{..} e = reject _pendingCallback e
 data Registry =
     Registry  { _regSettings :: Settings
               , _regBus      :: Publish
-              , _regPendings :: IORef (HashMap UUID Pending)
+              , _regPendings :: TVar Pendings
               }
 
 --------------------------------------------------------------------------------
 newRegistry :: Settings -> Publish -> IO Registry
-newRegistry setts bus = Registry setts bus <$> newIORef mempty
+newRegistry setts bus = Registry setts bus <$> newTVarIO mempty
 
 --------------------------------------------------------------------------------
 register :: Registry -> Operation a -> Callback a -> IO ()
-register reg op cb = evaluate reg op cb op
+register reg op cb = do
+  gen <- newStdGen
+  -- Beware as there is no proof that this time value will be used right away.
+  -- This STM transaction could take more time to be validated. However we
+  -- don't need to be very precise in this case. This is just an implementation
+  -- note.
+  now <- getCurrentTime
+  action <- atomically $ evaluate reg (randoms gen) now op cb op
+  action
 
 --------------------------------------------------------------------------------
 abortPendingRequests :: Registry -> IO ()
 abortPendingRequests Registry{..} = do
-  m <- atomicModifyIORef' _regPendings $ \pendings -> (mempty, pendings)
+  m <- atomically $ do
+    pendings <- readTVar _regPendings
+    writeTVar _regPendings mempty
+    return pendings
 
   for_ m $ \Pending{..} -> reject _pendingCallback Aborted
 
 --------------------------------------------------------------------------------
 handlePackage :: Registry -> Package -> IO ()
 handlePackage reg@Registry{..} pkg@Package{..} = do
-  m <- atomicModifyIORef' _regPendings $ \pendings ->
-    (deleteMap packageCorrelation pendings, pendings)
+  gen <- newStdGen
+  -- Beware as there is no proof that this time value will be used right away.
+  -- This STM transaction could take more time to be validated. However we
+  -- don't need to be very precise in this case. This is just an implementation
+  -- note.
+  now <- getCurrentTime
+  action <- atomically $ do
+    pendings <- readTVar _regPendings
+    writeTVar _regPendings (deleteMap packageCorrelation pendings)
+    let mPending = lookup packageCorrelation pendings
+    outcome <- traverse (handlePackageSTM reg (randoms gen) now pkg) mPending
+    return $ fold outcome
 
-  for_ (lookup packageCorrelation m) $ \Pending{..} ->
-    case packageCmd of
-      cmd
-        | cmd == badRequestCmd -> do
-          let reason = packageDataAsText pkg
+  action
 
-          reject _pendingCallback (ServerError reason)
+--------------------------------------------------------------------------------
+handlePackageSTM :: Registry
+                 -> [UUID]
+                 -> UTCTime
+                 -> Package
+                 -> Pending
+                 -> STM (IO ())
+handlePackageSTM reg@Registry{..} uuids now pkg@Package{..} Pending{..} =
+  case packageCmd of
+    cmd | cmd == badRequestCmd -> do
+            let reason = packageDataAsText pkg
+
+            return $ reject _pendingCallback (ServerError reason)
         | cmd == notAuthenticatedCmd ->
-          reject _pendingCallback NotAuthenticatedOp
+            return $ reject _pendingCallback NotAuthenticatedOp
         | cmd == notHandledCmd -> do
-          let Just msg = maybeDecodeMessage packageData
-              reason   = getField $ notHandledReason msg
-          case reason of
-            N_NotMaster -> do
-              let Just details = getField $ notHandledAdditionalInfo msg
-                  info         = masterInfo details
-                  node         = masterInfoNodeEndPoints info
+            let Just msg = maybeDecodeMessage packageData
+                reason   = getField $ notHandledReason msg
+            case reason of
+              N_NotMaster -> do
+                let Just details = getField $ notHandledAdditionalInfo msg
+                    info         = masterInfo details
+                    node         = masterInfoNodeEndPoints info
+                    action       = publish _regBus (ForceReconnect node)
 
-              publish _regBus (ForceReconnect node)
-              evaluate reg _pendingOp _pendingCallback _pendingOp
-            -- In this case with just retry the operation.
-            _ -> evaluate reg _pendingOp _pendingCallback _pendingOp
+                end <- evaluate reg uuids now _pendingOp _pendingCallback _pendingOp
+                return (action >> end)
+              -- In this case with just retry the operation.
+              _ -> evaluate reg uuids now _pendingOp _pendingCallback _pendingOp
         | cmd /= _pendingRespCmd ->
-          reject _pendingCallback (InvalidServerResponse _pendingRespCmd cmd)
+            let resp = InvalidServerResponse _pendingRespCmd cmd in
+            return $ reject _pendingCallback resp
         | otherwise ->
-          case runGet decodeMessage packageData of
-            Left e ->
-              reject _pendingCallback (ProtobufDecodingError e)
-            Right resp ->
-              evaluate reg _pendingOp _pendingCallback (_pendingResume resp)
+            case runGet decodeMessage packageData of
+              Left e ->
+                return $ reject _pendingCallback (ProtobufDecodingError e)
+              Right resp ->
+                evaluate reg uuids now _pendingOp _pendingCallback
+                  (_pendingResume resp)
 
 --------------------------------------------------------------------------------
 evaluate :: Registry
+         -> [UUID]
+         -> UTCTime
          -> Operation a
          -> Callback a
          -> SM a ()
-         -> IO ()
-evaluate Registry{..} op cb = go
+         -> STM (IO ())
+evaluate Registry{..} uuids now op cb = go uuids (return ())
   where
-    go (Return _)  = return ()
-    go (Yield a next) = do
-      fulfill cb a
-      go next
-    go (FreshId k) = do
-      uuid <- nextRandom
-      go (k uuid)
-    go (SendPkg cmdReq cmdResp req next) = do
-      uuid <- nextRandom
-      now  <- getCurrentTime
+    go _ acc (Return _) = return acc
+    go ids acc (Yield a next) =
+      go ids (acc >> fulfill cb a) next
+    go (uuid:ids) acc (FreshId k) =
+      go ids acc (k uuid)
+    go (uuid:_) acc (SendPkg cmdReq cmdResp req next) = do
       let pkg = Package { packageCmd         = cmdReq
                         , packageCorrelation = uuid
                         , packageData        = runPut $ encodeMessage req
@@ -147,14 +181,15 @@ evaluate Registry{..} op cb = go
                             , _pendingResume   = next
                             , _pendingCallback = cb
                             }
-      atomicModifyIORef' _regPendings $ \m ->
-        (insertMap uuid pending m, ())
 
-      publish _regBus (TcpSend pkg)
-    go (Failure outcome) =
+      pendings <- readTVar _regPendings
+      writeTVar _regPendings (insertMap uuid pending pendings)
+
+      return (acc >> publish _regBus (TcpSend pkg))
+    go ids acc (Failure outcome) =
       case outcome of
-        Just e  -> reject cb e
-        Nothing -> go op
+        Just e  -> return $ reject cb e
+        Nothing -> go ids acc op
 
 --------------------------------------------------------------------------------
 -- | Occurs when an operation has been retried more than 's_operationRetry'.
@@ -168,38 +203,51 @@ instance Exception OperationMaxAttemptReached
 --------------------------------------------------------------------------------
 checkAndRetry :: Registry -> IO ()
 checkAndRetry Registry{..} = do
-  reg    <- readIORef _regPendings
-  now    <- getCurrentTime
-  newReg <- foldM (checking now) reg (mapToList reg)
+  gen <- newStdGen
+  -- Beware as there is no proof that this time value will be used right away.
+  -- This STM transaction could take more time to be validated. However we
+  -- don't need to be very precise in this case. This is just an implementation
+  -- note.
+  now <- getCurrentTime
+  action <- atomically $ do
+    pendings <- readTVar _regPendings
+    checking (return ()) (randoms gen) now (mapToList pendings)
 
-  atomicWriteIORef _regPendings newReg
+  action
   where
-    checking time reg (key, p)
-      | diffUTCTime time (_pendingLastTry p) > s_operationTimeout _regSettings =
+    checking acc _ _ [] = return acc
+    checking acc ids@(corrId:otherIds) now ((key, p):rest)
+      | diffUTCTime now (_pendingLastTry p) >= s_operationTimeout _regSettings =
         let retry = do
-              corrId <- nextRandom
+              pendings <- readTVar _regPendings
               let oldPkg     = _pendingLastPkg p
                   newPkg     = oldPkg { packageCorrelation = corrId }
                   newPending = p { _pendingLastPkg = newPkg
-                                 , _pendingLastTry = time
+                                 , _pendingLastTry = now
                                  , _pendingRetries = _pendingRetries p + 1
                                  }
-                  nextReg    = deleteMap key $ insertMap corrId newPending reg
 
-              publish _regBus (TcpSend newPkg)
-              return nextReg in
+                  newPendings =
+                    deleteMap key $ insertMap corrId newPending pendings
+
+                  action = publish _regBus (TcpSend newPkg)
+
+              writeTVar _regPendings newPendings
+              checking (acc >> action) otherIds now rest in
         case s_operationRetry _regSettings of
           AtMost maxAttempts
             | _pendingRetries p <= maxAttempts
               -> retry
             | otherwise
               -> do let initialCmd = packageCmd (_pendingLastPkg p)
-                    rejectPending p
-                      (OperationMaxAttemptReached key initialCmd)
+                        action = rejectPending p
+                                   (OperationMaxAttemptReached key initialCmd)
 
-                    return $ deleteMap key reg
+                    pendings <- readTVar _regPendings
+                    writeTVar _regPendings (deleteMap key pendings)
+                    checking (acc >> action) ids now rest
           KeepRetrying -> retry
-      | otherwise = return reg
+      | otherwise = checking acc ids now rest
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a

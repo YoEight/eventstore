@@ -77,3 +77,4 @@ data Response
 
 --------------------------------------------------------------------------------
 instance Decode Response
+instance Encode Response
