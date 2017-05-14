@@ -55,7 +55,6 @@ instance Exception Terminated
 data Exec =
   Exec { execSettings :: Settings
        , _execPub     :: STM Publish
-       , _finishLock  :: TMVar ()
        , _logMgr      :: LogManager
        , _internal    :: Internal
        }
@@ -67,7 +66,6 @@ data Internal =
            , _finishRef :: IORef ServicePendingInit
            , _stageVar  :: TVar Stage
            , _mainBus   :: Bus
-           , _finishVar :: TMVar ()
            }
 
 --------------------------------------------------------------------------------
@@ -82,7 +80,7 @@ instance Sub Exec where
 
 --------------------------------------------------------------------------------
 execWaitTillClosed :: Exec -> IO ()
-execWaitTillClosed e = atomically $ readTMVar $ _finishLock e
+execWaitTillClosed Exec{..} = busProcessedEverything (_mainBus _internal)
 
 --------------------------------------------------------------------------------
 stageSTM :: TVar Stage -> STM Publish
@@ -106,19 +104,17 @@ initServicePending :: ServicePendingInit
 initServicePending = foldMap (\svc -> singletonMap svc ()) [minBound..]
 
 --------------------------------------------------------------------------------
-newExec :: Settings -> ConnectionBuilder -> Discovery -> IO Exec
-newExec setts builder disc = do
-  logMgr <- newLogManager (s_loggerSettings setts)
+newExec :: Settings -> LogManager -> ConnectionBuilder -> Discovery -> IO Exec
+newExec setts logMgr builder disc = do
   let logger = getLogger "Exec" logMgr
 
   internal <- Internal logger <$> newIORef initServicePending
                               <*> newIORef initServicePending
                               <*> newTVarIO Init
                               <*> newBus logMgr "main-bus"
-                              <*> newEmptyTMVarIO
 
   let stagePub = stageSTM $ _stageVar internal
-      exe      = Exec setts stagePub (_finishVar internal) logMgr internal
+      exe      = Exec setts stagePub logMgr internal
       mainBus  = asHub $ _mainBus internal
 
   timerService (getLogger "TimerService" logMgr) mainBus
@@ -182,5 +178,4 @@ onTerminated Internal{..} (ServiceTerminated svc) = do
 
   when shutdown $ do
     busStop _mainBus
-    atomically $ putTMVar _finishVar ()
     logMsg _logger Info "Entire system shutdown properly"

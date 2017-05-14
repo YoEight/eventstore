@@ -31,6 +31,7 @@ module Database.EventStore.Internal.Messaging
   , Message
   , toMsg
   , fromMsg
+  , busProcessedEverything
   ) where
 
 --------------------------------------------------------------------------------
@@ -180,12 +181,17 @@ data Bus =
 
 --------------------------------------------------------------------------------
 busStop :: Bus -> IO ()
-busStop Bus{..} = do
-  atomically $ writeTVar _busStopped True
+busStop Bus{..} = atomically $ writeTVar _busStopped True
 
-  atomically $
-    whenM (readTVar _workerRunning) $
-      retrySTM
+--------------------------------------------------------------------------------
+busProcessedEverything :: Bus -> IO ()
+busProcessedEverything Bus{..} = atomically $ do
+  stopped <- readTVar _busStopped
+  empty   <- isEmptyTQueue _busQueue
+  running <- readTVar _workerRunning
+
+  unless (stopped && empty && not running) $
+    retrySTM
 
 --------------------------------------------------------------------------------
 messageType :: Type
