@@ -12,55 +12,61 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.OperationManager
-  ( operationManager ) where
+  ( Manager
+  , Decision(..)
+  , new
+  , submit
+  , handle
+  , cleanup
+  , check
+  ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import ClassyPrelude hiding (handle)
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Callback
+import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Manager.Operation.Registry
-import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-data Internal =
-  Internal { _logger  :: Logger
-           , _mainBus :: Hub
-           , _reg     :: Registry
-           }
+data Manager =
+  Manager { _logger :: Logger
+          , _reg    :: Registry
+          }
 
 --------------------------------------------------------------------------------
-operationManager :: Logger -> Settings -> Hub -> IO ()
-operationManager logger setts mainBus = do
-  internal <- Internal logger mainBus <$> newRegistry setts (asPub mainBus)
-
-  subscribe mainBus (onInit internal)
-  subscribe mainBus (onNew internal)
-  subscribe mainBus (onRecv internal)
-  subscribe mainBus (onShutdown internal)
-  subscribe mainBus (onCheck internal)
+new :: LogManager -> Settings -> IO Manager
+new mgr setts = Manager logger <$> newRegistry setts
+  where
+    logger = getLogger "OperationManager" mgr
 
 --------------------------------------------------------------------------------
-onInit :: Internal -> SystemInit -> IO ()
-onInit Internal{..} _ = publish _mainBus (Initialized OperationManager)
+submit :: Manager
+       -> Operation a
+       -> Callback a
+       -> Maybe PackageConnection
+       -> IO ()
+submit Manager{..} op cb outcome =
+  case outcome of
+    Just conn -> register _reg conn op cb
+    Nothing   -> schedule _reg op cb
 
 --------------------------------------------------------------------------------
-onNew :: Internal -> SubmitOperation -> IO ()
-onNew Internal{..} (SubmitOperation cb op) = register _reg op cb
+handle :: Manager -> Package -> IO (Maybe Decision)
+handle Manager{..} pkg = handlePackage _reg pkg
 
 --------------------------------------------------------------------------------
-onRecv :: Internal -> PackageReceived -> IO ()
-onRecv Internal{..} (PackageReceived pkg) = handlePackage _reg pkg
-
---------------------------------------------------------------------------------
-onShutdown :: Internal -> SystemShutdown -> IO ()
-onShutdown Internal{..} _ = do
+cleanup :: Manager -> IO ()
+cleanup Manager{..} = do
   logMsg _logger Info "Shutting down..."
   abortPendingRequests _reg
-  publish _mainBus (ServiceTerminated OperationManager)
 
 --------------------------------------------------------------------------------
-onCheck :: Internal -> Check -> IO ()
-onCheck Internal{..} _ = checkAndRetry _reg
+check :: Manager -> PackageConnection -> IO ()
+check Manager{..} conn = do
+  checkAndRetry _reg conn
+  startAwaitings _reg conn

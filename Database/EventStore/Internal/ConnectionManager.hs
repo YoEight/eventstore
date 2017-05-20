@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE RecordWildCards    #-}
 --------------------------------------------------------------------------------
 -- |
@@ -26,14 +27,15 @@ import Data.UUID.V4
 import Data.Time
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Command
-import Database.EventStore.Internal.Communication
-import Database.EventStore.Internal.Connection
-import Database.EventStore.Internal.Discovery
-import Database.EventStore.Internal.EndPoint
-import Database.EventStore.Internal.Logger
-import Database.EventStore.Internal.Messaging
-import Database.EventStore.Internal.Types
+import           Database.EventStore.Internal.Command
+import           Database.EventStore.Internal.Communication
+import           Database.EventStore.Internal.Connection
+import           Database.EventStore.Internal.Discovery
+import           Database.EventStore.Internal.EndPoint
+import           Database.EventStore.Internal.Logger
+import           Database.EventStore.Internal.Messaging
+import qualified Database.EventStore.Internal.OperationManager as Operation
+import           Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data Stage
@@ -114,6 +116,7 @@ data Internal =
            , _stage    :: TVar Stage
            , _last     :: TVar (Maybe EndPoint)
            , _sending  :: TVar Bool
+           , _opMgr    :: Operation.Manager
            }
 
 --------------------------------------------------------------------------------
@@ -130,10 +133,10 @@ connectionManager logMgr setts builder disc mainBus = do
                          <*> newTVarIO Init
                          <*> newTVarIO Nothing
                          <*> newTVarIO False
+                         <*> Operation.new logMgr setts
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onSend internal)
-  subscribe mainBus (onForceReconnect internal)
   subscribe mainBus (onStartConnect internal)
   subscribe mainBus (onEstablish internal)
   subscribe mainBus (onEstablished internal)
@@ -264,8 +267,8 @@ onEstablished i@Internal{..} (ConnectionEstablished connection) = do
     ept = _endpoint connection
 
 --------------------------------------------------------------------------------
-onSend :: Internal -> TcpSend -> IO ()
-onSend i@Internal{..} (TcpSend pkg) = do
+send :: Internal -> Package -> IO ()
+send i@Internal{..} pkg = do
   canProceed <- atomically $ do
     stage <- readTVar _stage
     case stage of
@@ -284,8 +287,12 @@ onSend i@Internal{..} (TcpSend pkg) = do
     return ()
 
 --------------------------------------------------------------------------------
-onForceReconnect :: Internal -> ForceReconnect -> IO ()
-onForceReconnect Internal{..} (ForceReconnect node) = do
+onSend :: Internal -> TcpSend -> IO ()
+onSend i (TcpSend pkg) = send i pkg
+
+--------------------------------------------------------------------------------
+forceReconnect :: Internal -> NodeEndPoints -> IO ()
+forceReconnect Internal{..} node = do
   let ept = if isJust $ s_ssl _setts
             then let Just pt = secureEndPoint node in pt
             else tcpEndPoint node
@@ -296,16 +303,27 @@ onForceReconnect Internal{..} (ForceReconnect node) = do
 
 --------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> IO ()
-onArrived Internal{..} (PackageArrived pkg) =
-  if packageCmd pkg == heartbeatRequestCmd
-  then do
-    let resp = heartbeatResponsePackage $ packageCorrelation pkg
-    publish _mainBus (TcpSend resp)
-  else publish _mainBus (PackageReceived pkg)
+onArrived i@Internal{..} (PackageArrived pkg) =
+  case packageCmd pkg of
+    cmd | cmd == heartbeatRequestCmd
+          -> send i (heartbeatResponsePackage $ packageCorrelation pkg)
+        | cmd == badRequestCmd && packageCorrelation pkg == nil
+          -> do let reason = packageDataAsText pkg
+                    msg = "Connection-wide BadRequest received. \
+                          \ Too dangerous to continue: " <> fold reason
+                shutdown i
+                publish _mainBus (FatalCondition msg)
+        | otherwise
+          -> Operation.handle _opMgr pkg >>= \case
+               Nothing  -> return ()
+               Just dec ->
+                 case dec of
+                   Operation.Handled        -> return ()
+                   Operation.Reconnect node -> forceReconnect i node
 
 --------------------------------------------------------------------------------
-onShutdown :: Internal -> SystemShutdown -> IO ()
-onShutdown Internal{..} _ = do
+shutdown :: Internal -> IO ()
+shutdown Internal{..} = do
   logMsg _logger Info "Shutting down..."
   atomically $ writeTVar _stage Closed
 
@@ -318,6 +336,16 @@ onShutdown Internal{..} _ = do
           cleaning
 
   cleaning
+
+--------------------------------------------------------------------------------
+onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown i@Internal{..} _ = do
+  done <- atomically $
+    readTVar _stage >>= \case
+      Closed -> return True
+      _      -> return False
+
+  unless done (shutdown i)
   publish _mainBus (ServiceTerminated ConnectionManager)
 
 --------------------------------------------------------------------------------
@@ -325,8 +353,7 @@ data TickOutcome
   = TickClose
   | TickNoop
   | TickProceed ConnectingState
-  | TickConnected
-  deriving Show
+  | TickConnected CurrentConnection
 
 --------------------------------------------------------------------------------
 onTick :: Internal -> Tick -> IO ()
@@ -354,8 +381,8 @@ onTick i@Internal{..} _ = do
                 | otherwise         -> return TickClose
               KeepRetrying -> proceeding
           else return TickNoop
-      Connected{} -> return TickConnected
-      _           -> return TickNoop
+      Connected cur -> return (TickConnected cur)
+      _             -> return TickNoop
 
   case outcome of
     TickClose -> do
@@ -367,8 +394,12 @@ onTick i@Internal{..} _ = do
           logMsg _logger Info "Try reconnecting..."
           discover i
         _ -> return ()
-    TickConnected -> do
-      publish _mainBus Check
+    TickConnected CurrentConnection{..} -> do
+      let conn = PackageConnection { connectionId   = _connectId
+                                   , enqueuePackage = \pkg ->
+                                       atomically $ writeTQueue _queue pkg
+                                   }
+      Operation.check _opMgr conn
     _ -> return ()
 
 --------------------------------------------------------------------------------

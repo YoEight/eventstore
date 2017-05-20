@@ -40,8 +40,7 @@ newtype TcpSend = TcpSend Package deriving Typeable
 
 --------------------------------------------------------------------------------
 data Service
-  = OperationManager
-  | ConnectionManager
+  = ConnectionManager
   | SubscriptionManager
   | TimerService
   deriving (Show, Eq, Enum, Bounded, Typeable, Generic)
@@ -58,7 +57,7 @@ data InitFailed = InitFailed Service deriving Typeable
 --------------------------------------------------------------------------------
 data FatalException
   = forall e. Exception e => FatalException e
-  | FatalCondition
+  | FatalCondition Text
   deriving Typeable
 
 --------------------------------------------------------------------------------
@@ -68,9 +67,6 @@ data PackageReceived = PackageReceived Package deriving Typeable
 data SubmitOperation =
   forall a. SubmitOperation (Callback a) (Operation a)
   deriving Typeable
-
---------------------------------------------------------------------------------
-data ForceReconnect = ForceReconnect NodeEndPoints deriving Typeable
 
 --------------------------------------------------------------------------------
 data SubmitSubscription

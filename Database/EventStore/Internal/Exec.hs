@@ -27,11 +27,10 @@ import ClassyPrelude
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Connection
+import Database.EventStore.Internal.ConnectionManager
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
-import Database.EventStore.Internal.ConnectionManager
-import Database.EventStore.Internal.OperationManager
 import Database.EventStore.Internal.SubscriptionManager
 import Database.EventStore.Internal.TimerService
 import Database.EventStore.Internal.Types
@@ -119,7 +118,6 @@ newExec setts logMgr builder disc = do
 
   timerService (getLogger "TimerService" logMgr) mainBus
   connectionManager logMgr setts builder disc mainBus
-  operationManager (getLogger "OperationManager" logMgr) setts mainBus
   subscriptionManager (getLogger "SubscriptionManager" logMgr) setts mainBus
 
   subscribe mainBus (onInit internal)
@@ -163,8 +161,8 @@ onFatal Internal{..} situation = do
   case situation of
     FatalException e ->
       logFormat _logger Fatal "Fatal exception: {}" (Only $ Shown e)
-    FatalCondition ->
-      logMsg _logger Fatal "Driver is in unrecoverable state."
+    FatalCondition msg ->
+      logMsg _logger Fatal ("Driver is in unrecoverable state.: " <> msg)
 
   publish _mainBus SystemShutdown
 

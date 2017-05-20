@@ -13,6 +13,7 @@ module Database.EventStore.Internal.Connection
   ( ConnectionBuilder(..)
   , Connection(..)
   , RecvOutcome(..)
+  , PackageConnection(..)
   , connectionBuilder
   ) where
 
@@ -47,6 +48,13 @@ data Connection =
              , receivePackage :: IO RecvOutcome
              , dispose        :: IO ()
              }
+
+--------------------------------------------------------------------------------
+data PackageConnection =
+  PackageConnection
+  { connectionId   :: UUID
+  , enqueuePackage :: Package -> IO ()
+  }
 
 --------------------------------------------------------------------------------
 connectionBuilder :: Settings -> IO ConnectionBuilder
