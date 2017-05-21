@@ -366,4 +366,5 @@ onSubmitOperation Internal{..} (SubmitOperation cb op) = do
   case stage of
     Closed ->
       logMsg _logger Warn "Connection closed but we received an operation request"
-    _ -> return ()
+    Connected conn -> Operation.submit _opMgr op cb (Just conn)
+    _              -> Operation.submit _opMgr op cb Nothing
