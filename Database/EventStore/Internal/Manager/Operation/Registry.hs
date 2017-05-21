@@ -132,7 +132,7 @@ scheduleAwait Registry{..} aw =
 
 --------------------------------------------------------------------------------
 execute :: Registry
-        -> Maybe PackageConnection
+        -> Maybe Connection
         -> Operation a
         -> Callback a
         -> SM a ()
@@ -161,7 +161,7 @@ execute reg@Registry{..} mConn op cb = go
         Nothing -> go op
 
 --------------------------------------------------------------------------------
-issueRequest :: Registry -> PackageConnection -> Request -> IO ()
+issueRequest :: Registry -> Connection -> Request -> IO ()
 issueRequest reg@Registry{..} conn request = do
   uuid <- nextRandom
   now  <- getCurrentTime
@@ -182,7 +182,7 @@ insertPending Registry{..} key pending =
     (insertMap key pending pendings, ())
 
 --------------------------------------------------------------------------------
-register :: Registry -> PackageConnection -> Operation a -> Callback a -> IO ()
+register :: Registry -> Connection -> Operation a -> Callback a -> IO ()
 register reg conn op cb = execute reg (Just conn) op cb op
 
 --------------------------------------------------------------------------------
@@ -253,7 +253,7 @@ data OperationMaxAttemptReached =
 instance Exception OperationMaxAttemptReached
 
 --------------------------------------------------------------------------------
-checkAndRetry :: Registry -> PackageConnection -> IO ()
+checkAndRetry :: Registry -> Connection -> IO ()
 checkAndRetry Registry{..} conn = do
   pendings    <- readIORef _regPendings
   now         <- getCurrentTime
@@ -288,7 +288,7 @@ checkAndRetry Registry{..} conn = do
       | otherwise = return reg
 
 --------------------------------------------------------------------------------
-startAwaitings :: Registry -> PackageConnection -> IO ()
+startAwaitings :: Registry -> Connection -> IO ()
 startAwaitings reg@Registry{..} conn = do
     awaitings <- atomicModifyIORef' _regAwaitings $ \stack ->
       ([], stack)

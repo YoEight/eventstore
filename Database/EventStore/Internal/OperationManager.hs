@@ -48,7 +48,7 @@ new mgr setts = Manager logger <$> newRegistry setts
 submit :: Manager
        -> Operation a
        -> Callback a
-       -> Maybe PackageConnection
+       -> Maybe Connection
        -> IO ()
 submit Manager{..} op cb outcome =
   case outcome of
@@ -66,7 +66,7 @@ cleanup Manager{..} = do
   abortPendingRequests _reg
 
 --------------------------------------------------------------------------------
-check :: Manager -> PackageConnection -> IO ()
+check :: Manager -> Connection -> IO ()
 check Manager{..} conn = do
   checkAndRetry _reg conn
   startAwaitings _reg conn

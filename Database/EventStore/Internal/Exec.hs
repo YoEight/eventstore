@@ -103,22 +103,27 @@ initServicePending :: ServicePendingInit
 initServicePending = foldMap (\svc -> singletonMap svc ()) [minBound..]
 
 --------------------------------------------------------------------------------
-newExec :: Settings -> LogManager -> ConnectionBuilder -> Discovery -> IO Exec
-newExec setts logMgr builder disc = do
+newExec :: Settings
+        -> LogManager
+        -> Bus
+        -> ConnectionBuilder
+        -> Discovery
+        -> IO Exec
+newExec setts logMgr mainBus builder disc = do
   let logger = getLogger "Exec" logMgr
 
   internal <- Internal logger <$> newIORef initServicePending
                               <*> newIORef initServicePending
                               <*> newTVarIO Init
-                              <*> newBus logMgr "main-bus"
+                              <*> return mainBus
 
   let stagePub = stageSTM $ _stageVar internal
       exe      = Exec setts stagePub logMgr internal
-      mainBus  = asHub $ _mainBus internal
+      hub      = asHub mainBus
 
-  timerService (getLogger "TimerService" logMgr) mainBus
-  connectionManager logMgr setts builder disc mainBus
-  subscriptionManager (getLogger "SubscriptionManager" logMgr) setts mainBus
+  timerService (getLogger "TimerService" logMgr) hub
+  connectionManager logMgr setts builder disc hub
+  subscriptionManager (getLogger "SubscriptionManager" logMgr) setts hub
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onInitFailed internal)

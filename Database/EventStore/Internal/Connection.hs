@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Connection
@@ -13,7 +14,7 @@ module Database.EventStore.Internal.Connection
   ( ConnectionBuilder(..)
   , Connection(..)
   , RecvOutcome(..)
-  , PackageConnection(..)
+  , PackageArrived(..)
   , connectionBuilder
   ) where
 
@@ -24,11 +25,14 @@ import Text.Printf
 import ClassyPrelude
 import Data.Serialize
 import Data.UUID
-import Network.Connection hiding (Connection)
+import Data.UUID.V4
+import qualified Network.Connection as Network
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -44,44 +48,102 @@ data RecvOutcome
 
 --------------------------------------------------------------------------------
 data Connection =
-  Connection { sendPackage    :: Package -> IO ()
-             , receivePackage :: IO RecvOutcome
+  Connection { connectionId   :: UUID
+             , enqueuePackage :: Package -> IO ()
              , dispose        :: IO ()
              }
 
 --------------------------------------------------------------------------------
-data PackageConnection =
-  PackageConnection
-  { connectionId   :: UUID
-  , enqueuePackage :: Package -> IO ()
-  }
+data ConnectionState =
+  ConnectionState { _bus       :: Publish
+                  , _sendQueue :: TQueue Package
+                  , _sending   :: TVar Bool
+                  , _conn      :: Network.Connection
+                  }
 
 --------------------------------------------------------------------------------
-connectionBuilder :: Settings -> IO ConnectionBuilder
-connectionBuilder setts = do
-  ctx <- initConnectionContext
+data PackageArrived = PackageArrived Connection Package deriving Typeable
+
+--------------------------------------------------------------------------------
+connectionBuilder :: Settings -> Publish -> IO ConnectionBuilder
+connectionBuilder setts bus = do
+  ctx <- Network.initConnectionContext
   return $ ConnectionBuilder $ \ept -> do
     let host   = endPointIp ept
         port   = fromIntegral $ endPointPort ept
-        params = ConnectionParams host port (s_ssl setts) Nothing
+        params = Network.ConnectionParams host port (s_ssl setts) Nothing
 
-    conn <- connectTo ctx params
-    return Connection { sendPackage = \pkg ->
-                          connectionPut conn (runPut $ putPackage pkg)
-                      , receivePackage = do
-                          outcome <- tryAny $ connectionGetExact conn 4
-                          case outcome of
-                            Left _         -> return ResetByPeer
-                            Right headerBs -> do
-                              case runGet getLengthPrefix headerBs of
-                                Left _       -> return WrongFraming
-                                Right prefix -> do
-                                  bs <- connectionGetExact conn prefix
-                                  case runGet getPackage bs of
-                                    Left _    -> return ParsingError
-                                    Right pkg -> return (Recv pkg)
-                      , dispose = connectionClose conn
-                      }
+    state <- ConnectionState bus <$> newTQueueIO
+                                 <*> newTVarIO False
+                                 <*> Network.connectTo ctx params
+
+    uuid <- nextRandom
+    let conn =
+          Connection { connectionId   = uuid
+                     , enqueuePackage = enqueue state
+                     , dispose        = Network.connectionClose (_conn state)
+                     }
+
+    receiving state conn
+    return conn
+
+--------------------------------------------------------------------------------
+receivePackage :: Network.Connection -> IO Package
+receivePackage conn = do
+  frame <- Network.connectionGetExact conn 4
+  case runGet getLengthPrefix frame of
+    Left _       -> throwString "Package framing error"
+    Right prefix -> do
+      payload <- Network.connectionGetExact conn prefix
+      case runGet getPackage payload of
+        Left _    -> throwString "Package parsing error"
+        Right pkg -> return pkg
+
+--------------------------------------------------------------------------------
+receiving :: ConnectionState -> Connection -> IO ()
+receiving ConnectionState{..} self = loop
+  where
+    loop = do
+      _ <- fork $ do
+        tryAny (receivePackage _conn) >>= \case
+          Left e    -> publish _bus (ConnectionError e)
+          Right pkg -> do
+            publish _bus (PackageArrived self pkg)
+            loop
+      return ()
+
+--------------------------------------------------------------------------------
+enqueue :: ConnectionState -> Package -> IO ()
+enqueue state@ConnectionState{..} pkg = do
+  start <- atomically $ do
+    running <- readTVar _sending
+    writeTQueue _sendQueue pkg
+
+    unless running $
+      writeTVar _sending True
+
+    return (not running)
+
+  _ <- fork $ sending state
+  return ()
+
+--------------------------------------------------------------------------------
+sending :: ConnectionState -> IO ()
+sending ConnectionState{..} = loop
+  where
+    loop = do
+      outcome <- atomically $
+        tryReadTQueue _sendQueue >>= \case
+          Just pkg -> return (Just pkg)
+          _        -> Nothing <$ writeTVar _sending False
+
+      case outcome of
+        Nothing  -> return ()
+        Just pkg -> do
+          let bytes = runPut $ putPackage pkg
+          tryAny (Network.connectionPut _conn bytes) >>= \case
+            Left e  -> publish _bus (ConnectionError e)
+            Right _ -> loop
 
 --------------------------------------------------------------------------------
 -- Serialization

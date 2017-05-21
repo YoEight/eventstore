@@ -61,12 +61,12 @@ data FatalException
   deriving Typeable
 
 --------------------------------------------------------------------------------
-data PackageReceived = PackageReceived Package deriving Typeable
-
---------------------------------------------------------------------------------
 data SubmitOperation =
   forall a. SubmitOperation (Callback a) (Operation a)
   deriving Typeable
+
+--------------------------------------------------------------------------------
+data PackageReceived = PackageReceived Package deriving Typeable
 
 --------------------------------------------------------------------------------
 data SubmitSubscription
@@ -99,4 +99,8 @@ data Check = Check deriving Typeable
 
 --------------------------------------------------------------------------------
 data ConnectionChanged = ConnectionChanged
+  deriving Typeable
+
+--------------------------------------------------------------------------------
+data ConnectionError = ConnectionError SomeException
   deriving Typeable

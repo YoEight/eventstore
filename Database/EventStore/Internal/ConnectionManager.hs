@@ -41,7 +41,7 @@ import           Database.EventStore.Internal.Types
 data Stage
   = Init
   | Connecting Attempts ConnectingState
-  | Connected CurrentConnection
+  | Connected Connection
   | Closed
 
 --------------------------------------------------------------------------------
@@ -82,10 +82,7 @@ data EstablishConnection = EstablishConnection EndPoint deriving Typeable
 
 --------------------------------------------------------------------------------
 data ConnectionEstablished =
-  ConnectionEstablished CurrentConnection deriving Typeable
-
---------------------------------------------------------------------------------
-data PackageArrived = PackageArrived Package deriving Typeable
+  ConnectionEstablished EndPoint Connection deriving Typeable
 
 --------------------------------------------------------------------------------
 data CloseConnection = CloseConnection (Maybe SomeException) deriving Typeable
@@ -96,13 +93,6 @@ data Tick = Tick deriving Typeable
 --------------------------------------------------------------------------------
 timerPeriod :: Duration
 timerPeriod = msDuration 200
-
---------------------------------------------------------------------------------
-data CurrentConnection =
-  CurrentConnection { _endpoint  :: EndPoint
-                    , _connectId :: UUID
-                    , _connect   :: Connection
-                    }
 
 --------------------------------------------------------------------------------
 data Internal =
@@ -136,7 +126,6 @@ connectionManager logMgr setts builder disc mainBus = do
                          <*> Operation.new logMgr setts
 
   subscribe mainBus (onInit internal)
-  subscribe mainBus (onSend internal)
   subscribe mainBus (onStartConnect internal)
   subscribe mainBus (onEstablish internal)
   subscribe mainBus (onEstablished internal)
@@ -144,6 +133,7 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onShutdown internal)
   subscribe mainBus (onCloseConnection internal)
   subscribe mainBus (onTick internal)
+  subscribe mainBus (onSubmitOperation internal)
 
   publish mainBus (NewTimer Tick timerPeriod False)
 
@@ -180,7 +170,7 @@ onCloseConnection Internal{..} (CloseConnection reason) = do
         return $ Just conn
       _ -> return Nothing
 
-  traverse_ (dispose . _connect) outcome
+  traverse_ dispose outcome
 
 --------------------------------------------------------------------------------
 discover :: Internal -> IO ()
@@ -241,16 +231,15 @@ onEstablish Internal{..} (EstablishConnection ept) = do
             _                -> return ()
         Right conn -> do
           cid <- nextRandom
-          let cur = CurrentConnection ept cid conn
           atomically $ writeTVar _last (Just ept)
-          publish _mainBus (ConnectionEstablished cur)
+          publish _mainBus (ConnectionEstablished ept conn)
 
     return ()
 
 --------------------------------------------------------------------------------
 onEstablished :: Internal -> ConnectionEstablished -> IO ()
-onEstablished i@Internal{..} (ConnectionEstablished connection) = do
-  canProceed <- atomically $ do
+onEstablished i@Internal{..} (ConnectionEstablished ept connection) = do
+  valid <- atomically $ do
     stage <- readTVar _stage
     case stage of
       Connecting{} -> do
@@ -258,37 +247,8 @@ onEstablished i@Internal{..} (ConnectionEstablished connection) = do
         return True
       _ -> return False
 
-  when canProceed $ do
+  when valid $
     logFormat _logger Info "Connection established on {}." (Only $ Shown ept)
-    publish _mainBus ConnectionChanged
-    _ <- fork $ receiving i
-    return ()
-  where
-    ept = _endpoint connection
-
---------------------------------------------------------------------------------
-send :: Internal -> Package -> IO ()
-send i@Internal{..} pkg = do
-  canProceed <- atomically $ do
-    stage <- readTVar _stage
-    case stage of
-      Connecting{} -> False <$ writeTQueue _queue pkg
-      Connected _ -> do
-        running <- readTVar _sending
-        writeTQueue _queue pkg
-        when (not running) $
-          writeTVar _sending True
-
-        return $ not running
-      _ -> return False
-
-  when canProceed $ do
-    _ <- fork $ sending i
-    return ()
-
---------------------------------------------------------------------------------
-onSend :: Internal -> TcpSend -> IO ()
-onSend i (TcpSend pkg) = send i pkg
 
 --------------------------------------------------------------------------------
 forceReconnect :: Internal -> NodeEndPoints -> IO ()
@@ -303,10 +263,11 @@ forceReconnect Internal{..} node = do
 
 --------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> IO ()
-onArrived i@Internal{..} (PackageArrived pkg) =
+onArrived i@Internal{..} (PackageArrived conn pkg) =
   case packageCmd pkg of
     cmd | cmd == heartbeatRequestCmd
-          -> send i (heartbeatResponsePackage $ packageCorrelation pkg)
+          -> let respPkg = heartbeatResponsePackage $ packageCorrelation pkg in
+             enqueuePackage conn respPkg
         | cmd == badRequestCmd && packageCorrelation pkg == nil
           -> do let reason = packageDataAsText pkg
                     msg = "Connection-wide BadRequest received. \
@@ -353,7 +314,7 @@ data TickOutcome
   = TickClose
   | TickNoop
   | TickProceed ConnectingState
-  | TickConnected CurrentConnection
+  | TickConnected Connection
 
 --------------------------------------------------------------------------------
 onTick :: Internal -> Tick -> IO ()
@@ -394,68 +355,15 @@ onTick i@Internal{..} _ = do
           logMsg _logger Info "Try reconnecting..."
           discover i
         _ -> return ()
-    TickConnected CurrentConnection{..} -> do
-      let conn = PackageConnection { connectionId   = _connectId
-                                   , enqueuePackage = \pkg ->
-                                       atomically $ writeTQueue _queue pkg
-                                   }
+    TickConnected conn -> do
       Operation.check _opMgr conn
     _ -> return ()
 
 --------------------------------------------------------------------------------
-receiving :: Internal -> IO ()
-receiving i@Internal{..} = withPkg i $ \pkg -> do
-  publish _mainBus (PackageArrived pkg)
-  _ <- fork $ receiving i
-  return ()
-
---------------------------------------------------------------------------------
-sending :: Internal -> IO ()
-sending Internal{..} = loop
-  where
-    loop = do
-      outcome <- atomically $ do
-        stage <- readTVar _stage
-        case stage of
-          Connected connection -> do
-            msg <- tryReadTQueue _queue
-            case msg of
-              Just pkg -> return (Just (connection, pkg))
-              Nothing  -> do
-                writeTVar _sending False
-                return Nothing
-          _ -> do
-            writeTVar _sending False
-            return Nothing
-
-      for_ outcome $ \(cur, pkg) -> do
-        sendPackage (_connect cur) pkg
-        logFormat _logger Debug "Package sent {} corrId:[{}]"
-          ( Shown $ packageCmd pkg
-          , Shown $ packageCorrelation pkg
-          )
-        loop
-
---------------------------------------------------------------------------------
-withPkg :: Internal -> (Package -> IO ()) -> IO ()
-withPkg Internal{..} callback = do
+onSubmitOperation :: Internal -> SubmitOperation -> IO ()
+onSubmitOperation Internal{..} (SubmitOperation cb op) = do
   stage <- atomically $ readTVar _stage
   case stage of
-    Connected cur -> do
-      outcome <- receivePackage (_connect cur)
-      case outcome of
-        ResetByPeer  -> return ()
-        WrongFraming -> do
-          logMsg _logger Fatal "Wrong package framing. exiting..."
-          publish _mainBus FatalCondition
-        ParsingError -> do
-          logMsg _logger Fatal "Error when parsing a Package. exiting..."
-          publish _mainBus FatalCondition
-        Recv pkg -> do
-          let cmdParam = Shown $ packageCmd pkg
-              idParam  = Shown $ packageCorrelation pkg
-
-          logFormat _logger Debug "Package received {} corrId:[{}]"
-            (cmdParam, idParam)
-          callback pkg
+    Closed ->
+      logMsg _logger Warn "Connection closed but we received an operation request"
     _ -> return ()
