@@ -272,8 +272,10 @@ connect settings tpe = do
         Cluster setts    -> clusterDnsEndPointDiscovery setts
         Dns dom srv port -> return $ simpleDnsEndPointDiscovery dom srv port
 
-    builder <- connectionBuilder settings
-    exec    <- newExec settings builder disc
+    logMgr  <- newLogManager (s_loggerSettings settings)
+    mainBus <- newBus logMgr "main-bus"
+    builder <- connectionBuilder settings (asPub mainBus)
+    exec    <- newExec settings logMgr mainBus builder disc
     return $ Connection exec settings tpe
 
 --------------------------------------------------------------------------------
