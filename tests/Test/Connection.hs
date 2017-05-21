@@ -15,10 +15,12 @@ module Test.Connection (spec) where
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Exec
 import Database.EventStore.Internal.Logger
+import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -26,12 +28,13 @@ import Test.Bogus.Connection
 import Test.Common
 import Test.Tasty
 import Test.Tasty.Hspec
+import System.Log.FastLogger
 
---------------------------------------------------------------------------------
-spec :: Spec
-spec = do
+spec :: LogManager -> Spec
+spec logMgr = do
   specify "Connection should retry on connection failure" $ do
     counter <- newCounter
+    bus     <- newBus logMgr "connection-retry-test"
     let builder = alwaysFailConnectionBuilder $ incrCounter counter
         disc    = staticEndPointDiscovery "localhost" 2000
         setts   = defaultSettings { s_retry           = atMost 3
@@ -40,8 +43,11 @@ spec = do
                                                         { loggerType = LogNone }
                                   }
 
-    _ <- newExec setts builder disc
+    exec <- newExec setts logMgr bus builder disc
 
     atomically $ do
       i <- readCounterSTM counter
       when (i /= 3) retrySTM
+
+    publish exec SystemShutdown
+    execWaitTillClosed exec

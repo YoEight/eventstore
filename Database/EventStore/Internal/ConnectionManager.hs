@@ -126,40 +126,37 @@ connectionManager logMgr setts builder disc mainBus = do
                          <*> Operation.new logMgr setts
 
   subscribe mainBus (onInit internal)
-  subscribe mainBus (onStartConnect internal)
-  subscribe mainBus (onEstablish internal)
-  subscribe mainBus (onEstablished internal)
   subscribe mainBus (onArrived internal)
   subscribe mainBus (onShutdown internal)
-  subscribe mainBus (onCloseConnection internal)
   subscribe mainBus (onTick internal)
   subscribe mainBus (onSubmitOperation internal)
+  subscribe mainBus (onConnectionError internal)
 
   publish mainBus (NewTimer Tick timerPeriod False)
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> IO ()
-onInit Internal{..} _ = do
-  publish _mainBus StartConnect
+onInit i@Internal{..} _ = do
+  startConnect i
   publish _mainBus (Initialized ConnectionManager)
 
 --------------------------------------------------------------------------------
-onStartConnect :: Internal -> StartConnect -> IO ()
-onStartConnect i@Internal{..} _ = do
+startConnect :: Internal -> IO ()
+startConnect i@Internal{..} = do
   att <- freshAttempt
   atomically $ writeTVar _stage (Connecting att Reconnecting)
   discover i
 
 --------------------------------------------------------------------------------
 onCloseConnection :: Internal -> CloseConnection -> IO ()
-onCloseConnection Internal{..} (CloseConnection reason) = do
+onCloseConnection i@Internal{..} (CloseConnection reason) = do
   att <- freshAttempt
 
   case reason of
     Just e ->
-      logFormat _logger Error "Connection closed, reason: {}" (Only $ Shown e)
+      logFormat _logger Error "Connection error, reason: {}" (Only $ Shown e)
     _ ->
-      logMsg _logger Error "Connection closed"
+      logMsg _logger Error "Connection error"
 
   outcome <- atomically $ do
     stage <- readTVar _stage
@@ -170,11 +167,11 @@ onCloseConnection Internal{..} (CloseConnection reason) = do
         return $ Just conn
       _ -> return Nothing
 
-  traverse_ dispose outcome
+  traverse_ (closeConnection i) outcome
 
 --------------------------------------------------------------------------------
 discover :: Internal -> IO ()
-discover Internal{..} = do
+discover i@Internal{..} = do
   canProceed <- atomically $ do
     stage <- readTVar _stage
     case stage of
@@ -192,23 +189,26 @@ discover Internal{..} = do
       outcome <- tryAny $ runDiscovery _disc old
       case outcome of
         Left e -> do
-          let msg = "Failed to resolve TCP end point to which to connect: {}"
+          let msg = "Failed to resolve TCP end point to which to connect: {}."
           logFormat _logger Error msg (Only $ Shown e)
-          publish _mainBus (CloseConnection $ Just e)
+          onCloseConnection i (CloseConnection $ Just e)
         Right opt ->
           case opt of
             Nothing -> do
-              let msg = "Failed to resolve TCP end point to which to connect"
+              let msg = "Failed to resolve TCP end point to which to connect."
               logMsg _logger Error msg
-              publish _mainBus (CloseConnection Nothing)
-            Just endpoint -> do
-              publish _mainBus (EstablishConnection endpoint)
+              onCloseConnection i (CloseConnection Nothing)
+            Just endpoint -> establish i endpoint
 
     return ()
 
 --------------------------------------------------------------------------------
 onEstablish :: Internal -> EstablishConnection -> IO ()
-onEstablish Internal{..} (EstablishConnection ept) = do
+onEstablish i (EstablishConnection ept) = establish i ept
+
+--------------------------------------------------------------------------------
+establish :: Internal -> EndPoint -> IO ()
+establish i@Internal{..} ept = do
   canProceed <- atomically $ do
     stage <- readTVar _stage
     case stage of
@@ -232,13 +232,14 @@ onEstablish Internal{..} (EstablishConnection ept) = do
         Right conn -> do
           cid <- nextRandom
           atomically $ writeTVar _last (Just ept)
-          publish _mainBus (ConnectionEstablished ept conn)
+          established i ept conn
 
     return ()
 
+
 --------------------------------------------------------------------------------
-onEstablished :: Internal -> ConnectionEstablished -> IO ()
-onEstablished i@Internal{..} (ConnectionEstablished ept connection) = do
+established :: Internal -> EndPoint -> Connection -> IO ()
+established i@Internal{..} ept connection = do
   valid <- atomically $ do
     stage <- readTVar _stage
     case stage of
@@ -247,23 +248,49 @@ onEstablished i@Internal{..} (ConnectionEstablished ept connection) = do
         return True
       _ -> return False
 
-  when valid $
-    logFormat _logger Info "Connection established on {}." (Only $ Shown ept)
+  when valid $ do
+    let msg = "New connection {} established on [{}]."
+    logFormat _logger Info msg ( Shown $ connectionId connection
+                               , Shown ept
+                               )
 
 --------------------------------------------------------------------------------
 forceReconnect :: Internal -> NodeEndPoints -> IO ()
-forceReconnect Internal{..} node = do
+forceReconnect i@Internal{..} node = do
   let ept = if isJust $ s_ssl _setts
             then let Just pt = secureEndPoint node in pt
             else tcpEndPoint node
 
-  att <- freshAttempt
-  atomically $ writeTVar _stage (Connecting att EndpointDiscovery)
-  publish _mainBus (EstablishConnection ept)
+  att     <- freshAttempt
+  outcome <- atomically $
+    readTVar _stage >>= \case
+      Connected conn -> do
+        if connectionEndPoint conn /= ept
+          then do
+            writeTVar _stage (Connecting att EndpointDiscovery)
+            return (Just conn)
+          else return Nothing
+      _ -> return Nothing
+
+  for_ outcome $ \conn -> do
+    let msg = "Connection {}: going to reconnect to [{}], current [{}]."
+    logFormat _logger Info msg ( Shown $ connectionId conn
+                               , Shown ept
+                               , Shown $ connectionEndPoint conn
+                               )
+    closeConnection i conn
+    establish i ept
 
 --------------------------------------------------------------------------------
-onArrived :: Internal -> PackageArrived -> IO ()
-onArrived i@Internal{..} (PackageArrived conn pkg) =
+closeConnection :: Internal -> Connection -> IO ()
+closeConnection Internal{..} conn = do
+  dispose conn
+  let msg = "Connection {} is closed."
+  logFormat _logger Info msg (Only $ Shown $ connectionId conn)
+
+--------------------------------------------------------------------------------
+arrived :: Internal -> Connection -> Package -> IO ()
+arrived i@Internal{..} conn pkg =
   case packageCmd pkg of
     cmd | cmd == heartbeatRequestCmd
           -> let respPkg = heartbeatResponsePackage $ packageCorrelation pkg in
@@ -283,20 +310,32 @@ onArrived i@Internal{..} (PackageArrived conn pkg) =
                    Operation.Reconnect node -> forceReconnect i node
 
 --------------------------------------------------------------------------------
+onArrived :: Internal -> PackageArrived -> IO ()
+onArrived i (PackageArrived conn pkg) = arrived i conn pkg
+
+--------------------------------------------------------------------------------
 shutdown :: Internal -> IO ()
-shutdown Internal{..} = do
+shutdown i@Internal{..} = do
   logMsg _logger Info "Shutting down..."
-  atomically $ writeTVar _stage Closed
+  mConn <- atomically $ do
+    stage <- readTVar _stage
+    writeTVar _stage Closed
+    case stage of
+      Connected conn -> return (Just conn)
+      _              -> return Nothing
+
+  traverse_ (closeConnection i) mConn
 
   let cleaning = do
         outcome <- atomically $ tryReadTQueue _queue
         for_ outcome $ \pkg -> do
           when (packageCmd pkg /= heartbeatRequestCmd) $
-            publish _mainBus (PackageReceived pkg)
+            arrived i dumbConnection pkg
 
           cleaning
 
   cleaning
+  Operation.cleanup _opMgr
 
 --------------------------------------------------------------------------------
 onShutdown :: Internal -> SystemShutdown -> IO ()
@@ -347,7 +386,7 @@ onTick i@Internal{..} _ = do
 
   case outcome of
     TickClose -> do
-      publish _mainBus CloseConnection
+      onCloseConnection i (CloseConnection Nothing)
       publish _mainBus SystemShutdown
     TickProceed state ->
       case state of
@@ -368,3 +407,10 @@ onSubmitOperation Internal{..} (SubmitOperation cb op) = do
       logMsg _logger Warn "Connection closed but we received an operation request"
     Connected conn -> Operation.submit _opMgr op cb (Just conn)
     _              -> Operation.submit _opMgr op cb Nothing
+
+--------------------------------------------------------------------------------
+onConnectionError :: Internal -> ConnectionError -> IO ()
+onConnectionError i@Internal{..} (ConnectionError conn e) = do
+  let msg = "Connection error: reason {}"
+  logFormat _logger Error msg (Only $ Shown e)
+  closeConnection i conn

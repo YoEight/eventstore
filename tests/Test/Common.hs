@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Test.Common
@@ -16,6 +17,10 @@ import ClassyPrelude
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Types
+import Test.Tasty.Hspec
+
+--------------------------------------------------------------------------------
+data Foo = Foo deriving Typeable
 
 --------------------------------------------------------------------------------
 newtype Counter = Counter (TVar Int)
@@ -41,9 +46,7 @@ testDisc = staticEndPointDiscovery "localhost" 1234
 --------------------------------------------------------------------------------
 testSettings :: Settings
 testSettings =
-  defaultSettings { s_loggerSettings =
-                      defaultLoggerSettings { loggerType = LogNone }
-                  }
+  defaultSettings { s_loggerSettings = testLoggerSettings }
 
 --------------------------------------------------------------------------------
 secs :: Int
@@ -55,3 +58,10 @@ testLoggerSettings = LoggerSettings
                      { loggerLevel = Debug
                      , loggerType  = LogNone
                      }
+
+--------------------------------------------------------------------------------
+initLogManager :: ActionWith LogManager -> IO ()
+initLogManager action = do
+  logMgr <- newLogManager testLoggerSettings
+  action logMgr
+  closeLogManager logMgr

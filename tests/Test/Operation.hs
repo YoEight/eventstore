@@ -19,7 +19,9 @@ import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Connection
+import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Exec
+import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operations
 import Database.EventStore.Internal.Types
@@ -29,6 +31,7 @@ import Test.Bogus.Connection
 import Test.Common
 import Test.Tasty
 import Test.Tasty.Hspec
+import System.Log.FastLogger
 
 --------------------------------------------------------------------------------
 alwaysNotHandled :: Package -> Package
@@ -52,20 +55,27 @@ alwaysNotHandled pkg =
            }
 
 --------------------------------------------------------------------------------
-spec :: Spec
-spec = do
-  specify "Operation manager should behave on not handled" $ do
-    let builder = respondWithConnectionBuilder alwaysNotHandled
-
-    exec <- newExec testSettings builder testDisc
-
+spec :: LogManager -> Spec
+spec logMgr = do
+  specify "Operation manager should behave on not handled [not-master]" $ do
+    bus <- newBus logMgr "operation-not-handled-test"
     var <- newEmptyMVar
-    subscribe exec $ \ForceReconnect{} ->
-      putMVar var ()
+    let builder = respondMWithConnectionBuilder (asPub bus) $ \ept pkg -> do
+            empty <- isEmptyMVar var
+            when (ept == EndPoint "addr" 1 && empty) $
+              putMVar var ()
+
+            return $ alwaysNotHandled pkg
+
+    exec <- newExec testSettings logMgr bus builder testDisc
 
     p <- newPromise
     let op = readEvent testSettings "foo" 1 True
     publish exec (SubmitOperation p op)
 
     res <- takeMVar var
+
+    publish exec SystemShutdown
+    execWaitTillClosed exec
+
     res `shouldBe` ()

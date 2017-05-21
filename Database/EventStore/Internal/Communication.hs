@@ -100,7 +100,3 @@ data Check = Check deriving Typeable
 --------------------------------------------------------------------------------
 data ConnectionChanged = ConnectionChanged
   deriving Typeable
-
---------------------------------------------------------------------------------
-data ConnectionError = ConnectionError SomeException
-  deriving Typeable

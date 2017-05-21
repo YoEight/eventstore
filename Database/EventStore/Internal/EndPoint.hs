@@ -20,7 +20,7 @@ data EndPoint =
     EndPoint
     { endPointIp   :: !String
     , endPointPort :: !Int
-    }
+    } deriving Eq
 
 --------------------------------------------------------------------------------
 instance Show EndPoint where

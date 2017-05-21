@@ -32,7 +32,7 @@ source-repository head
 library
   hs-source-dirs:
       .
-  default-extensions: NoImplicitPrelude OverloadedStrings
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards
   build-depends:
       base >=4.7 && <5
     , aeson >=0.8 && <1.2
@@ -109,7 +109,8 @@ test-suite eventstore-tests
   main-is: Main.hs
   hs-source-dirs:
       tests
-  default-extensions: NoImplicitPrelude OverloadedStrings
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
     , aeson >=0.8 && <1.2
@@ -128,8 +129,10 @@ test-suite eventstore-tests
     , protobuf
     , cereal
     , uuid
+    , fast-logger
   other-modules:
       Test.Bogus.Connection
+      Test.Bus
       Test.Common
       Test.Connection
       Test.Integration

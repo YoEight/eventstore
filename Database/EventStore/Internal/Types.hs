@@ -289,6 +289,7 @@ data EventRecord
 
 --------------------------------------------------------------------------------
 instance Decode EventRecord
+instance Encode EventRecord
 
 --------------------------------------------------------------------------------
 -- | Represents a serialized event representiong either an event or a link
@@ -302,6 +303,7 @@ data ResolvedIndexedEvent
 
 --------------------------------------------------------------------------------
 instance Decode ResolvedIndexedEvent
+instance Encode ResolvedIndexedEvent
 
 --------------------------------------------------------------------------------
 data NotHandledReason

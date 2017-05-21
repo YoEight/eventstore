@@ -24,6 +24,7 @@ module Database.EventStore.Internal.Logger
   , getLogger
   , logMsg
   , logFormat
+  , closeLogManager
   ) where
 
 --------------------------------------------------------------------------------
@@ -52,6 +53,7 @@ defaultLoggerSettings =
 data LogManager =
   LogManager { logCallback :: TimedFastLogger
              , logLevel    :: LogLevel
+             , _cleanUp    :: IO ()
              }
 
 --------------------------------------------------------------------------------
@@ -82,8 +84,12 @@ logLvlTxt Fatal = "[FATAL]"
 newLogManager :: LoggerSettings -> IO LogManager
 newLogManager setts = do
   cache         <- newTimeCache simpleTimeFormat'
-  (callback, _) <- newTimedFastLogger cache (loggerType setts)
-  return (LogManager callback (loggerLevel setts))
+  (callback, cleanup) <- newTimedFastLogger cache (loggerType setts)
+  return (LogManager callback (loggerLevel setts) cleanup)
+
+--------------------------------------------------------------------------------
+closeLogManager :: LogManager -> IO ()
+closeLogManager LogManager{..} = _cleanUp
 
 --------------------------------------------------------------------------------
 getLogger :: Text -> LogManager -> Logger

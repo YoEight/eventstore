@@ -16,10 +16,14 @@ module Test.Bogus.Connection where
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Data.UUID
+import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Connection
+import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Logger
+import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -34,17 +38,32 @@ alwaysFailConnectionBuilder onConnect = ConnectionBuilder $ \_ -> do
 --------------------------------------------------------------------------------
 -- | Creates a 'ConnectionBuilder' that allows to respond to 'Package' different
 --   from heartbeat request.
-respondWithConnectionBuilder :: (Package -> Package) -> ConnectionBuilder
-respondWithConnectionBuilder resp = ConnectionBuilder $ \_ -> do
-  chan <- newChan
+respondWithConnectionBuilder :: Publish
+                             -> (Package -> Package)
+                             -> ConnectionBuilder
+respondWithConnectionBuilder pub resp =
+  respondMWithConnectionBuilder pub (\_ -> return . resp)
 
-  return Connection
-         { sendPackage = \pkg ->
-             case packageCmd pkg of
-               cmd | cmd == getCommand 0x01 -> do
-                       let rpkg = pkg { packageCmd = getCommand 0x02 }
-                       writeChan chan rpkg
-                   | otherwise -> writeChan chan (resp pkg)
-         , receivePackage = Recv <$> readChan chan
-         , dispose = return ()
-         }
+--------------------------------------------------------------------------------
+-- | Creates a 'ConnectionBuilder' that allows to respond to 'Package' different
+--   from heartbeat request.
+respondMWithConnectionBuilder :: Publish
+                              -> (EndPoint -> Package -> IO Package)
+                              -> ConnectionBuilder
+respondMWithConnectionBuilder pub resp = ConnectionBuilder $ \ept -> do
+  uuid <- nextRandom
+  let conn = Connection
+          { connectionId = uuid
+          , connectionEndPoint = ept
+          , enqueuePackage = \pkg ->
+              case packageCmd pkg of
+                cmd | cmd == getCommand 0x01 -> do
+                        let rpkg = pkg { packageCmd = getCommand 0x02 }
+                        publish pub (PackageArrived conn rpkg)
+                    | otherwise -> do
+                      rpkg <- resp ept pkg
+                      publish pub (PackageArrived conn rpkg)
+          , dispose = return ()
+          }
+
+  return conn

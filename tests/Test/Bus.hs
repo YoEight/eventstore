@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveDataTypeable  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
@@ -27,13 +26,9 @@ import Test.Tasty
 import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
-data Foo = Foo deriving Typeable
-
---------------------------------------------------------------------------------
-spec :: Spec
-spec = do
+spec :: LogManager -> Spec
+spec mgr = do
   specify "Bus dispatches only one time" $ do
-    mgr <- newLogManager testLoggerSettings
     bus <- newBus mgr "test"
 
     ref <- newIORef 0
@@ -42,13 +37,13 @@ spec = do
 
     publish bus Foo
     busStop bus
+    busProcessedEverything bus
 
     cnt <- readIORef ref
 
     cnt `shouldBe` 1
 
   specify "Bus dispatches given and parent message type" $ do
-    mgr <- newLogManager testLoggerSettings
     bus <- newBus mgr "test"
 
     ref <- newIORef 0
@@ -60,6 +55,7 @@ spec = do
 
     publish bus Foo
     busStop bus
+    busProcessedEverything bus
 
     cnt <- readIORef ref
     cnt `shouldBe` 2

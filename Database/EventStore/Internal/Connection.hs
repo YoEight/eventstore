@@ -15,7 +15,9 @@ module Database.EventStore.Internal.Connection
   , Connection(..)
   , RecvOutcome(..)
   , PackageArrived(..)
+  , ConnectionError(..)
   , connectionBuilder
+  , dumbConnection
   ) where
 
 --------------------------------------------------------------------------------
@@ -48,9 +50,19 @@ data RecvOutcome
 
 --------------------------------------------------------------------------------
 data Connection =
-  Connection { connectionId   :: UUID
-             , enqueuePackage :: Package -> IO ()
-             , dispose        :: IO ()
+  Connection { connectionId       :: UUID
+             , connectionEndPoint :: EndPoint
+             , enqueuePackage     :: Package -> IO ()
+             , dispose            :: IO ()
+             }
+
+--------------------------------------------------------------------------------
+dumbConnection :: Connection
+dumbConnection =
+  Connection { connectionId       = nil
+             , connectionEndPoint = EndPoint "dumb" 0
+             , enqueuePackage     = \_ -> return ()
+             , dispose            = return ()
              }
 
 --------------------------------------------------------------------------------
@@ -63,6 +75,10 @@ data ConnectionState =
 
 --------------------------------------------------------------------------------
 data PackageArrived = PackageArrived Connection Package deriving Typeable
+
+--------------------------------------------------------------------------------
+data ConnectionError =
+  ConnectionError Connection SomeException deriving Typeable
 
 --------------------------------------------------------------------------------
 connectionBuilder :: Settings -> Publish -> IO ConnectionBuilder
@@ -79,9 +95,10 @@ connectionBuilder setts bus = do
 
     uuid <- nextRandom
     let conn =
-          Connection { connectionId   = uuid
-                     , enqueuePackage = enqueue state
-                     , dispose        = Network.connectionClose (_conn state)
+          Connection { connectionId       = uuid
+                     , connectionEndPoint = ept
+                     , enqueuePackage     = enqueue state conn
+                     , dispose            = Network.connectionClose (_conn state)
                      }
 
     receiving state conn
@@ -106,15 +123,15 @@ receiving ConnectionState{..} self = loop
     loop = do
       _ <- fork $ do
         tryAny (receivePackage _conn) >>= \case
-          Left e    -> publish _bus (ConnectionError e)
+          Left e    -> publish _bus (ConnectionError self e)
           Right pkg -> do
             publish _bus (PackageArrived self pkg)
             loop
       return ()
 
 --------------------------------------------------------------------------------
-enqueue :: ConnectionState -> Package -> IO ()
-enqueue state@ConnectionState{..} pkg = do
+enqueue :: ConnectionState -> Connection -> Package -> IO ()
+enqueue state@ConnectionState{..} self pkg = do
   start <- atomically $ do
     running <- readTVar _sending
     writeTQueue _sendQueue pkg
@@ -124,12 +141,12 @@ enqueue state@ConnectionState{..} pkg = do
 
     return (not running)
 
-  _ <- fork $ sending state
+  _ <- fork $ sending state self
   return ()
 
 --------------------------------------------------------------------------------
-sending :: ConnectionState -> IO ()
-sending ConnectionState{..} = loop
+sending :: ConnectionState -> Connection -> IO ()
+sending ConnectionState{..} self = loop
   where
     loop = do
       outcome <- atomically $
@@ -142,7 +159,7 @@ sending ConnectionState{..} = loop
         Just pkg -> do
           let bytes = runPut $ putPackage pkg
           tryAny (Network.connectionPut _conn bytes) >>= \case
-            Left e  -> publish _bus (ConnectionError e)
+            Left e  -> publish _bus (ConnectionError self e)
             Right _ -> loop
 
 --------------------------------------------------------------------------------
