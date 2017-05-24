@@ -35,6 +35,7 @@ import           Database.EventStore.Internal.EndPoint
 import           Database.EventStore.Internal.Logger
 import           Database.EventStore.Internal.Messaging
 import qualified Database.EventStore.Internal.OperationManager as Operation
+import qualified Database.EventStore.Internal.SubscriptionManager as Subscription
 import           Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -107,6 +108,7 @@ data Internal =
            , _last     :: TVar (Maybe EndPoint)
            , _sending  :: TVar Bool
            , _opMgr    :: Operation.Manager
+           , _subMgr   :: Subscription.Manager
            }
 
 --------------------------------------------------------------------------------
@@ -124,6 +126,7 @@ connectionManager logMgr setts builder disc mainBus = do
                          <*> newTVarIO Nothing
                          <*> newTVarIO False
                          <*> Operation.new logMgr setts
+                         <*> Subscription.new logMgr setts
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onArrived internal)
@@ -131,6 +134,7 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onTick internal)
   subscribe mainBus (onSubmitOperation internal)
   subscribe mainBus (onConnectionError internal)
+  subscribe mainBus (onSubmitSubscription internal)
 
   publish mainBus (NewTimer Tick timerPeriod False)
 
@@ -414,3 +418,13 @@ onConnectionError i@Internal{..} (ConnectionError conn e) = do
   let msg = "Connection error: reason {}"
   logFormat _logger Error msg (Only $ Shown e)
   closeConnection i conn
+
+--------------------------------------------------------------------------------
+onSubmitSubscription :: Internal -> SubmitSubscription -> IO ()
+onSubmitSubscription Internal{..} cmd = do
+  stage <- atomically $ readTVar _stage
+  case stage of
+    Closed ->
+      logMsg _logger Warn "Connection closed but we received an operation request"
+    Connected conn -> Subscription.submit _subMgr (Just conn) cmd
+    _               -> Subscription.submit _subMgr Nothing cmd

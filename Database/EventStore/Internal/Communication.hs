@@ -41,7 +41,6 @@ newtype TcpSend = TcpSend Package deriving Typeable
 --------------------------------------------------------------------------------
 data Service
   = ConnectionManager
-  | SubscriptionManager
   | TimerService
   deriving (Show, Eq, Enum, Bounded, Typeable, Generic)
 

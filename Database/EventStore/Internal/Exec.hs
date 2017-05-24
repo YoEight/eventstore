@@ -31,7 +31,6 @@ import Database.EventStore.Internal.ConnectionManager
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
-import Database.EventStore.Internal.SubscriptionManager
 import Database.EventStore.Internal.TimerService
 import Database.EventStore.Internal.Types
 
@@ -123,7 +122,6 @@ newExec setts logMgr mainBus builder disc = do
 
   timerService (getLogger "TimerService" logMgr) hub
   connectionManager logMgr setts builder disc hub
-  subscriptionManager (getLogger "SubscriptionManager" logMgr) setts hub
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onInitFailed internal)
