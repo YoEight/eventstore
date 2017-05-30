@@ -23,7 +23,6 @@ import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
-import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Types
 import Database.EventStore.Internal.Subscription.Message

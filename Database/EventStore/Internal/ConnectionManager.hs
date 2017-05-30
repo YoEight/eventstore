@@ -307,7 +307,13 @@ arrived i@Internal{..} conn pkg =
                 publish _mainBus (FatalCondition msg)
         | otherwise
           -> Operation.handle _opMgr pkg >>= \case
-               Nothing  -> return ()
+               Nothing  -> Subscription.handle _subMgr pkg >>= \case
+                 Nothing -> do
+                   let msg = "Unknown package correlation id."
+                   logMsg _logger Warn msg
+                 Just dec ->
+                   case dec of
+                     Subscription.Handled -> return ()
                Just dec ->
                  case dec of
                    Operation.Handled        -> return ()
@@ -400,6 +406,7 @@ onTick i@Internal{..} _ = do
         _ -> return ()
     TickConnected conn -> do
       Operation.check _opMgr conn
+      Subscription.check _subMgr conn
     _ -> return ()
 
 --------------------------------------------------------------------------------

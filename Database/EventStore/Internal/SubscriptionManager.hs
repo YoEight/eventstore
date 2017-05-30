@@ -17,6 +17,7 @@ module Database.EventStore.Internal.SubscriptionManager
   ( PersistActionMaxAttemptReached(..)
   , SubscriptionMaxAttemptReached(..)
   , Manager
+  , Decision(..)
   , new
   , check
   , submit
@@ -24,7 +25,7 @@ module Database.EventStore.Internal.SubscriptionManager
   ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude hiding (handle)
+import ClassyPrelude hiding (handle, group)
 import Data.Time
 import Data.UUID
 import Data.UUID.V4
@@ -34,7 +35,6 @@ import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Subscription.Command
 import Database.EventStore.Internal.Subscription.Packages
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Connection (Connection(..))
 import qualified Database.EventStore.Internal.Subscription.Api as Api
@@ -42,49 +42,110 @@ import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-data Active =
-  Active { _activeConnId :: !UUID
-         , _activeSubId  :: !UUID
-         , _activeSub    :: !(Callback SubAction)
-         }
+data Resource =
+  Resource { _connId :: !UUID
+           , _type   :: !ResourceType
+           }
 
 --------------------------------------------------------------------------------
-data Pending a =
-  Pending { _pendingConnId  :: !UUID
-          , _pendingId      :: !UUID
-          , _pendingCreated :: !UTCTime
-          , _pendingRetries :: !Int
-          , _pendingRequest :: Request
-          , _pendingCb      :: !(Callback a)
+droppedResource :: Resource -> SubDropReason -> IO ()
+droppedResource resource e =
+  case _type resource of
+    ConfirmedSub callback   -> Api.dropped callback e
+    NotConfirmedSub pending -> Api.dropped (_pendingCallback pending) e
+
+--------------------------------------------------------------------------------
+data ResourceType
+  = ConfirmedSub !(Callback SubAction)
+  | NotConfirmedSub !Pending
+
+--------------------------------------------------------------------------------
+data Pending =
+  Pending { _pendingRequest  :: !Request
+          , _pendingCallback :: !(Callback SubAction)
+          , _pendingState    :: !PendingState
           }
+
+--------------------------------------------------------------------------------
+newPending :: Request -> IO (Pending, Package)
+newPending req = do
+  uuid    <- nextRandom
+  let (pkg, callback) = createPackage req uuid
+  pending <- Pending req callback <$> newPendingState
+  return (pending, pkg)
+
+--------------------------------------------------------------------------------
+data RetryDecision
+  = DoNothing
+  | Retry !Pending !Package
+  | MaxAttemptReached
+
+--------------------------------------------------------------------------------
+retryPending :: Settings -> Pending -> IO RetryDecision
+retryPending Settings{..} self = do
+  now <- getCurrentTime
+  let pendingStart = _created (_pendingState self)
+      hasTimeout   = diffUTCTime now pendingStart >= s_subscriptionTimeout
+      canRetry =
+        case s_subscriptionRetry of
+          AtMost maxAttempts -> _retries (_pendingState self) <= maxAttempts
+          KeepRetrying       -> True
+
+  if hasTimeout
+    then
+      if canRetry
+      then do
+        uuid <- nextRandom
+        let state    = incrPendingState now (_pendingState self)
+            nextSelf = self { _pendingState = state }
+            pkg      = createPackageOnly (_pendingRequest self) uuid
+        return (Retry nextSelf pkg)
+      else return MaxAttemptReached
+    else return DoNothing
+
+--------------------------------------------------------------------------------
+data PendingState =
+  PendingState { _retries :: !Int
+               , _created :: !UTCTime
+               }
+
+--------------------------------------------------------------------------------
+newPendingState :: IO PendingState
+newPendingState = PendingState 0 <$> getCurrentTime
+
+--------------------------------------------------------------------------------
+incrPendingState :: UTCTime -> PendingState -> PendingState
+incrPendingState date self = PendingState (_retries self + 1) date
 
 --------------------------------------------------------------------------------
 newtype Awaiting = Awaiting Request
 
 --------------------------------------------------------------------------------
-type Pendings a     = HashMap UUID (Pending a)
-type SubRequests    = Pendings SubAction
-type Actives        = HashMap UUID Active
-type ActionRequests = Pendings ()
+type Resources = HashMap UUID Resource
 
 --------------------------------------------------------------------------------
 data Manager =
-  Manager { _setts        :: Settings
-           , _logger      :: Logger
-           , _subRequests :: TVar SubRequests
-           , _actives     :: TVar Actives
-           , _actRequests :: TVar ActionRequests
-           , _awaits      :: IORef [Awaiting]
+  Manager {  _settings     :: Settings
+           , _logger       :: Logger
+           , _resourcesRef :: IORef Resources
+           , _awaitRef     :: IORef [Awaiting]
            }
 
 --------------------------------------------------------------------------------
-data Expect
-  = ExpectSub (Callback SubAction)
-  | ExpectAction (Callback ())
-  | ExpectNothing
+new :: LogManager -> Settings -> IO Manager
+new logMgr setts =
+  Manager setts logger <$> newIORef mempty
+                       <*> newIORef []
+  where
+    logger = getLogger "SubscriptionManager" logMgr
 
 --------------------------------------------------------------------------------
-newtype Request = Request { createPackage :: UUID -> (Package, Expect) }
+newtype Request =
+  Request { createPackage :: UUID -> (Package, Callback SubAction) }
+
+--------------------------------------------------------------------------------
+createPackageOnly :: Request -> UUID -> Package
+createPackageOnly req = fst . createPackage req
 
 --------------------------------------------------------------------------------
 createRequest :: Settings -> SubmitSubscription -> Request
@@ -92,80 +153,35 @@ createRequest setts tpe = Request $ \corrId ->
   case tpe of
     ConnectStream cb stream tos ->
       let pkg = createConnectRegularPackage setts corrId stream tos in
-      (pkg, ExpectSub cb)
+      (pkg, cb)
     ConnectPersist cb group stream batch ->
       let pkg = createConnectPersistPackage setts corrId group stream batch in
-      (pkg, ExpectSub cb)
-    CreatePersist cb group stream csetts ->
-      let tpe = PersistCreate csetts
-          pkg = createPersistActionPackage setts corrId group stream tpe in
-      (pkg, ExpectAction cb)
-    UpdatePersist cb group stream usetts ->
-      let tpe = PersistUpdate usetts
-          pkg = createPersistActionPackage setts corrId group stream tpe in
-      (pkg, ExpectAction cb)
-    DeletePersist cb group stream ->
-      let pkg = createPersistActionPackage setts corrId group stream PersistDelete in
-      (pkg, ExpectAction cb)
-    AckPersist details uids ->
-      let uuid     = subId details
-          Just sid = subSubId details
-          pkg      = createAckPackage setts uuid sid uids in
-      (pkg, ExpectNothing)
-    NakPersist details na reason uids ->
-      let uuid     = subId details
-          Just sid = subSubId details
-          pkg      = createNakPackage setts uuid sid na reason uids in
-      (pkg, ExpectNothing)
-    Unsubscribe details ->
-      let uuid = subId details
-          pkg  = createUnsubscribePackage setts uuid in
-      (pkg, ExpectNothing)
-
---------------------------------------------------------------------------------
-createPending :: Connection -> UUID -> Request -> Callback a -> IO (Pending a)
-createPending conn uuid req cb = do
-  now  <- getCurrentTime
-  return Pending { _pendingConnId  = connectionId conn
-                 , _pendingId      = uuid
-                 , _pendingCreated = now
-                 , _pendingRetries = 1
-                 , _pendingRequest = req
-                 , _pendingCb      = cb
-                 }
+      (pkg, cb)
 
 --------------------------------------------------------------------------------
 registerAwaiting :: Manager -> Connection -> IO ()
 registerAwaiting self@Manager{..} conn = do
-  xs <- atomicModifyIORef' _awaits $ \stack -> ([], stack)
+  xs <- atomicModifyIORef' _awaitRef $ \stack -> ([], stack)
 
   traverse_ registering xs
   where
     registering (Awaiting req) = register self conn req
 
-
 --------------------------------------------------------------------------------
 schedule :: Manager -> Request -> IO ()
 schedule Manager{..} req =
-  atomicModifyIORef' _awaits $ \stack ->
-    (Awaiting req : stack, ())
+  modifyIORef' _awaitRef (Awaiting req :)
 
 --------------------------------------------------------------------------------
 register :: Manager -> Connection -> Request -> IO ()
 register Manager{..} conn req = do
-  corrId <- nextRandom
-  let (pkg, expect) = createPackage req corrId
+  (pending, pkg) <- newPending req
+  let key = packageCorrelation pkg
+      res = Resource (connectionId conn) (NotConfirmedSub pending)
+
+  modifyIORef' _resourcesRef (insertMap key res)
 
   enqueuePackage conn pkg
-
-  case expect of
-    ExpectSub cb -> do
-      pending <- createPending conn corrId req cb
-      atomically $ modifyTVar' _subRequests (insertMap corrId pending)
-    ExpectAction cb -> do
-      pending <- createPending conn corrId req cb
-      atomically $ modifyTVar' _actRequests (insertMap corrId pending)
-    ExpectNothing -> return ()
 
 --------------------------------------------------------------------------------
 -- | Occurs when a subscription has been retried more than
@@ -178,31 +194,47 @@ newtype SubscriptionMaxAttemptReached =
 instance Exception SubscriptionMaxAttemptReached
 
 --------------------------------------------------------------------------------
-checkAndRetry :: Settings -> Connection -> Pendings a -> IO (Pendings a)
-checkAndRetry Settings{..} conn start = do
-  now <- getCurrentTime
-  foldM (go now) start (mapToList start)
+checkAndRetry :: Manager -> Connection -> IO ()
+checkAndRetry Manager{..} conn = do
+  resources <- readIORef _resourcesRef
+  updated   <- foldM checking resources (mapToList resources)
+  writeIORef _resourcesRef updated
   where
-    go now pendings (key, p)
-      | diffUTCTime now (_pendingCreated p) >= s_subscriptionTimeout =
-        let retry = do
-              corrId <- nextRandom
-              let (pkg, expect) = createPackage (_pendingRequest p) corrId
-                  pending = p { _pendingRetries = _pendingRetries p + 1
-                              , _pendingCreated = now
-                              }
-
+    checking resources (key, resource) = do
+      if _connId resource /= connectionId conn
+        then
+          case _type resource of
+            ConfirmedSub callback -> do
+              Api.dropped callback SubAborted
+              return $ deleteMap key resources
+            NotConfirmedSub pending -> do
+              state <- newPendingState
+              uuid  <- nextRandom
+              let pkg = createPackageOnly (_pendingRequest pending) uuid
+                  updatedPending  = pending { _pendingState = state }
+                  updatedType     = NotConfirmedSub updatedPending
+                  updatedResource = Resource { _connId = connectionId conn
+                                             , _type   = updatedType
+                                             }
               enqueuePackage conn pkg
-              return $ deleteMap key $ insertMap corrId pending pendings in
-        case s_subscriptionRetry of
-          AtMost maxAttempts
-            | _pendingRetries p <= maxAttempts
-              -> retry
-            | otherwise -> do
-              reject (_pendingCb p) (SubscriptionMaxAttemptReached key)
-              return $ deleteMap key pendings
-          KeepRetrying -> retry
-      | otherwise = return pendings
+              return $ deleteMap key $ insertMap uuid updatedResource resources
+        else
+          case _type resource of
+            ConfirmedSub{}          -> return resources
+            NotConfirmedSub pending ->
+              retryPending _settings pending >>= \case
+                DoNothing -> return resources
+                Retry updatedPending pkg -> do
+                  let newKey  = packageCorrelation pkg
+                      newType = NotConfirmedSub updatedPending
+                      updated = resource { _type = newType }
+                  enqueuePackage conn pkg
+
+                  return $ deleteMap key $ insertMap newKey updated resources
+                MaxAttemptReached -> do
+                  let cb = _pendingCallback pending
+                  reject cb (SubscriptionMaxAttemptReached key)
+                  return $ deleteMap key resources
 
 --------------------------------------------------------------------------------
 -- | Occurs when a persistent action has been retried more than
@@ -216,26 +248,9 @@ instance Exception PersistActionMaxAttemptReached
 
 --------------------------------------------------------------------------------
 check :: Manager -> Connection -> IO ()
-check self@Manager{..} conn = do
-  subs    <- readTVarIO _subRequests
-  newSubs <- checkAndRetry _setts conn subs
-  atomically $ writeTVar _subRequests newSubs
-
-  acts    <- readTVarIO _actRequests
-  newActs <- checkAndRetry _setts conn acts
-  atomically $ writeTVar _actRequests newActs
-
+check self conn = do
+  checkAndRetry self conn
   registerAwaiting self conn
-
---------------------------------------------------------------------------------
-new :: LogManager -> Settings -> IO Manager
-new logMgr setts =
-  Manager setts logger <$> newTVarIO mempty
-                       <*> newTVarIO mempty
-                       <*> newTVarIO mempty
-                       <*> newIORef []
-  where
-    logger = getLogger "SubscriptionManager" logMgr
 
 --------------------------------------------------------------------------------
 submit :: Manager -> Maybe Connection -> SubmitSubscription -> IO ()
@@ -244,146 +259,75 @@ submit m@Manager{..} oConn cmd =
     Nothing   -> schedule m req
     Just conn -> register m conn req
   where
-    req = createRequest _setts cmd
+    req = createRequest _settings cmd
+-----------------------------------------------------------------------------
+data Decision
+  = Handled
 
 --------------------------------------------------------------------------------
-data RecvOutcome
-  = NotHandled
-  | Handled (IO ())
+handle :: Manager -> Package -> IO (Maybe Decision)
+handle Manager{..} pkg = do
+  resources <- readIORef _resourcesRef
+  let corrId = packageCorrelation pkg
+  case lookup corrId resources of
+    Nothing       -> return Nothing
+    Just resource ->
+      case decodeServerMessage pkg of
+        LiveMsg tpe ->
+          case _type resource of
+            NotConfirmedSub{} -> do
+              let msg = "Received a live message on subscription not confirmed \
+                        \yet."
+              logMsg _logger Warn msg
+              return $ Just Handled
+            ConfirmedSub callback -> do
+              case tpe of
+                EventAppearedMsg event ->
+                  Api.submit callback event
+                PersistentEventAppearedMsg event ->
+                  Api.submit callback event
+                DroppedMsg reason -> do
+                  writeIORef _resourcesRef (deleteMap corrId resources)
+                  Api.dropped callback reason
+              return $ Just Handled
+
+        ConfirmationMsg tpe ->
+          case _type resource of
+            ConfirmedSub{} -> do
+              let msg = "Received a confirmation message on an already \
+                        \confirmed subscription."
+              logMsg _logger Warn msg
+              return $ Just Handled
+            NotConfirmedSub pending -> do
+              let confirmed       = ConfirmedSub $ _pendingCallback pending
+                  updated         = resource { _type = confirmed }
+                  commitPos       = confirmationCommitPos tpe
+                  lastEventNum    = confirmationLastEventNum tpe
+                  persistentSubId = confirmationPersistentSubId tpe
+                  details         = SubDetails
+                                    { subId           = corrId
+                                    , subCommitPos    = commitPos
+                                    , subLastEventNum = lastEventNum
+                                    , subSubId        = persistentSubId
+                                    }
+
+              writeIORef _resourcesRef (insertMap corrId updated resources)
+              Api.confirmed (_pendingCallback pending) details
+              return $ Just Handled
+        ErrorMsg tpe -> do
+          writeIORef _resourcesRef (deleteMap corrId resources)
+          Just <$> handleError resource tpe
 
 --------------------------------------------------------------------------------
-handled :: IO () -> STM RecvOutcome
-handled = return . Handled
-
---------------------------------------------------------------------------------
-notHandled :: STM RecvOutcome
-notHandled = return NotHandled
-
---------------------------------------------------------------------------------
-handle :: Manager -> Package -> IO ()
-handle i@Manager{..} pkg = do
-  outcome <- atomically $ do
-    mp <- readTVar _subRequests
-    ma <- readTVar _actives
-    mr <- readTVar _actRequests
-    case lookup (packageCorrelation pkg) mp of
-      Just p  -> onPendingRecvSTM i p pkg
-      Nothing ->
-        case lookup (packageCorrelation pkg) ma of
-          Just a  -> onActiveRecvSTM i a pkg
-          Nothing ->
-            case lookup (packageCorrelation pkg) mr of
-              Just ac -> onPersistActionSTM i ac pkg
-              Nothing -> notHandled
-
-  case outcome of
-    NotHandled     -> return ()
-    Handled action -> action
-
---------------------------------------------------------------------------------
-onPendingRecvSTM :: Manager -> Pending SubAction -> Package -> STM RecvOutcome
-onPendingRecvSTM Manager{..} Pending{..} pkg =
-  case decodeServerMessage pkg of
-    ConfirmationMsg comPos eventNum ->
-      onSuccess comPos eventNum Nothing
-    PersistentConfirmationMsg subIdent comPos eventNum ->
-      onSuccess comPos eventNum (Just subIdent)
-    DroppedMsg reason -> do
-      onFailure
-      handled $ Api.dropped _pendingCb reason
-    BadRequestMsg msg -> do
-      onFailure
-      handled $ Api.dropped _pendingCb (SubServerError msg)
-    NotAuthenticatedMsg msg -> do
-      onFailure
-      handled $ Api.dropped _pendingCb (SubNotAuthenticated msg)
-    NotHandledMsg reason info -> do
-      onFailure
-      handled $ Api.dropped _pendingCb (SubNotHandled reason info)
+handleError :: Resource -> ErrorMsg -> IO Decision
+handleError resource tpe =
+  case tpe of
+    BadRequestMsg msg ->
+      Handled <$ droppedResource resource (SubServerError msg)
+    NotAuthenticatedMsg msg ->
+      Handled <$ droppedResource resource (SubNotAuthenticated msg)
+    NotHandledMsg reason info ->
+      Handled <$ droppedResource resource (SubNotHandled reason info)
     UnknownMsg cmd -> do
-      let msg = fmap (\c -> "unknown command: " <> tshow c) cmd
-      onFailure
-      handled $ Api.dropped _pendingCb (SubServerError msg)
-    _ -> do
-      onFailure
-      let msg = "Logic error in Subscription Driver (the impossible happened)"
-      handled $ Api.dropped _pendingCb (SubClientError msg)
-  where
-    onFailure = do
-      m <- readTVar _subRequests
-      writeTVar _subRequests (deleteMap _pendingId m)
-
-    onSuccess comPos eventNum subIdent = do
-      mp  <- readTVar _subRequests
-      ma  <- readTVar _actives
-
-      let details =
-            SubDetails { subId           = _pendingId
-                       , subCommitPos    = comPos
-                       , subLastEventNum = eventNum
-                       , subSubId        = subIdent
-                       }
-
-          active =
-            Active { _activeConnId = _pendingConnId
-                   , _activeSubId  = _pendingId
-                   , _activeSub    = _pendingCb
-                   }
-
-      writeTVar _subRequests (deleteMap _pendingId mp)
-      writeTVar _actives (insertMap _pendingId active ma)
-      handled $ Api.confirmed _pendingCb details
-
---------------------------------------------------------------------------------
-onActiveRecvSTM :: Manager -> Active -> Package -> STM RecvOutcome
-onActiveRecvSTM Manager{..} Active{..} pkg =
-  case decodeServerMessage pkg of
-    EventAppearedMsg e ->
-      handled $ Api.submit _activeSub e
-    PersistentEventAppearedMsg e ->
-      handled $ Api.submit _activeSub e
-    DroppedMsg reason -> do
-      onFailure
-      handled $ Api.dropped _activeSub reason
-    BadRequestMsg msg -> do
-      onFailure
-      handled $ Api.dropped _activeSub (SubServerError msg)
-    NotAuthenticatedMsg msg -> do
-      onFailure
-      handled $ Api.dropped _activeSub (SubNotAuthenticated msg)
-    NotHandledMsg reason info -> do
-      onFailure
-      handled $ Api.dropped _activeSub (SubNotHandled reason info)
-    UnknownMsg cmd -> do
-      let msg = fmap (\c -> "unknown command: " <> tshow c) cmd
-      onFailure
-      handled $ Api.dropped _activeSub (SubServerError msg)
-    _ -> do
-      onFailure
-      let msg = "Logic error in Subscription Driver (the impossible happened)"
-      handled $ Api.dropped _activeSub (SubClientError msg)
-  where
-    onFailure = do
-      m <- readTVar _actives
-      writeTVar _actives (deleteMap _activeSubId m)
-
---------------------------------------------------------------------------------
-onPersistActionSTM :: Manager
-                   -> Pending ()
-                   -> Package
-                   -> STM RecvOutcome
-onPersistActionSTM Manager{..} Pending{..} pkg = do
-  modifyTVar' _actRequests (deleteMap _pendingId)
-  case decodeServerMessage pkg of
-    PersistentCreatedMsg res ->
-      handled $ completeRequest _pendingCb (createRException res)
-    PersistentUpdatedMsg res ->
-      handled $ completeRequest _pendingCb (updateRException res)
-    PersistentDeletedMsg res ->
-      handled $ completeRequest _pendingCb (deleteRException res)
-    _ -> notHandled
-
---------------------------------------------------------------------------------
-completeRequest :: Callback () -> Maybe PersistActionException -> IO ()
-completeRequest p Nothing  = fulfill p ()
-completeRequest p (Just e) = reject p e
+      let msg =  fmap (\c -> "unknown command: " <> tshow c) cmd
+      Handled <$ droppedResource resource (SubServerError msg)
