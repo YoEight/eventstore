@@ -92,10 +92,6 @@ newPersistentSubscription exec grp stream bufSize = do
         case p of
           Running{} -> writeTQueue queue e
           _         -> return ()
-      callback Reconnect = do
-        atomically $ writeTVar phaseVar Pending
-        cb <- newCallbackSimple callback
-        publish exec (ConnectPersist cb grp name bufSize)
 
   cb <- newCallbackSimple callback
   publish exec (ConnectPersist cb grp name bufSize)

@@ -38,10 +38,6 @@ confirmed :: Callback SubAction -> SubDetails -> IO ()
 confirmed s d = fulfill s (Confirmed d)
 
 --------------------------------------------------------------------------------
-reconnect :: Callback SubAction -> IO ()
-reconnect s = fulfill s Reconnect
-
---------------------------------------------------------------------------------
 class Subscription s where
   -- | Asks for the next incoming event like 'nextEventMaybe' while still being
   --   in the the 'STM'.

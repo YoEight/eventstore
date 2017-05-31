@@ -34,6 +34,7 @@ import Data.UUID.V4
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Subscription.Command
+import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Subscription.Packages
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Connection (Connection(..))
@@ -263,6 +264,7 @@ submit m@Manager{..} oConn cmd =
 -----------------------------------------------------------------------------
 data Decision
   = Handled
+  | Reconnect NodeEndPoints
 
 --------------------------------------------------------------------------------
 handle :: Manager -> Package -> IO (Maybe Decision)
@@ -326,8 +328,15 @@ handleError resource tpe =
       Handled <$ droppedResource resource (SubServerError msg)
     NotAuthenticatedMsg msg ->
       Handled <$ droppedResource resource (SubNotAuthenticated msg)
-    NotHandledMsg reason info ->
-      Handled <$ droppedResource resource (SubNotHandled reason info)
+    NotHandledMsg reason mInfo ->
+      case reason of
+        N_NotMaster -> do
+          let Just info = mInfo
+              node      = masterInfoNodeEndPoints info
+
+          -- TODO - Do subscription reconnection here.
+          return $ Reconnect node
+        _ -> Handled <$ droppedResource resource (SubNotHandled reason mInfo)
     UnknownMsg cmd -> do
       let msg =  fmap (\c -> "unknown command: " <> tshow c) cmd
       Handled <$ droppedResource resource (SubServerError msg)

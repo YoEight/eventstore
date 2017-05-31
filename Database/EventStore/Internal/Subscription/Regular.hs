@@ -86,10 +86,6 @@ newRegularSubscription exec stream tos = do
         case p of
           Running{} -> writeTQueue queue e
           _         -> return ()
-      callback Reconnect = do
-        atomically $ writeTVar phaseVar Pending
-        cb <- newCallbackSimple callback
-        publish exec (ConnectStream cb name tos)
 
   cb <- newCallbackSimple callback
   publish exec (ConnectStream cb name tos)

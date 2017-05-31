@@ -313,7 +313,8 @@ arrived i@Internal{..} conn pkg =
                    logMsg _logger Warn msg
                  Just dec ->
                    case dec of
-                     Subscription.Handled -> return ()
+                     Subscription.Handled        -> return ()
+                     Subscription.Reconnect node -> forceReconnect i node
                Just dec ->
                  case dec of
                    Operation.Handled        -> return ()

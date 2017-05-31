@@ -127,19 +127,22 @@ newCatchupSubscription exec tos batch state = do
         case p of
           Running{} -> writeTQueue queue e
           _         -> return ()
-      callback Reconnect = do
-        Chk num (Position cpos ppos) <- atomically $ do
-          writeTVar phaseVar CatchingUp
-          readTVar chkVar
-        let newState =
-              case state of
-                RegularCatchup{} -> RegularCatchup name num
-                AllCatchup{}     -> AllCatchup cpos ppos
 
-            newOp = catchup (execSettings exec) newState  tos batch
+      -- TODO - Preserve state while reconnecting. The current design doesn't
+      --        the subscription a reconnection occured.
+      -- callback Reconnect = do
+      --   Chk num (Position cpos ppos) <- atomically $ do
+      --     writeTVar phaseVar CatchingUp
+      --     readTVar chkVar
+      --   let newState =
+      --         case state of
+      --           RegularCatchup{} -> RegularCatchup name num
+      --           AllCatchup{}     -> AllCatchup cpos ppos
 
-        cb <- newCallback opCallback
-        publish exec (SubmitOperation cb newOp)
+      --       newOp = catchup (execSettings exec) newState  tos batch
+
+      --   cb <- newCallback opCallback
+      --   publish exec (SubmitOperation cb newOp)
 
       opCallback (Left e) = do
         let onError :: forall e. Exception e => e -> IO ()
