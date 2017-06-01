@@ -34,7 +34,7 @@ import Data.Serialize
 import Data.Time
 import Data.UUID
 import Data.UUID.V4
-import System.Random
+-- import System.Random
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
@@ -140,6 +140,9 @@ execute :: Registry
 execute reg@Registry{..} mConn op cb = go
   where
     go Return{} = return ()
+    go (FreshId k) = do
+      uuid <- nextRandom
+      go (k uuid)
     go (Yield a next) = do
       fulfill cb a
       go next
