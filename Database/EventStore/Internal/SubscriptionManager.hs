@@ -268,7 +268,7 @@ data Decision
 
 --------------------------------------------------------------------------------
 handle :: Manager -> Package -> IO (Maybe Decision)
-handle Manager{..} pkg = do
+handle mgr@Manager{..} pkg = do
   resources <- readIORef _resourcesRef
   let corrId = packageCorrelation pkg
   case lookup corrId resources of
@@ -318,25 +318,29 @@ handle Manager{..} pkg = do
               return $ Just Handled
         ErrorMsg tpe -> do
           writeIORef _resourcesRef (deleteMap corrId resources)
-          Just <$> handleError resource tpe
+          outcome <- handleError resource tpe
+          case outcome of
+            Nothing          -> return $ Just Handled
+            Just (req, node) -> do
+              schedule mgr req
+              return $ Just (Reconnect node)
 
 --------------------------------------------------------------------------------
-handleError :: Resource -> ErrorMsg -> IO Decision
+handleError :: Resource -> ErrorMsg -> IO (Maybe (Request, NodeEndPoints))
 handleError resource tpe =
   case tpe of
     BadRequestMsg msg ->
-      Handled <$ droppedResource resource (SubServerError msg)
+      Nothing <$ droppedResource resource (SubServerError msg)
     NotAuthenticatedMsg msg ->
-      Handled <$ droppedResource resource (SubNotAuthenticated msg)
+      Nothing <$ droppedResource resource (SubNotAuthenticated msg)
     NotHandledMsg reason mInfo ->
       case reason of
         N_NotMaster -> do
-          let Just info = mInfo
-              node      = masterInfoNodeEndPoints info
-
-          -- TODO - Do subscription reconnection here.
-          return $ Reconnect node
-        _ -> Handled <$ droppedResource resource (SubNotHandled reason mInfo)
+          let Just info               = mInfo
+              node                    = masterInfoNodeEndPoints info
+              NotConfirmedSub pending = _type resource
+          return $ Just (_pendingRequest pending, node)
+        _ -> Nothing <$ droppedResource resource (SubNotHandled reason mInfo)
     UnknownMsg cmd -> do
       let msg =  fmap (\c -> "unknown command: " <> tshow c) cmd
-      Handled <$ droppedResource resource (SubServerError msg)
+      Nothing <$ droppedResource resource (SubServerError msg)
