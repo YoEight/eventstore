@@ -136,6 +136,7 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onEstablish internal)
   subscribe mainBus (onEstablished internal)
   subscribe mainBus (onCloseConnection internal)
+  subscribe mainBus (onConnectionError internal)
   subscribe mainBus (onTick internal)
   -- subscribe mainBus (onArrived internal)
   -- subscribe mainBus (onShutdown internal)
@@ -272,12 +273,13 @@ onTick i@Internal{..} _ =
             -> do
               let retries = attemptCount + 1
                   att     = Attempts retries now
-                  msg     = "Checking reconnection... (attempt {})"
-              logFormat _logger Debug msg (Only $ Shown retries)
               putMVar _stage (Connecting att Reconnecting)
               case s_retry _setts of
                 AtMost n
-                  | retries < n -> discover i
+                  | attemptCount <= n -> do
+                    let msg = "Checking reconnection... (attempt {})"
+                    logFormat _logger Debug msg (Only $ Shown attemptCount)
+                    discover i
                   | otherwise -> closeConnection i ConnectionMaxAttemptReached
                 KeepRetrying -> closeConnection i ConnectionMaxAttemptReached
           | otherwise -> putMVar _stage stage
@@ -288,6 +290,22 @@ onTick i@Internal{..} _ =
       Subscription.check _subMgr conn
       putMVar _stage stage
     stage -> putMVar _stage stage
+
+--------------------------------------------------------------------------------
+onConnectionError :: Internal -> ConnectionError -> IO ()
+onConnectionError i@Internal{..} (ConnectionError conn e) = do
+  sameConnection <- all ((== cid) . connectionId) <$> tryReadMVar _conn
+  closed         <- isClosed <$> readMVar _stage
+
+  when (sameConnection && not closed) $ do
+    let msg = "TCP connection [{}] error. Cause: [{}]"
+    logFormat _logger Debug msg (Shown cid, Shown e)
+    closeConnection i e
+  where
+    cid = connectionId conn
+
+    isClosed Closed = True
+    isClosed _      = False
 
 -- --------------------------------------------------------------------------------
 -- onCloseConnection :: Internal -> CloseConnection -> IO ()
