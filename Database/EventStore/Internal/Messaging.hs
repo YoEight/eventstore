@@ -173,25 +173,18 @@ instance Show Callback where
 data Bus =
   Bus { busName        :: Text
       , _logger        :: Logger
-      , _busCallbacks  :: TVar Callbacks
-      , _busQueue      :: TQueue Message
-      , _busStopped    :: TVar Bool
-      , _workerRunning :: TVar Bool
+      , _busCallbacks  :: IORef Callbacks
+      , _busQueue      :: TBMQueue Message
+      , _workerAsync   :: Async ()
       }
 
 --------------------------------------------------------------------------------
 busStop :: Bus -> IO ()
-busStop Bus{..} = atomically $ writeTVar _busStopped True
+busStop Bus{..} = atomically $ closeTBMQueue _busQueue
 
 --------------------------------------------------------------------------------
 busProcessedEverything :: Bus -> IO ()
-busProcessedEverything Bus{..} = atomically $ do
-  stopped <- readTVar _busStopped
-  empty   <- isEmptyTQueue _busQueue
-  running <- readTVar _workerRunning
-
-  unless (stopped && empty && not running) $
-    retrySTM
+busProcessedEverything Bus{..} = waitAsync _workerAsync
 
 --------------------------------------------------------------------------------
 messageType :: Type
@@ -201,61 +194,43 @@ messageType = getType (FromProxy (Proxy :: Proxy Message))
 newBus :: LogManager -> Text -> IO Bus
 newBus logMgr name = do
   bus <- mfix $ \b -> do
-    _ <- fork (worker b)
 
     let logger = getLogger name logMgr
-    Bus name logger <$> newTVarIO mempty
-                    <*> newTQueueIO
-                    <*> newTVarIO False
-                    <*> newTVarIO True
+    Bus name logger <$> newIORef mempty
+                    <*> newTBMQueueIO 500
+                    <*> async (worker b)
 
   return bus
 
 --------------------------------------------------------------------------------
 worker :: Bus -> IO ()
-worker b@Bus{..} = loop
+worker Bus{..} = loop
   where
-    loop = do
-      decision <- atomically $ do
-        stopped   <- readTVar _busStopped
-        outcome   <- tryReadTQueue _busQueue
-        callbacks <- readTVar _busCallbacks
-        case outcome of
-          Nothing
-            | stopped -> do
-                writeTVar _workerRunning False
-                return Nothing
-            | otherwise -> retrySTM
-          Just (Message a) -> return $ Just (publishing _logger callbacks a)
-      case decision of
-        Nothing     -> return ()
-        Just action -> do
-          action
-          loop
+    handleMsg (Message a) = do
+      callbacks <- readIORef _busCallbacks
+      publishing _logger callbacks a
+      loop
+
+    loop = traverse_ handleMsg =<< atomically (readTBMQueue _busQueue)
 
 --------------------------------------------------------------------------------
 instance Sub Bus where
-  subscribe Bus{..} (k :: a -> IO ()) = atomically $ do
-      stopped <- readTVar _busStopped
-
-      unless stopped $ do
-        m <- readTVar _busCallbacks
+  subscribe Bus{..} (k :: a -> IO ()) =
+    atomicModifyIORef' _busCallbacks update
+    where
+      update :: Callbacks -> (Callbacks, ())
+      update callbacks =
         let tpe  = getType (FromProxy (Proxy :: Proxy a))
             hdl  = Callback k
             next = alterMap $ \input ->
               case input of
                 Nothing -> Just (singleton hdl)
-                Just hs -> Just (snoc hs hdl)
-
-        writeTVar _busCallbacks (next tpe m)
+                Just hs -> Just (snoc hs hdl) in
+        (next tpe callbacks, ())
 
 --------------------------------------------------------------------------------
 instance Pub Bus where
-  publish Bus{..} a = atomically $ do
-    stopped <- readTVar _busStopped
-
-    unless stopped $
-      writeTQueue _busQueue (toMsg a)
+  publish Bus{..} a = atomically $ writeTBMQueue _busQueue (toMsg a)
 
 --------------------------------------------------------------------------------
 publishing :: Typeable a => Logger -> Callbacks -> a -> IO ()

@@ -62,7 +62,7 @@ handle Manager{..} pkg = handlePackage _reg pkg
 --------------------------------------------------------------------------------
 cleanup :: Manager -> IO ()
 cleanup Manager{..} = do
-  logMsg _logger Info "Shutting down, cleaning up pending requests..."
+  logMsg _logger Info "Cleaning up pending requests..."
   abortPendingRequests _reg
   logMsg _logger Info "cleanup done successfully."
 

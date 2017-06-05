@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE LambdaCase         #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Connection
@@ -16,15 +17,20 @@ module Database.EventStore.Internal.Connection
   , RecvOutcome(..)
   , PackageArrived(..)
   , ConnectionError(..)
+  , ConnectionEstablished(..)
+  , ConnectionClosed(..)
   , connectionBuilder
+  , connectionError
   , dumbConnection
   ) where
 
 --------------------------------------------------------------------------------
+import Control.Monad.Fix
 import Text.Printf
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Control.Concurrent.Async (uninterruptibleCancel)
 import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
@@ -34,6 +40,7 @@ import qualified Network.Connection as Network
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Types
 
@@ -57,6 +64,10 @@ data Connection =
              }
 
 --------------------------------------------------------------------------------
+instance Eq Connection where
+  a == b = connectionId a == connectionId b
+
+--------------------------------------------------------------------------------
 dumbConnection :: Connection
 dumbConnection =
   Connection { connectionId       = nil
@@ -68,9 +79,8 @@ dumbConnection =
 --------------------------------------------------------------------------------
 data ConnectionState =
   ConnectionState { _bus       :: Publish
-                  , _sendQueue :: TQueue Package
-                  , _sending   :: TVar Bool
-                  , _conn      :: Network.Connection
+                  , _logger    :: Logger
+                  , _sendQueue :: TBMQueue Package
                   }
 
 --------------------------------------------------------------------------------
@@ -81,86 +91,164 @@ data ConnectionError =
   ConnectionError Connection SomeException deriving Typeable
 
 --------------------------------------------------------------------------------
-connectionBuilder :: Settings -> Publish -> IO ConnectionBuilder
-connectionBuilder setts bus = do
+connectionError :: Exception e => Connection -> e -> ConnectionError
+connectionError conn = ConnectionError conn . toException
+
+--------------------------------------------------------------------------------
+data ConnectionClosed = ConnectionClosed Connection SomeException
+  deriving Typeable
+
+--------------------------------------------------------------------------------
+data ConnectionEstablished =
+  ConnectionEstablished Connection deriving Typeable
+
+--------------------------------------------------------------------------------
+newtype ConnectionResetByPeer = ConnectionResetByPeer SomeException
+  deriving Typeable
+
+--------------------------------------------------------------------------------
+instance Show ConnectionResetByPeer where
+  show (ConnectionResetByPeer reason) =
+    "Connection reset by peer: " <> show reason
+
+--------------------------------------------------------------------------------
+instance Exception ConnectionResetByPeer
+
+--------------------------------------------------------------------------------
+data ProtocolError
+  = WrongFramingError !String
+  | PackageParsingError !String
+  deriving Typeable
+
+--------------------------------------------------------------------------------
+instance Show ProtocolError where
+  show (WrongFramingError reason) = "Package framing error: " <> reason
+  show (PackageParsingError reason) = "Package parsing error: " <> reason
+
+--------------------------------------------------------------------------------
+instance Exception ProtocolError
+
+--------------------------------------------------------------------------------
+connectionBuilder :: Settings -> LogManager -> Publish -> IO ConnectionBuilder
+connectionBuilder setts logMgr bus = do
   ctx <- Network.initConnectionContext
   return $ ConnectionBuilder $ \ept -> do
-    let host   = endPointIp ept
-        port   = fromIntegral $ endPointPort ept
-        params = Network.ConnectionParams host port (s_ssl setts) Nothing
-
-    state <- ConnectionState bus <$> newTQueueIO
-                                 <*> newTVarIO False
-                                 <*> Network.connectTo ctx params
-
     uuid <- nextRandom
-    let conn =
-          Connection { connectionId       = uuid
-                     , connectionEndPoint = ept
-                     , enqueuePackage     = enqueue state conn
-                     , dispose            = Network.connectionClose (_conn state)
-                     }
+    let logger = getLogger ("Connection-" <> tshow uuid) logMgr
+    state <- createState bus logger
 
-    receiving state conn
-    return conn
+    mfix $ \self -> do
+      tcpConnAsync <- async $
+        tryAny (createConnection setts ctx ept) >>= \case
+          Left e -> do
+            publish bus (ConnectionClosed self e)
+            throw e
+          Right conn -> do
+            publish bus (ConnectionEstablished self)
+            return conn
+
+      sendAsync <- async (sending state self tcpConnAsync)
+      recvAsync <- async (receiving state self tcpConnAsync)
+
+      return Connection { connectionId       = uuid
+                        , connectionEndPoint = ept
+                        , enqueuePackage     = enqueue state
+                        , dispose            = do
+                            closeState state
+                            disposeConnection tcpConnAsync
+                            uninterruptibleCancel sendAsync
+                            uninterruptibleCancel recvAsync
+                        }
 
 --------------------------------------------------------------------------------
-receivePackage :: Network.Connection -> IO Package
-receivePackage conn = do
-  frame <- Network.connectionGetExact conn 4
-  case runGet getLengthPrefix frame of
-    Left _       -> throwString "Package framing error"
-    Right prefix -> do
-      payload <- Network.connectionGetExact conn prefix
-      case runGet getPackage payload of
-        Left _    -> throwString "Package parsing error"
-        Right pkg -> return pkg
+createState :: Publish -> Logger -> IO ConnectionState
+createState pub logger = ConnectionState pub logger <$> newTBMQueueIO 500
 
 --------------------------------------------------------------------------------
-receiving :: ConnectionState -> Connection -> IO ()
-receiving ConnectionState{..} self = loop
+closeState :: ConnectionState -> IO ()
+closeState ConnectionState{..} = atomically $ closeTBMQueue _sendQueue
+
+--------------------------------------------------------------------------------
+createConnection :: Settings
+                 -> Network.ConnectionContext
+                 -> EndPoint
+                 -> IO Network.Connection
+createConnection setts ctx ept = Network.connectTo ctx params
   where
-    loop = do
-      _ <- fork $ do
-        tryAny (receivePackage _conn) >>= \case
-          Left e    -> publish _bus (ConnectionError self e)
-          Right pkg -> do
-            publish _bus (PackageArrived self pkg)
-            loop
-      return ()
+    host   = endPointIp ept
+    port   = fromIntegral $ endPointPort ept
+    params = Network.ConnectionParams host port (s_ssl setts) Nothing
 
 --------------------------------------------------------------------------------
-enqueue :: ConnectionState -> Connection -> Package -> IO ()
-enqueue state@ConnectionState{..} self pkg = do
-  start <- atomically $ do
-    running <- readTVar _sending
-    writeTQueue _sendQueue pkg
-
-    unless running $
-      writeTVar _sending True
-
-    return (not running)
-
-  _ <- fork $ sending state self
-  return ()
-
---------------------------------------------------------------------------------
-sending :: ConnectionState -> Connection -> IO ()
-sending ConnectionState{..} self = loop
+disposeConnection :: Async Network.Connection -> IO ()
+disposeConnection as = traverse_ tryDisposing =<< pollAsync as
   where
-    loop = do
-      outcome <- atomically $
-        tryReadTQueue _sendQueue >>= \case
-          Just pkg -> return (Just pkg)
-          _        -> Nothing <$ writeTVar _sending False
+    tryDisposing = traverse_ disposing
+    disposing    = Network.connectionClose
 
-      case outcome of
-        Nothing  -> return ()
-        Just pkg -> do
-          let bytes = runPut $ putPackage pkg
-          tryAny (Network.connectionPut _conn bytes) >>= \case
-            Left e  -> publish _bus (ConnectionError self e)
-            Right _ -> loop
+--------------------------------------------------------------------------------
+receivePackage :: Publish
+               -> Connection
+               -> Network.Connection
+               -> IO Package
+receivePackage pub self conn =
+  tryAny (Network.connectionGetExact conn 4) >>= \case
+    Left e -> do
+      publish pub (ConnectionClosed self e)
+      throw e
+    Right frame ->
+      case runGet getLengthPrefix frame of
+        Left reason -> do
+          let cause = WrongFramingError reason
+          publish pub (connectionError self cause)
+          throw cause
+        Right prefix -> do
+          tryAny (Network.connectionGetExact conn prefix) >>= \case
+            Left e -> do
+              publish pub (ConnectionClosed self e)
+              throw e
+            Right payload ->
+              case runGet getPackage payload of
+                Left reason -> do
+                  let cause = PackageParsingError reason
+                  publish pub (connectionError self cause)
+                  throw cause
+                Right pkg -> return pkg
+
+--------------------------------------------------------------------------------
+receiving :: ConnectionState
+          -> Connection
+          -> Async Network.Connection
+          -> IO (Async ())
+receiving ConnectionState{..} self tcpConnAsync =
+  forever . go =<< waitAsync tcpConnAsync
+  where
+    go conn =
+      publish _bus . PackageArrived self =<< receivePackage _bus self conn
+
+--------------------------------------------------------------------------------
+enqueue :: ConnectionState -> Package -> IO ()
+enqueue ConnectionState{..} pkg@Package{..} = do
+  logFormat _logger Debug "Package {} enqueued: command {}"
+    (Shown packageCorrelation, Shown packageCmd)
+  atomically $ writeTBMQueue _sendQueue pkg
+
+--------------------------------------------------------------------------------
+sending :: ConnectionState
+        -> Connection
+        -> Async Network.Connection
+        -> IO ()
+sending ConnectionState{..} self tcpConnAsync = go =<< waitAsync tcpConnAsync
+  where
+    go conn =
+      let loop     = traverse_ send =<< atomically (readTBMQueue _sendQueue)
+          send pkg =
+            tryAny (Network.connectionPut conn bytes) >>= \case
+              Left e  -> publish _bus (ConnectionClosed self e)
+              Right _ -> loop
+            where
+              bytes = runPut $ putPackage pkg in
+      loop
 
 --------------------------------------------------------------------------------
 -- Serialization
