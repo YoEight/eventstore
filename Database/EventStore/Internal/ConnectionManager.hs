@@ -245,9 +245,12 @@ closeTcpConnection :: Exception e => Internal -> Maybe Attempts -> e -> IO ()
 closeTcpConnection Internal{..} prev cause = traverse_ closing =<< tryTakeMVar _conn
   where
     closing conn = do
-      logFormat _logger Debug "CloseTcpConnection: {}" (Only $ Shown cause)
+      let cid = connectionId conn
+      logFormat _logger Debug "CloseTcpConnection: connection [{}]. Cause: {}"
+        (Shown cid, Shown cause)
       dispose conn
-      logMsg _logger Debug "CloseTcpConnection: connection disposed."
+      logFormat _logger Debug "CloseTcpConnection: connection [{}] disposed."
+        (Only $ Shown cid)
 
       att <- maybe freshAttempt return prev
       _   <- swapMVar _stage (Connecting att Reconnecting)
@@ -299,7 +302,7 @@ onConnectionError i@Internal{..} (ConnectionError conn e) = do
 
   when (sameConnection && not closed) $ do
     let msg = "TCP connection [{}] error. Cause: [{}]"
-    logFormat _logger Debug msg (Shown cid, Shown e)
+    logFormat _logger Error msg (Shown cid, Shown e)
     closeConnection i e
   where
     cid = connectionId conn
