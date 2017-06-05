@@ -16,15 +16,19 @@ module Database.EventStore.Internal.Connection
   , RecvOutcome(..)
   , PackageArrived(..)
   , ConnectionError(..)
+  , CloseConnection(..)
+  , ConnectionEstablished(..)
   , connectionBuilder
   , dumbConnection
   ) where
 
 --------------------------------------------------------------------------------
+import Control.Monad.Fix
 import Text.Printf
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Control.Concurrent.Async (uninterruptibleCancel)
 import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
@@ -70,7 +74,6 @@ data ConnectionState =
   ConnectionState { _bus       :: Publish
                   , _sendQueue :: TQueue Package
                   , _sending   :: TVar Bool
-                  , _conn      :: Network.Connection
                   }
 
 --------------------------------------------------------------------------------
@@ -81,28 +84,66 @@ data ConnectionError =
   ConnectionError Connection SomeException deriving Typeable
 
 --------------------------------------------------------------------------------
+data CloseConnection = CloseConnection SomeException deriving Typeable
+
+--------------------------------------------------------------------------------
+data ConnectionEstablished =
+  ConnectionEstablished Connection deriving Typeable
+
+--------------------------------------------------------------------------------
 connectionBuilder :: Settings -> Publish -> IO ConnectionBuilder
 connectionBuilder setts bus = do
   ctx <- Network.initConnectionContext
   return $ ConnectionBuilder $ \ept -> do
-    let host   = endPointIp ept
-        port   = fromIntegral $ endPointPort ept
-        params = Network.ConnectionParams host port (s_ssl setts) Nothing
+    state <- createState bus
+    uuid  <- nextRandom
 
-    state <- ConnectionState bus <$> newTQueueIO
-                                 <*> newTVarIO False
-                                 <*> Network.connectTo ctx params
+    mfix $ \self -> do
+      tcpConnAsync <- async $
+        tryAny (createConnection setts ctx ept) >>= \case
+          Left e -> do
+            publish bus (CloseConnection e)
+            throw e
+          Right conn -> do
+            publish bus (ConnectionEstablished self)
+            return conn
 
-    uuid <- nextRandom
-    let conn =
-          Connection { connectionId       = uuid
-                     , connectionEndPoint = ept
-                     , enqueuePackage     = enqueue state conn
-                     , dispose            = Network.connectionClose (_conn state)
-                     }
+      sendAsync <- async (sending state self tcpConnAsync)
+      recvAsync <- async (receiving state self tcpConnAsync)
 
-    receiving state conn
-    return conn
+      return Connection { connectionId       = uuid
+                        , connectionEndPoint = ept
+                        , enqueuePackage     = enqueue state
+                        , dispose            = do
+                            disposeConnection tcpConnAsync
+                            uninterruptibleCancel sendAsync
+                            uninterruptibleCancel recvAsync
+                        }
+
+--------------------------------------------------------------------------------
+createState :: Publish -> IO ConnectionState
+createState pub =
+  ConnectionState pub <$> newTQueueIO
+                      <*> newTVarIO False
+
+--------------------------------------------------------------------------------
+createConnection :: Settings
+                 -> Network.ConnectionContext
+                 -> EndPoint
+                 -> IO Network.Connection
+createConnection setts ctx ept = Network.connectTo ctx params
+  where
+    host   = endPointIp ept
+    port   = fromIntegral $ endPointPort ept
+    params = Network.ConnectionParams host port (s_ssl setts) Nothing
+
+--------------------------------------------------------------------------------
+disposeConnection :: Async Network.Connection -> IO ()
+disposeConnection as = traverse_ tryDisposing =<< pollAsync as
+  where
+    tryDisposing = traverse_ disposing
+    disposing    = Network.connectionClose
+
 
 --------------------------------------------------------------------------------
 receivePackage :: Network.Connection -> IO Package
@@ -117,38 +158,34 @@ receivePackage conn = do
         Right pkg -> return pkg
 
 --------------------------------------------------------------------------------
-receiving :: ConnectionState -> Connection -> IO ()
-receiving ConnectionState{..} self = loop
+receiving :: ConnectionState
+          -> Connection
+          -> Async Network.Connection
+          -> IO (Async ())
+receiving ConnectionState{..} self tcpConnAsync = async loop
   where
     loop = do
-      _ <- fork $ do
-        tryAny (receivePackage _conn) >>= \case
-          Left e    -> publish _bus (ConnectionError self e)
-          Right pkg -> do
-            publish _bus (PackageArrived self pkg)
-            loop
+      tcpConn <- waitAsync tcpConnAsync
+      tryAny (receivePackage tcpConn) >>= \case
+        Left e    -> publish _bus (ConnectionError self e)
+        Right pkg -> do
+          publish _bus (PackageArrived self pkg)
+          loop
       return ()
 
 --------------------------------------------------------------------------------
-enqueue :: ConnectionState -> Connection -> Package -> IO ()
-enqueue state@ConnectionState{..} self pkg = do
-  start <- atomically $ do
-    running <- readTVar _sending
-    writeTQueue _sendQueue pkg
-
-    unless running $
-      writeTVar _sending True
-
-    return (not running)
-
-  _ <- fork $ sending state self
-  return ()
+enqueue :: ConnectionState -> Package -> IO ()
+enqueue ConnectionState{..} pkg = atomically $ writeTQueue _sendQueue pkg
 
 --------------------------------------------------------------------------------
-sending :: ConnectionState -> Connection -> IO ()
-sending ConnectionState{..} self = loop
+sending :: ConnectionState
+        -> Connection
+        -> Async Network.Connection
+        -> IO (Async ())
+sending ConnectionState{..} self tcpConnAsync = async loop
   where
     loop = do
+      conn    <- waitAsync tcpConnAsync
       outcome <- atomically $
         tryReadTQueue _sendQueue >>= \case
           Just pkg -> return (Just pkg)
@@ -158,7 +195,7 @@ sending ConnectionState{..} self = loop
         Nothing  -> return ()
         Just pkg -> do
           let bytes = runPut $ putPackage pkg
-          tryAny (Network.connectionPut _conn bytes) >>= \case
+          tryAny (Network.connectionPut conn bytes) >>= \case
             Left e  -> publish _bus (ConnectionError self e)
             Right _ -> loop
 

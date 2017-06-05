@@ -70,11 +70,14 @@ data PackageReceived = PackageReceived Package deriving Typeable
 data SubmitSubscription
   = ConnectStream (Callback SubAction) Text Bool
   | ConnectPersist (Callback SubAction) Text Text Int32
-  | CreatePersist (Callback ())
+  deriving Typeable
+
+--------------------------------------------------------------------------------
+data SubmitPersistentOperation
+  = CreatePersist (Callback ())
                   Text
                   Text
                   PersistentSubscriptionSettings
-  | Unsubscribe SubDetails
   | UpdatePersist (Callback ())
                   Text
                   Text
@@ -83,6 +86,8 @@ data SubmitSubscription
   | AckPersist SubDetails [UUID]
   | NakPersist SubDetails NakAction (Maybe Text) [UUID]
   deriving Typeable
+
+data Unsubscribe = Unsubscribe SubDetails deriving Typeable
 
 --------------------------------------------------------------------------------
 data ServiceTerminated = ServiceTerminated Service deriving Typeable

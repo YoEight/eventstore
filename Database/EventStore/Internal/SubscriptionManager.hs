@@ -22,6 +22,7 @@ module Database.EventStore.Internal.SubscriptionManager
   , check
   , submit
   , handle
+  , cleanup
   ) where
 
 --------------------------------------------------------------------------------
@@ -344,3 +345,7 @@ handleError resource tpe =
     UnknownMsg cmd -> do
       let msg =  fmap (\c -> "unknown command: " <> tshow c) cmd
       Nothing <$ droppedResource resource (SubServerError msg)
+
+--------------------------------------------------------------------------------
+cleanup :: Manager -> IO ()
+cleanup _ = return ()
