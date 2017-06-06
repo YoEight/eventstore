@@ -274,7 +274,7 @@ connect settings tpe = do
 
     logMgr  <- newLogManager (s_loggerSettings settings)
     mainBus <- newBus logMgr "main-bus"
-    builder <- connectionBuilder settings (asPub mainBus)
+    builder <- connectionBuilder settings logMgr (asPub mainBus)
     exec    <- newExec settings logMgr mainBus builder disc
     return $ Connection exec settings tpe
 

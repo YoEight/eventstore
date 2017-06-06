@@ -38,6 +38,7 @@ import qualified Network.Connection as Network
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Types
 
@@ -61,6 +62,10 @@ data Connection =
              }
 
 --------------------------------------------------------------------------------
+instance Eq Connection where
+  a == b = connectionId a == connectionId b
+
+--------------------------------------------------------------------------------
 dumbConnection :: Connection
 dumbConnection =
   Connection { connectionId       = nil
@@ -72,8 +77,8 @@ dumbConnection =
 --------------------------------------------------------------------------------
 data ConnectionState =
   ConnectionState { _bus       :: Publish
-                  , _sendQueue :: TQueue Package
-                  , _sending   :: TVar Bool
+                  , _logger    :: Logger
+                  , _sendQueue :: TBMQueue Package
                   }
 
 --------------------------------------------------------------------------------
@@ -91,12 +96,13 @@ data ConnectionEstablished =
   ConnectionEstablished Connection deriving Typeable
 
 --------------------------------------------------------------------------------
-connectionBuilder :: Settings -> Publish -> IO ConnectionBuilder
-connectionBuilder setts bus = do
+connectionBuilder :: Settings -> LogManager -> Publish -> IO ConnectionBuilder
+connectionBuilder setts logMgr bus = do
   ctx <- Network.initConnectionContext
   return $ ConnectionBuilder $ \ept -> do
-    state <- createState bus
-    uuid  <- nextRandom
+    uuid <- nextRandom
+    let logger = getLogger ("Connection-" <> tshow uuid) logMgr
+    state <- createState bus logger
 
     mfix $ \self -> do
       tcpConnAsync <- async $
@@ -115,16 +121,19 @@ connectionBuilder setts bus = do
                         , connectionEndPoint = ept
                         , enqueuePackage     = enqueue state
                         , dispose            = do
+                            closeState state
                             disposeConnection tcpConnAsync
                             uninterruptibleCancel sendAsync
                             uninterruptibleCancel recvAsync
                         }
 
 --------------------------------------------------------------------------------
-createState :: Publish -> IO ConnectionState
-createState pub =
-  ConnectionState pub <$> newTQueueIO
-                      <*> newTVarIO False
+createState :: Publish -> Logger -> IO ConnectionState
+createState pub logger = ConnectionState pub logger <$> newTBMQueueIO 500
+
+--------------------------------------------------------------------------------
+closeState :: ConnectionState -> IO ()
+closeState ConnectionState{..} = atomically $ closeTBMQueue _sendQueue
 
 --------------------------------------------------------------------------------
 createConnection :: Settings
@@ -144,7 +153,6 @@ disposeConnection as = traverse_ tryDisposing =<< pollAsync as
     tryDisposing = traverse_ disposing
     disposing    = Network.connectionClose
 
-
 --------------------------------------------------------------------------------
 receivePackage :: Network.Connection -> IO Package
 receivePackage conn = do
@@ -162,42 +170,37 @@ receiving :: ConnectionState
           -> Connection
           -> Async Network.Connection
           -> IO (Async ())
-receiving ConnectionState{..} self tcpConnAsync = async loop
+receiving ConnectionState{..} self tcpConnAsync =
+  forever . go =<< waitAsync tcpConnAsync
   where
-    loop = do
-      tcpConn <- waitAsync tcpConnAsync
-      tryAny (receivePackage tcpConn) >>= \case
+    go conn =
+      tryAny (receivePackage conn) >>= \case
         Left e    -> publish _bus (ConnectionError self e)
-        Right pkg -> do
-          publish _bus (PackageArrived self pkg)
-          loop
-      return ()
+        Right pkg -> publish _bus (PackageArrived self pkg)
 
 --------------------------------------------------------------------------------
 enqueue :: ConnectionState -> Package -> IO ()
-enqueue ConnectionState{..} pkg = atomically $ writeTQueue _sendQueue pkg
+enqueue ConnectionState{..} pkg@Package{..} = do
+  logFormat _logger Debug "Package {} enqueued: command {}"
+    (Shown packageCorrelation, Shown packageCmd)
+  atomically $ writeTBMQueue _sendQueue pkg
 
 --------------------------------------------------------------------------------
 sending :: ConnectionState
         -> Connection
         -> Async Network.Connection
-        -> IO (Async ())
-sending ConnectionState{..} self tcpConnAsync = async loop
+        -> IO ()
+sending ConnectionState{..} self tcpConnAsync = go =<< waitAsync tcpConnAsync
   where
-    loop = do
-      conn    <- waitAsync tcpConnAsync
-      outcome <- atomically $
-        tryReadTQueue _sendQueue >>= \case
-          Just pkg -> return (Just pkg)
-          _        -> Nothing <$ writeTVar _sending False
-
-      case outcome of
-        Nothing  -> return ()
-        Just pkg -> do
-          let bytes = runPut $ putPackage pkg
-          tryAny (Network.connectionPut conn bytes) >>= \case
-            Left e  -> publish _bus (ConnectionError self e)
-            Right _ -> loop
+    go conn =
+      let loop     = traverse_ send =<< atomically (readTBMQueue _sendQueue)
+          send pkg =
+            tryAny (Network.connectionPut conn bytes) >>= \case
+              Left e  -> publish _bus (ConnectionError self e)
+              Right _ -> loop
+            where
+              bytes = runPut $ putPackage pkg in
+      loop
 
 --------------------------------------------------------------------------------
 -- Serialization

@@ -135,9 +135,11 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onInit internal)
   subscribe mainBus (onEstablish internal)
   subscribe mainBus (onEstablished internal)
+  subscribe mainBus (onArrived internal)
   subscribe mainBus (onCloseConnection internal)
   subscribe mainBus (onConnectionError internal)
   subscribe mainBus (onTick internal)
+
   -- subscribe mainBus (onArrived internal)
   -- subscribe mainBus (onShutdown internal)
   -- subscribe mainBus (onTick internal)
@@ -293,6 +295,32 @@ onTick i@Internal{..} _ =
       Subscription.check _subMgr conn
       putMVar _stage stage
     stage -> putMVar _stage stage
+
+--------------------------------------------------------------------------------
+onArrived :: Internal -> PackageArrived -> IO ()
+onArrived Internal{..} (PackageArrived conn pkg@Package{..}) = do
+  stage     <- takeMVar _stage
+  knownConn <- readMVar _conn
+
+  when (validStage stage && knownConn == conn) $ do
+    logFormat _logger Debug "Package received: command {}"
+      (Only $ Shown packageCmd)
+
+    handlePackage
+
+  putMVar _stage stage
+
+  where
+    validStage Connecting{} = True
+    validStage Connected    = True
+    validStage _            = False
+
+    heartbeatResponse = heartbeatResponsePackage packageCorrelation
+
+    handlePackage
+      | packageCmd == heartbeatRequestCmd =
+        enqueuePackage conn heartbeatResponse
+      | otherwise = return ()
 
 --------------------------------------------------------------------------------
 onConnectionError :: Internal -> ConnectionError -> IO ()

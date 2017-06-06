@@ -16,6 +16,7 @@ module Test.Integration (tests) where
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Database.EventStore
+import Test.Common
 import Test.Tasty
 
 --------------------------------------------------------------------------------
@@ -28,8 +29,7 @@ tests = do
                 { s_credentials = Just $ credentials "admin" "changeit"
                 , s_reconnect_delay = 3
                 , s_logger = Nothing
-                , s_loggerSettings = defaultLoggerSettings
-                                     { loggerType = LogNone }
+                , s_loggerSettings = testLoggerSettings
                 }
 
     conn <- connect setts (Static "127.0.0.1" 1113)

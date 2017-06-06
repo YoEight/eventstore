@@ -56,7 +56,7 @@ secs = 1000 * 1000
 testLoggerSettings :: LoggerSettings
 testLoggerSettings = LoggerSettings
                      { loggerLevel = Debug
-                     , loggerType  = LogNone
+                     , loggerType  = LogStdout 0
                      }
 
 --------------------------------------------------------------------------------
