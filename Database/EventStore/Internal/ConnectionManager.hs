@@ -231,13 +231,12 @@ onEstablished i (ConnectionEstablished conn) = established i conn
 closeConnection :: Exception e => Internal -> e -> IO ()
 closeConnection i@Internal{..} cause = do
   logFormat _logger Debug "CloseConnection: {}" (Only $ Shown cause)
-  prev <- previousAttempt <$> readMVar _stage
-  _    <- swapMVar _stage Closed
+  prev <- previousAttempt <$> swapMVar _stage Closed
   Operation.cleanup _opMgr
   Subscription.cleanup _subMgr
 
   closeTcpConnection i prev cause
-  logFormat _logger Info "Closed: {}" (Only $ Shown cause)
+  logFormat _logger Info "CloseConnection: connection cleanup done for [{}]" (Only $ Shown cause)
   where
     previousAttempt (Connecting att _) = Just att
     previousAttempt _                  = Nothing
@@ -325,7 +324,7 @@ onArrived Internal{..} (PackageArrived conn pkg@Package{..}) = do
 --------------------------------------------------------------------------------
 onConnectionError :: Internal -> ConnectionError -> IO ()
 onConnectionError i@Internal{..} (ConnectionError conn e) = do
-  sameConnection <- all ((== cid) . connectionId) <$> tryReadMVar _conn
+  sameConnection <- maybe False (== conn) <$> tryReadMVar _conn
   closed         <- isClosed <$> readMVar _stage
 
   when (sameConnection && not closed) $ do
