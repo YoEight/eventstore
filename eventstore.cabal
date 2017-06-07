@@ -89,6 +89,7 @@ library
       Database.EventStore.Internal.Operation.WriteEvents.Message
       Database.EventStore.Internal.OperationManager
       Database.EventStore.Internal.Operations
+      Database.EventStore.Internal.Stopwatch
       Database.EventStore.Internal.Stream
       Database.EventStore.Internal.Subscription.Api
       Database.EventStore.Internal.Subscription.Catchup

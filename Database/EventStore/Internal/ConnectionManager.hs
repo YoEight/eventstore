@@ -35,6 +35,7 @@ import           Database.EventStore.Internal.EndPoint
 import           Database.EventStore.Internal.Logger
 import           Database.EventStore.Internal.Messaging
 import qualified Database.EventStore.Internal.OperationManager as Operation
+import           Database.EventStore.Internal.Stopwatch
 import qualified Database.EventStore.Internal.SubscriptionManager as Subscription
 import           Database.EventStore.Internal.Types
 
@@ -62,12 +63,12 @@ data ConnectingState
 --------------------------------------------------------------------------------
 data Attempts =
   Attempts { attemptCount     :: !Int
-           , attemptLastStart :: !UTCTime
+           , attemptLastStart :: !NominalDiffTime
            } deriving Show
 
 --------------------------------------------------------------------------------
-freshAttempt :: IO Attempts
-freshAttempt = Attempts 1 <$> getCurrentTime
+freshAttempt :: Stopwatch -> IO Attempts
+freshAttempt = fmap (Attempts 1) . stopwatchElapsed
 
 --------------------------------------------------------------------------------
 data UnableToConnect = UnableToConnect deriving (Show, Typeable)
@@ -101,18 +102,19 @@ timerPeriod = msDuration 200
 
 --------------------------------------------------------------------------------
 data Internal =
-  Internal { _setts    :: Settings
-           , _disc     :: Discovery
-           , _logger   :: Logger
-           , _logMgr   :: LogManager
-           , _mainBus  :: Hub
-           , _builder  :: ConnectionBuilder
-           , _stage    :: MVar Stage
-           , _last     :: IORef (Maybe EndPoint)
-           , _sending  :: TVar Bool
-           , _opMgr    :: Operation.Manager
-           , _subMgr   :: Subscription.Manager
-           , _conn     :: MVar Connection
+  Internal { _setts     :: Settings
+           , _disc      :: Discovery
+           , _logger    :: Logger
+           , _logMgr    :: LogManager
+           , _mainBus   :: Hub
+           , _builder   :: ConnectionBuilder
+           , _stage     :: MVar Stage
+           , _last      :: IORef (Maybe EndPoint)
+           , _sending   :: TVar Bool
+           , _opMgr     :: Operation.Manager
+           , _subMgr    :: Subscription.Manager
+           , _conn      :: MVar Connection
+           , _stopwatch :: Stopwatch
            }
 
 --------------------------------------------------------------------------------
@@ -131,6 +133,7 @@ connectionManager logMgr setts builder disc mainBus = do
                          <*> Operation.new logMgr setts
                          <*> Subscription.new logMgr setts
                          <*> newEmptyMVar
+                         <*> newStopwatch
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onEstablish internal)
@@ -160,7 +163,7 @@ startConnect :: Internal -> IO ()
 startConnect i@Internal{..} =
   takeMVar _stage >>= \case
     Init -> do
-      atts <- freshAttempt
+      atts <- freshAttempt _stopwatch
       putMVar _stage (Connecting atts Reconnecting)
       discover i
     s -> putMVar _stage s
@@ -253,7 +256,7 @@ closeTcpConnection Internal{..} prev cause = traverse_ closing =<< tryTakeMVar _
       logFormat _logger Debug "CloseTcpConnection: connection [{}] disposed."
         (Only $ Shown cid)
 
-      att <- maybe freshAttempt return prev
+      att <- maybe (freshAttempt _stopwatch) return prev
       _   <- swapMVar _stage (Connecting att Reconnecting)
       return ()
 
@@ -270,13 +273,13 @@ onTick :: Internal -> Tick -> IO ()
 onTick i@Internal{..} _ =
   takeMVar _stage >>= \case
     stage@(Connecting Attempts{..} s) -> do
-      now <- getCurrentTime
+      elapsed <- stopwatchElapsed _stopwatch
       case s of
         Reconnecting
-          | diffUTCTime now attemptLastStart >= s_reconnect_delay _setts
+          | elapsed - attemptLastStart >= s_reconnect_delay _setts
             -> do
               let retries = attemptCount + 1
-                  att     = Attempts retries now
+                  att     = Attempts retries elapsed
               putMVar _stage (Connecting att Reconnecting)
               case s_retry _setts of
                 AtMost n
