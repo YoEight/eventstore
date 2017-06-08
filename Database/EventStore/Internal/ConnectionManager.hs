@@ -139,6 +139,7 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onEstablish internal)
   subscribe mainBus (onEstablished internal)
   subscribe mainBus (onArrived internal)
+  subscribe mainBus (onSubmitOperation internal)
   subscribe mainBus (onCloseConnection internal)
   subscribe mainBus (onConnectionError internal)
   subscribe mainBus (onShutdown internal)
@@ -262,6 +263,31 @@ closeTcpConnection Internal{..} prev cause = traverse_ closing =<< tryTakeMVar _
       return ()
 
 --------------------------------------------------------------------------------
+data ForceReconnect = ForceReconnect EndPoint deriving (Typeable, Show)
+
+--------------------------------------------------------------------------------
+instance Exception ForceReconnect
+
+--------------------------------------------------------------------------------
+forceReconnect :: Internal -> NodeEndPoints -> IO ()
+forceReconnect self@Internal{..} node = do
+  let ept = if isJust $ s_ssl _setts
+            then let Just pt = secureEndPoint node in pt
+            else tcpEndPoint node
+
+  conn <- readMVar _conn
+  when (connectionEndPoint conn /= ept) $ do
+    closeConnection self (ForceReconnect ept)
+    att <- freshAttempt _stopwatch
+    _   <- swapMVar _stage (Connecting att EndpointDiscovery)
+    let msg = "Connection {}: going to reconnect to [{}], current [{}]."
+    logFormat _logger Info msg ( Shown $ connectionId conn
+                               , Shown ept
+                               , Shown $ connectionEndPoint conn
+                               )
+    establish self ept
+
+--------------------------------------------------------------------------------
 onCloseConnection :: Internal -> CloseConnection -> IO ()
 onCloseConnection i (CloseConnection e) = closeConnection i e
 
@@ -271,7 +297,7 @@ onEstablish i (EstablishConnection ept) = establish i ept
 
 --------------------------------------------------------------------------------
 onTick :: Internal -> Tick -> IO ()
-onTick i@Internal{..} _ =
+onTick self@Internal{..} _ =
   takeMVar _stage >>= \case
     stage@(Connecting Attempts{..} s) -> do
       elapsed <- stopwatchElapsed _stopwatch
@@ -284,12 +310,9 @@ onTick i@Internal{..} _ =
               putMVar _stage (Connecting att Reconnecting)
               case s_retry _setts of
                 AtMost n
-                  | attemptCount <= n -> do
-                    let msg = "Checking reconnection... (attempt {})"
-                    logFormat _logger Debug msg (Only $ Shown attemptCount)
-                    discover i
+                  | attemptCount <= n -> retryConnection attemptCount
                   | otherwise -> maxAttemptReached
-                KeepRetrying -> maxAttemptReached
+                KeepRetrying -> retryConnection attemptCount
           | otherwise -> putMVar _stage stage
         _ -> putMVar _stage stage
     stage@Connected -> do
@@ -300,12 +323,16 @@ onTick i@Internal{..} _ =
     stage -> putMVar _stage stage
   where
     maxAttemptReached = do
-      closeConnection i ConnectionMaxAttemptReached
+      closeConnection self ConnectionMaxAttemptReached
       publish _mainBus (FatalException ConnectionMaxAttemptReached)
+
+    retryConnection i = do
+      logFormat _logger Debug "Checking reconnection... (attempt {})" (Only i)
+      discover self
 
 --------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> IO ()
-onArrived Internal{..} (PackageArrived conn pkg@Package{..}) = do
+onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
   stage     <- takeMVar _stage
   knownConn <- readMVar _conn
 
@@ -327,7 +354,13 @@ onArrived Internal{..} (PackageArrived conn pkg@Package{..}) = do
     handlePackage
       | packageCmd == heartbeatRequestCmd =
         enqueuePackage conn heartbeatResponse
-      | otherwise = return ()
+      | otherwise =
+        Operation.handle _opMgr pkg >>= \case
+          Nothing       -> return ()
+          Just decision ->
+            case decision of
+               Operation.Handled        -> return ()
+               Operation.Reconnect node -> forceReconnect self node
 
 --------------------------------------------------------------------------------
 onConnectionError :: Internal -> ConnectionError -> IO ()
@@ -355,6 +388,11 @@ onShutdown Internal{..} _ = do
   traverse_ dispose =<< tryTakeMVar _conn
   logMsg _logger Debug "Shutdown properly."
   publish _mainBus (ServiceTerminated ConnectionManager)
+
+--------------------------------------------------------------------------------
+onSubmitOperation :: Internal -> SubmitOperation -> IO ()
+onSubmitOperation Internal{..} (SubmitOperation callback op) =
+  Operation.submit _opMgr op callback =<< tryReadMVar _conn
 
 -- --------------------------------------------------------------------------------
 -- onCloseConnection :: Internal -> CloseConnection -> IO ()
