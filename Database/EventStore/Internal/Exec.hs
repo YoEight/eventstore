@@ -125,7 +125,6 @@ newExec setts logMgr mainBus builder disc = do
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onInitFailed internal)
-  subscribe mainBus (onShutdown internal)
   subscribe mainBus (onFatal internal)
   subscribe mainBus (onTerminated internal)
 
@@ -154,29 +153,30 @@ onInitFailed Internal{..} (InitFailed svc) = do
   logMsg _logger Error "System can't start."
 
 --------------------------------------------------------------------------------
-onShutdown :: Internal -> SystemShutdown -> IO ()
-onShutdown Internal{..} _ =
-  atomically $ writeTVar _stageVar (Errored "Connection closed")
-
---------------------------------------------------------------------------------
 onFatal :: Internal -> FatalException -> IO ()
-onFatal Internal{..} situation = do
+onFatal self@Internal{..} situation = do
   case situation of
     FatalException e ->
       logFormat _logger Fatal "Fatal exception: {}" (Only $ Shown e)
     FatalCondition msg ->
       logMsg _logger Fatal ("Driver is in unrecoverable state.: " <> msg)
 
-  publish _mainBus SystemShutdown
+  shutdown self
 
 --------------------------------------------------------------------------------
 onTerminated :: Internal -> ServiceTerminated -> IO ()
 onTerminated Internal{..} (ServiceTerminated svc) = do
   logFormat _logger Info "Service {} terminated." (Only $ Shown svc)
-  shutdown <- atomicModifyIORef' _finishRef $ \m ->
+  terminated <- atomicModifyIORef' _finishRef $ \m ->
     let m' = deleteMap svc m in
     (m', null m')
 
-  when shutdown $ do
+  when terminated $ do
     busStop _mainBus
     logMsg _logger Info "Entire system shutdown properly"
+
+--------------------------------------------------------------------------------
+shutdown :: Internal -> IO ()
+shutdown Internal{..} = do
+  atomically $ writeTVar _stageVar (Errored "Connection closed")
+  publish _mainBus SystemShutdown

@@ -141,6 +141,7 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onArrived internal)
   subscribe mainBus (onCloseConnection internal)
   subscribe mainBus (onConnectionError internal)
+  subscribe mainBus (onShutdown internal)
   subscribe mainBus (onTick internal)
 
   -- subscribe mainBus (onArrived internal)
@@ -287,8 +288,8 @@ onTick i@Internal{..} _ =
                     let msg = "Checking reconnection... (attempt {})"
                     logFormat _logger Debug msg (Only $ Shown attemptCount)
                     discover i
-                  | otherwise -> closeConnection i ConnectionMaxAttemptReached
-                KeepRetrying -> closeConnection i ConnectionMaxAttemptReached
+                  | otherwise -> maxAttemptReached
+                KeepRetrying -> maxAttemptReached
           | otherwise -> putMVar _stage stage
         _ -> putMVar _stage stage
     stage@Connected -> do
@@ -297,6 +298,10 @@ onTick i@Internal{..} _ =
       Subscription.check _subMgr conn
       putMVar _stage stage
     stage -> putMVar _stage stage
+  where
+    maxAttemptReached = do
+      closeConnection i ConnectionMaxAttemptReached
+      publish _mainBus (FatalException ConnectionMaxAttemptReached)
 
 --------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> IO ()
@@ -339,6 +344,17 @@ onConnectionError i@Internal{..} (ConnectionError conn e) = do
 
     isClosed Closed = True
     isClosed _      = False
+
+--------------------------------------------------------------------------------
+onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown Internal{..} _ = do
+  logMsg _logger Debug "Shutting down..."
+  _ <- swapMVar _stage Closed
+  Operation.cleanup _opMgr
+  Subscription.cleanup _subMgr
+  traverse_ dispose =<< tryTakeMVar _conn
+  logMsg _logger Debug "Shutdown properly."
+  publish _mainBus (ServiceTerminated ConnectionManager)
 
 -- --------------------------------------------------------------------------------
 -- onCloseConnection :: Internal -> CloseConnection -> IO ()
