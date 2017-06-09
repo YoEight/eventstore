@@ -140,8 +140,8 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onEstablished internal)
   subscribe mainBus (onArrived internal)
   subscribe mainBus (onSubmitOperation internal)
-  subscribe mainBus (onCloseConnection internal)
   subscribe mainBus (onConnectionError internal)
+  subscribe mainBus (onConnectionClosed internal)
   subscribe mainBus (onShutdown internal)
   subscribe mainBus (onTick internal)
 
@@ -182,10 +182,11 @@ discover Internal{..} =
           _   <- fork $
               tryAny (runDiscovery _disc old) >>= \case
                 Left e    -> do
+                  conn <- readMVar _conn
                   let msg = "Failed to resolve TCP endpoint to which to \
                             \connect {}."
                   logFormat _logger Warn msg (Only $ Shown e)
-                  publish _mainBus (CloseConnection e)
+                  publish _mainBus (ConnectionError conn e)
                 Right opt ->
                   case opt of
                     Nothing -> do
@@ -234,31 +235,36 @@ onEstablished i (ConnectionEstablished conn) = established i conn
 
 --------------------------------------------------------------------------------
 closeConnection :: Exception e => Internal -> e -> IO ()
-closeConnection i@Internal{..} cause = do
+closeConnection self@Internal{..} cause = do
   logFormat _logger Debug "CloseConnection: {}" (Only $ Shown cause)
-  prev <- previousAttempt <$> swapMVar _stage Closed
+  _ <- swapMVar _stage Closed
   Operation.cleanup _opMgr
   Subscription.cleanup _subMgr
-
-  closeTcpConnection i prev cause
+  traverse_ (closeTcpConnection self cause) =<< tryTakeMVar _conn
   logFormat _logger Info "CloseConnection: connection cleanup done for [{}]" (Only $ Shown cause)
-  where
-    previousAttempt (Connecting att _) = Just att
-    previousAttempt _                  = Nothing
+  publish _mainBus (FatalException cause)
 
 --------------------------------------------------------------------------------
-closeTcpConnection :: Exception e => Internal -> Maybe Attempts -> e -> IO ()
-closeTcpConnection Internal{..} prev cause = traverse_ closing =<< tryTakeMVar _conn
-  where
-    closing conn = do
-      let cid = connectionId conn
-      logFormat _logger Debug "CloseTcpConnection: connection [{}]. Cause: {}"
-        (Shown cid, Shown cause)
-      dispose conn
-      logFormat _logger Debug "CloseTcpConnection: connection [{}] disposed."
-        (Only $ Shown cid)
+closeTcpConnection :: Exception e => Internal -> e -> Connection -> IO ()
+closeTcpConnection Internal{..} cause conn = do
+  let cid = connectionId conn
+  logFormat _logger Debug "CloseTcpConnection: connection [{}]. Cause: {}"
+    (Shown cid, Shown cause)
 
-      att <- maybe (freshAttempt _stopwatch) return prev
+  dispose conn
+
+  logFormat _logger Debug "CloseTcpConnection: connection [{}] disposed."
+    (Only $ Shown cid)
+
+  readMVar _stage >>= \case
+    Closed -> return ()
+    stage  -> do
+      -- TODO - Purge subscriptions here.
+      att <-
+        case stage of
+          Connecting old _ -> return old
+          _                -> freshAttempt _stopwatch
+
       _   <- swapMVar _stage (Connecting att Reconnecting)
       return ()
 
@@ -277,7 +283,7 @@ forceReconnect self@Internal{..} node = do
 
   conn <- readMVar _conn
   when (connectionEndPoint conn /= ept) $ do
-    closeConnection self (ForceReconnect ept)
+    closeTcpConnection self (ForceReconnect ept) conn
     att <- freshAttempt _stopwatch
     _   <- swapMVar _stage (Connecting att EndpointDiscovery)
     let msg = "Connection {}: going to reconnect to [{}], current [{}]."
@@ -286,10 +292,6 @@ forceReconnect self@Internal{..} node = do
                                , Shown $ connectionEndPoint conn
                                )
     establish self ept
-
---------------------------------------------------------------------------------
-onCloseConnection :: Internal -> CloseConnection -> IO ()
-onCloseConnection i (CloseConnection e) = closeConnection i e
 
 --------------------------------------------------------------------------------
 onEstablish :: Internal -> EstablishConnection -> IO ()
@@ -379,6 +381,19 @@ onConnectionError i@Internal{..} (ConnectionError conn e) = do
     isClosed _      = False
 
 --------------------------------------------------------------------------------
+onConnectionClosed :: Internal -> ConnectionClosed -> IO ()
+onConnectionClosed self@Internal{..} (ConnectionClosed conn cause) = do
+  sameConnection <- maybe False (== conn) <$> tryReadMVar _conn
+  closed         <- isClosed <$> readMVar _stage
+
+  when (sameConnection && not closed) $ do
+    _ <- takeMVar _conn
+    closeTcpConnection self cause conn
+  where
+    isClosed Closed = True
+    isClosed _      = False
+
+--------------------------------------------------------------------------------
 onShutdown :: Internal -> SystemShutdown -> IO ()
 onShutdown Internal{..} _ = do
   logMsg _logger Debug "Shutting down..."
@@ -393,288 +408,3 @@ onShutdown Internal{..} _ = do
 onSubmitOperation :: Internal -> SubmitOperation -> IO ()
 onSubmitOperation Internal{..} (SubmitOperation callback op) =
   Operation.submit _opMgr op callback =<< tryReadMVar _conn
-
--- --------------------------------------------------------------------------------
--- onCloseConnection :: Internal -> CloseConnection -> IO ()
--- onCloseConnection i@Internal{..} (CloseConnection reason) = do
---   att <- freshAttempt
-
---   case reason of
---     Just e ->
---       logFormat _logger Error "Connection error, reason: {}" (Only $ Shown e)
---     _ ->
---       logMsg _logger Error "Connection error"
-
---   outcome <- atomically $ do
---     stage <- readTVar _stage
---     writeTVar _stage Closed
---     case stage of
---       Connected conn -> do
---         writeTVar _stage (Connecting att Reconnecting)
---         return $ Just conn
---       _ -> return Nothing
-
---   traverse_ (closeConnection i) outcome
-
--- --------------------------------------------------------------------------------
--- discover :: Internal -> IO ()
--- discover i@Internal{..} = do
---   canProceed <- atomically $ do
---     stage <- readTVar _stage
---     case stage of
---       Connecting att state ->
---         case state of
---           Reconnecting -> do
---             writeTVar _stage (Connecting att EndpointDiscovery)
---             return True
---           _ -> return False
---       _ -> return False
-
---   when canProceed $ do
---     _ <- fork $ do
---       old     <- readTVarIO _last
---       outcome <- tryAny $ runDiscovery _disc old
---       case outcome of
---         Left e -> do
---           let msg = "Failed to resolve TCP end point to which to connect: {}."
---           logFormat _logger Error msg (Only $ Shown e)
---           onCloseConnection i (CloseConnection $ Just e)
---         Right opt ->
---           case opt of
---             Nothing -> do
---               let msg = "Failed to resolve TCP end point to which to connect."
---               logMsg _logger Error msg
---               onCloseConnection i (CloseConnection Nothing)
---             Just endpoint -> establish i endpoint
-
---     return ()
-
--- --------------------------------------------------------------------------------
--- onEstablish :: Internal -> EstablishConnection -> IO ()
--- onEstablish i (EstablishConnection ept) = establish i ept
-
--- --------------------------------------------------------------------------------
--- establish :: Internal -> EndPoint -> IO ()
--- establish i@Internal{..} ept = do
---   canProceed <- atomically $ do
---     stage <- readTVar _stage
---     case stage of
---       Connecting att state ->
---         case state of
---           EndpointDiscovery -> do
---             writeTVar _stage (Connecting att ConnectionEstablishing)
---             return True
---           _ -> return False
---       _ -> return False
-
---   when canProceed $ do
---     _ <- fork $ do
---       outcome <- tryAny $ connect _builder ept
---       case outcome of
---         Left _ -> atomically $ do
---           stage <- readTVar _stage
---           case stage of
---             Connecting att _ -> writeTVar _stage (Connecting att Reconnecting)
---             _                -> return ()
---         Right conn -> do
---           cid <- nextRandom
---           atomically $ writeTVar _last (Just ept)
---           established i ept conn
-
---     return ()
-
-
--- --------------------------------------------------------------------------------
--- established :: Internal -> EndPoint -> Connection -> IO ()
--- established i@Internal{..} ept connection = do
---   valid <- atomically $ do
---     stage <- readTVar _stage
---     case stage of
---       Connecting{} -> do
---         writeTVar _stage (Connected connection)
---         return True
---       _ -> return False
-
---   when valid $ do
---     let msg = "New connection {} established on [{}]."
---     logFormat _logger Info msg ( Shown $ connectionId connection
---                                , Shown ept
---                                )
-
--- --------------------------------------------------------------------------------
--- forceReconnect :: Internal -> NodeEndPoints -> IO ()
--- forceReconnect i@Internal{..} node = do
---   let ept = if isJust $ s_ssl _setts
---             then let Just pt = secureEndPoint node in pt
---             else tcpEndPoint node
-
---   att     <- freshAttempt
---   outcome <- atomically $
---     readTVar _stage >>= \case
---       Connected conn -> do
---         if connectionEndPoint conn /= ept
---           then do
---             writeTVar _stage (Connecting att EndpointDiscovery)
---             return (Just conn)
---           else return Nothing
---       _ -> return Nothing
-
---   for_ outcome $ \conn -> do
---     let msg = "Connection {}: going to reconnect to [{}], current [{}]."
---     logFormat _logger Info msg ( Shown $ connectionId conn
---                                , Shown ept
---                                , Shown $ connectionEndPoint conn
---                                )
---     closeConnection i conn
---     establish i ept
-
--- --------------------------------------------------------------------------------
--- closeConnection :: Internal -> Connection -> IO ()
--- closeConnection Internal{..} conn = do
---   dispose conn
---   let msg = "Connection {} is closed."
---   logFormat _logger Info msg (Only $ Shown $ connectionId conn)
-
--- --------------------------------------------------------------------------------
--- arrived :: Internal -> Connection -> Package -> IO ()
--- arrived i@Internal{..} conn pkg =
---   case packageCmd pkg of
---     cmd | cmd == heartbeatRequestCmd
---           -> let respPkg = heartbeatResponsePackage $ packageCorrelation pkg in
---              enqueuePackage conn respPkg
---         | cmd == badRequestCmd && packageCorrelation pkg == nil
---           -> do let reason = packageDataAsText pkg
---                     msg = "Connection-wide BadRequest received. \
---                           \ Too dangerous to continue: " <> fold reason
---                 shutdown i
---                 publish _mainBus (FatalCondition msg)
---         | otherwise
---           -> Operation.handle _opMgr pkg >>= \case
---                Nothing  -> Subscription.handle _subMgr pkg >>= \case
---                  Nothing -> do
---                    let msg = "Unknown package correlation id {}."
---                    logFormat _logger Warn msg (Only $ Shown $ packageCmd pkg)
---                  Just dec ->
---                    case dec of
---                      Subscription.Handled        -> return ()
---                      Subscription.Reconnect node -> forceReconnect i node
---                Just dec ->
---                  case dec of
---                    Operation.Handled        -> return ()
---                    Operation.Reconnect node -> forceReconnect i node
-
--- --------------------------------------------------------------------------------
--- onArrived :: Internal -> PackageArrived -> IO ()
--- onArrived i (PackageArrived conn pkg) =
---   readTVarIO (_stage i) >>= \case
---     Connected known
---       | connectionId known == connectionId conn -> arrived i conn pkg
---       | otherwise -> return ()
---     _ -> return ()
-
--- --------------------------------------------------------------------------------
--- shutdown :: Internal -> IO ()
--- shutdown i@Internal{..} = do
---   logMsg _logger Info "Shutting down..."
---   mConn <- atomically $ do
---     stage <- readTVar _stage
---     writeTVar _stage Closed
---     case stage of
---       Connected conn -> return (Just conn)
---       _              -> return Nothing
-
---   traverse_ (closeConnection i) mConn
-
---   Operation.cleanup _opMgr
-
--- --------------------------------------------------------------------------------
--- onShutdown :: Internal -> SystemShutdown -> IO ()
--- onShutdown i@Internal{..} _ = do
---   done <- atomically $
---     readTVar _stage >>= \case
---       Closed -> return True
---       _      -> return False
-
---   unless done (shutdown i)
---   publish _mainBus (ServiceTerminated ConnectionManager)
-
--- --------------------------------------------------------------------------------
--- data TickOutcome
---   = TickClose
---   | TickNoop
---   | TickProceed ConnectingState
---   | TickConnected Connection
-
--- --------------------------------------------------------------------------------
--- onTick :: Internal -> Tick -> IO ()
--- onTick i@Internal{..} _ = do
---   now <- getCurrentTime
-
---   outcome <- atomically $ do
---     stage <- readTVar _stage
---     case stage of
---       Connecting att Reconnecting -> do
---         let count   = attemptCount att
---             started = attemptLastStart att
---             delay   = s_reconnect_delay _setts
-
---         if diffUTCTime now started >= delay
---           then
---             let proceeding = do
---                   let newAtt = att { attemptCount     = count + 1
---                                    , attemptLastStart = now }
---                   writeTVar _stage (Connecting newAtt Reconnecting)
---                   return $ TickProceed Reconnecting in
---             case s_retry _setts of
---               AtMost maxTrial
---                 | count <= maxTrial -> proceeding
---                 | otherwise         -> return TickClose
---               KeepRetrying -> proceeding
---           else return TickNoop
---       Connected cur -> return (TickConnected cur)
---       _             -> return TickNoop
-
---   case outcome of
---     TickClose -> do
---       --onCloseConnection i (CloseConnection Nothing)
---       -- publish _mainBus SystemShutdown
---       return ()
---     TickProceed state ->
---       case state of
---         Reconnecting -> do
---           logMsg _logger Info "Try reconnecting..."
---           discover i
---         _ -> return ()
---     TickConnected conn -> do
---       Operation.check _opMgr conn
---       Subscription.check _subMgr conn
---     _ -> return ()
-
--- --------------------------------------------------------------------------------
--- onSubmitOperation :: Internal -> SubmitOperation -> IO ()
--- onSubmitOperation Internal{..} (SubmitOperation cb op) = do
---   stage <- atomically $ readTVar _stage
---   case stage of
---     Closed ->
---       logMsg _logger Warn "Connection closed but we received an operation request"
---     Connected conn -> Operation.submit _opMgr op cb (Just conn)
---     _              -> Operation.submit _opMgr op cb Nothing
-
--- --------------------------------------------------------------------------------
--- onConnectionError :: Internal -> ConnectionError -> IO ()
--- onConnectionError i@Internal{..} (ConnectionError conn e) = do
---   let msg = "Connection error: reason {}"
---   logFormat _logger Error msg (Only $ Shown e)
---   closeConnection i conn
---   startConnect i
-
--- --------------------------------------------------------------------------------
--- onSubmitSubscription :: Internal -> SubmitSubscription -> IO ()
--- onSubmitSubscription Internal{..} cmd = do
---   logMsg _logger Debug "Received subscription operation"
---   stage <- atomically $ readTVar _stage
---   case stage of
---     Closed ->
---       logMsg _logger Warn "Connection closed but we received an operation request"
---     Connected conn -> Subscription.submit _subMgr (Just conn) cmd
---     _              -> Subscription.submit _subMgr Nothing cmd

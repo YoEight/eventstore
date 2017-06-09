@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE LambdaCase         #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Connection
@@ -16,9 +17,10 @@ module Database.EventStore.Internal.Connection
   , RecvOutcome(..)
   , PackageArrived(..)
   , ConnectionError(..)
-  , CloseConnection(..)
   , ConnectionEstablished(..)
+  , ConnectionClosed(..)
   , connectionBuilder
+  , connectionError
   , dumbConnection
   ) where
 
@@ -89,11 +91,42 @@ data ConnectionError =
   ConnectionError Connection SomeException deriving Typeable
 
 --------------------------------------------------------------------------------
-data CloseConnection = CloseConnection SomeException deriving Typeable
+connectionError :: Exception e => Connection -> e -> ConnectionError
+connectionError conn = ConnectionError conn . toException
+
+--------------------------------------------------------------------------------
+data ConnectionClosed = ConnectionClosed Connection SomeException
+  deriving Typeable
 
 --------------------------------------------------------------------------------
 data ConnectionEstablished =
   ConnectionEstablished Connection deriving Typeable
+
+--------------------------------------------------------------------------------
+newtype ConnectionResetByPeer = ConnectionResetByPeer SomeException
+  deriving Typeable
+
+--------------------------------------------------------------------------------
+instance Show ConnectionResetByPeer where
+  show (ConnectionResetByPeer reason) =
+    "Connection reset by peer: " <> show reason
+
+--------------------------------------------------------------------------------
+instance Exception ConnectionResetByPeer
+
+--------------------------------------------------------------------------------
+data ProtocolError
+  = WrongFramingError !String
+  | PackageParsingError !String
+  deriving Typeable
+
+--------------------------------------------------------------------------------
+instance Show ProtocolError where
+  show (WrongFramingError reason) = "Package framing error: " <> reason
+  show (PackageParsingError reason) = "Package parsing error: " <> reason
+
+--------------------------------------------------------------------------------
+instance Exception ProtocolError
 
 --------------------------------------------------------------------------------
 connectionBuilder :: Settings -> LogManager -> Publish -> IO ConnectionBuilder
@@ -108,7 +141,7 @@ connectionBuilder setts logMgr bus = do
       tcpConnAsync <- async $
         tryAny (createConnection setts ctx ept) >>= \case
           Left e -> do
-            publish bus (CloseConnection e)
+            publish bus (ConnectionClosed self e)
             throw e
           Right conn -> do
             publish bus (ConnectionEstablished self)
@@ -154,16 +187,33 @@ disposeConnection as = traverse_ tryDisposing =<< pollAsync as
     disposing    = Network.connectionClose
 
 --------------------------------------------------------------------------------
-receivePackage :: Network.Connection -> IO Package
-receivePackage conn = do
-  frame <- Network.connectionGetExact conn 4
-  case runGet getLengthPrefix frame of
-    Left _       -> throwString "Package framing error"
-    Right prefix -> do
-      payload <- Network.connectionGetExact conn prefix
-      case runGet getPackage payload of
-        Left _    -> throwString "Package parsing error"
-        Right pkg -> return pkg
+receivePackage :: Publish
+               -> Connection
+               -> Network.Connection
+               -> IO Package
+receivePackage pub self conn =
+  tryAny (Network.connectionGetExact conn 4) >>= \case
+    Left e -> do
+      publish pub (ConnectionClosed self e)
+      throw e
+    Right frame ->
+      case runGet getLengthPrefix frame of
+        Left reason -> do
+          let cause = WrongFramingError reason
+          publish pub (connectionError self cause)
+          throw cause
+        Right prefix -> do
+          tryAny (Network.connectionGetExact conn prefix) >>= \case
+            Left e -> do
+              publish pub (ConnectionClosed self e)
+              throw e
+            Right payload ->
+              case runGet getPackage payload of
+                Left reason -> do
+                  let cause = PackageParsingError reason
+                  publish pub (connectionError self cause)
+                  throw cause
+                Right pkg -> return pkg
 
 --------------------------------------------------------------------------------
 receiving :: ConnectionState
@@ -174,9 +224,7 @@ receiving ConnectionState{..} self tcpConnAsync =
   forever . go =<< waitAsync tcpConnAsync
   where
     go conn =
-      tryAny (receivePackage conn) >>= \case
-        Left e    -> publish _bus (ConnectionError self e)
-        Right pkg -> publish _bus (PackageArrived self pkg)
+      publish _bus . PackageArrived self =<< receivePackage _bus self conn
 
 --------------------------------------------------------------------------------
 enqueue :: ConnectionState -> Package -> IO ()
@@ -196,7 +244,7 @@ sending ConnectionState{..} self tcpConnAsync = go =<< waitAsync tcpConnAsync
       let loop     = traverse_ send =<< atomically (readTBMQueue _sendQueue)
           send pkg =
             tryAny (Network.connectionPut conn bytes) >>= \case
-              Left e  -> publish _bus (ConnectionError self e)
+              Left e  -> publish _bus (ConnectionClosed self e)
               Right _ -> loop
             where
               bytes = runPut $ putPackage pkg in
