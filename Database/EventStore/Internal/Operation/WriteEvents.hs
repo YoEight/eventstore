@@ -35,7 +35,7 @@ writeEvents :: Settings
             -> ExpectedVersion
             -> [Event]
             -> Operation WriteResult
-writeEvents Settings{..} s v evts = do
+writeEvents Settings{..} s v evts = construct $ do
     nevts <- traverse eventToNewEvent evts
     let msg = newRequest s (expVersionInt32 v) nevts s_requireMaster
     resp <- send writeEventsCmd writeEventsCompletedCmd msg

@@ -38,7 +38,7 @@ readAllEvents :: Settings
               -> Bool
               -> ReadDirection
               -> Operation AllSlice
-readAllEvents Settings{..} c_pos p_pos max_c tos dir = do
+readAllEvents Settings{..} c_pos p_pos max_c tos dir = construct $ do
     let msg = newRequest c_pos p_pos max_c tos s_requireMaster
         cmd = case dir of
             Forward  -> readAllEventsForwardCmd

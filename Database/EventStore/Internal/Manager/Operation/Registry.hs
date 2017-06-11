@@ -29,12 +29,12 @@ module Database.EventStore.Internal.Manager.Operation.Registry
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.Bifoldable (bitraverse_)
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.Time
 import Data.UUID
 import Data.UUID.V4
--- import System.Random
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
@@ -42,18 +42,101 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Operation hiding (retry)
+import Database.EventStore.Internal.Stopwatch
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data Request =
-    forall result response. Decode response =>
-    Request { _requestOp       :: !(Operation result)
-            , _requestCmd      :: !Command
-            , _requestRespCmd  :: !Command
-            , _requestPayload  :: !ByteString
-            , _requestResume   :: response -> SM result ()
-            , _requestCallback :: !(Callback result)
-            }
+  Request { _requestCmd     :: !Command
+          , _requestPayload :: !ByteString
+          }
+
+--------------------------------------------------------------------------------
+data Suspend a
+  = Required !(Package -> Operation a)
+  | Optional !(Maybe Package -> Operation a)
+  | Resolved !(Operation a)
+
+--------------------------------------------------------------------------------
+type SessionId  = Integer
+type SessionMap = Map SessionId Session
+
+--------------------------------------------------------------------------------
+data Session =
+  forall result.
+  Session { sessionId       :: !SessionId
+          , sessionOp       :: !(Operation result)
+          , sessionStack    :: !(IORef (Suspend result))
+          , sessionCallback :: !(Callback result)
+          }
+
+--------------------------------------------------------------------------------
+rejectSession :: Exception e => Session -> e -> IO ()
+rejectSession Session{..} = reject sessionCallback
+
+--------------------------------------------------------------------------------
+resumeSession :: Registry -> Session -> Package -> IO ()
+resumeSession reg session@Session{..} pkg = do
+  atomicModifyIORef' sessionStack $ \case
+      Required k -> (Resolved $ k pkg, ())
+      Optional k -> (Resolved $ k (Just pkg), ())
+      same       -> (same, ())
+
+  execute reg session Nothing
+
+--------------------------------------------------------------------------------
+resumeNoPkgSession :: Registry -> Session -> IO ()
+resumeNoPkgSession reg session@Session{..} = do
+  atomicModifyIORef' sessionStack $ \case
+    Optional k -> (Resolved $ k Nothing, ())
+    same       -> (same, ())
+
+  execute reg session Nothing
+
+--------------------------------------------------------------------------------
+reinitSession :: Session -> IO ()
+reinitSession Session{..} = atomicWriteIORef sessionStack (Resolved sessionOp)
+
+--------------------------------------------------------------------------------
+restartSession :: Registry -> Session -> IO ()
+restartSession reg session = do
+  reinitSession session
+  scheduleSession reg session
+
+--------------------------------------------------------------------------------
+data Sessions =
+  Sessions { sessionsNextId :: IORef SessionId
+           , sessionsMap    :: IORef SessionMap
+           }
+
+--------------------------------------------------------------------------------
+createSession :: Sessions -> Operation a -> Callback a -> IO Session
+createSession Sessions{..} op cb = do
+  sid <- atomicModifyIORef' sessionsNextId $ \i -> (succ i, i)
+  ref <- newIORef (Resolved op)
+  atomicModifyIORef' sessionsMap $ \m ->
+    let session =
+          Session { sessionId       = sid
+                  , sessionOp       = op
+                  , sessionStack = ref
+                  , sessionCallback = cb
+                  } in
+    (insertMap sid session m, session)
+
+--------------------------------------------------------------------------------
+destroySession :: Sessions -> Session -> IO ()
+destroySession Sessions{..} s =
+  atomicModifyIORef' sessionsMap $ \m -> (deleteMap (sessionId s) m, ())
+
+--------------------------------------------------------------------------------
+sessionDisposed :: Sessions -> Session -> IO Bool
+sessionDisposed Sessions{..} s = notMember (sessionId s) <$> readIORef sessionsMap
+
+--------------------------------------------------------------------------------
+newSessions :: IO Sessions
+newSessions =
+  Sessions <$> newIORef 0 
+           <*> newIORef mempty
 
 --------------------------------------------------------------------------------
 packageOf :: Settings -> Request -> UUID -> Package
@@ -65,64 +148,65 @@ packageOf setts Request{..} uuid =
           }
 
 --------------------------------------------------------------------------------
-data PendingRequest =
-    PendingRequest { _pendingRequest :: !Request
-                   , _pendingRetries :: !Int
-                   , _pendingLastTry :: !UTCTime
-                   , _pendingConnId  :: !UUID
-                   }
+data Pending =
+    Pending { _pendingRequest :: !(Maybe Request)
+            , _pendingSession :: !Session
+            , _pendingRetries :: !Int
+            , _pendingLastTry :: !NominalDiffTime
+            , _pendingConnId  :: !UUID
+            }
 
 --------------------------------------------------------------------------------
-type PendingRequests = HashMap UUID PendingRequest
+destroyPendingSession :: Sessions -> Pending -> IO ()
+destroyPendingSession sessions Pending{..} =
+  destroySession sessions _pendingSession
+
+--------------------------------------------------------------------------------
+type PendingRequests = HashMap UUID Pending
 
 --------------------------------------------------------------------------------
 data Awaiting
-  = forall result.
-    Awaiting { _awaitingOp       :: !(Operation result)
-             , _awaitingCallback :: !(Callback result)
-             }
-
-  | AwaitingRequest !Request
+  = Awaiting !Session
+  | AwaitingRequest !Session !Request
 
 --------------------------------------------------------------------------------
 type Awaitings = [Awaiting]
 
 --------------------------------------------------------------------------------
-rejectPending :: Exception e => PendingRequest -> e -> IO ()
-rejectPending PendingRequest{..} e = go _pendingRequest
-  where
-    go Request{..} = reject _requestCallback e
+rejectPending :: Exception e => Pending -> e -> IO ()
+rejectPending Pending{..} = rejectSession _pendingSession
 
 --------------------------------------------------------------------------------
-applyResponse :: Registry -> PendingRequest -> ByteString -> IO ()
-applyResponse reg p@PendingRequest{..} = go _pendingRequest
-  where
-    go Request{..} bytes =
-      case runGet decodeMessage bytes of
-        Left e ->
-          reject _requestCallback (ProtobufDecodingError e)
-        Right resp ->
-          execute reg Nothing _requestOp _requestCallback (_requestResume resp)
+applyResponse :: Registry -> Pending -> Package -> IO ()
+applyResponse reg Pending{..} = resumeSession reg _pendingSession
+
+--------------------------------------------------------------------------------
+restartPending :: Registry -> Pending -> IO ()
+restartPending reg Pending{..} = restartSession reg _pendingSession
 
 --------------------------------------------------------------------------------
 data Registry =
     Registry  { _regSettings  :: Settings
               , _regPendings  :: IORef PendingRequests
               , _regAwaitings :: IORef Awaitings
+              , _stopwatch    :: Stopwatch
+              , _sessions     :: Sessions
               }
 
 --------------------------------------------------------------------------------
 newRegistry :: Settings -> IO Registry
 newRegistry setts = Registry setts <$> newIORef mempty
                                    <*> newIORef []
-
---------------------------------------------------------------------------------
-restartRequest :: Registry -> Request -> IO ()
-restartRequest reg Request{..} = schedule reg _requestOp _requestCallback
+                                   <*> newStopwatch
+                                   <*> newSessions
 
 --------------------------------------------------------------------------------
 schedule :: Registry -> Operation a -> Callback a -> IO ()
-schedule reg op cb = scheduleAwait reg (Awaiting op cb)
+schedule reg op cb = scheduleSession reg =<< createSession (_sessions reg) op cb
+
+--------------------------------------------------------------------------------
+scheduleSession :: Registry -> Session -> IO ()
+scheduleSession reg session = scheduleAwait reg (Awaiting session)
 
 --------------------------------------------------------------------------------
 scheduleAwait :: Registry -> Awaiting -> IO ()
@@ -131,62 +215,102 @@ scheduleAwait Registry{..} aw =
     (aw : stack, ())
 
 --------------------------------------------------------------------------------
-execute :: Registry
-        -> Maybe Connection
-        -> Operation a
-        -> Callback a
-        -> SM a ()
-        -> IO ()
-execute reg@Registry{..} mConn op cb = go
+execute :: Registry -> Session -> Maybe Connection -> IO ()
+execute self session mConn = do
+  uuid <- nextRandom
+  runExecution operation uuid >>= \case
+    Succeeded decision ->
+      case decision of
+        Completed -> destroySession (_sessions self) session
+        Suspended -> return ()
+    Retry -> do
+      reinitSession session
+      execute self session mConn
+    Failed e -> do
+      destroySession (_sessions self) session
+      rejectSession session e
   where
-    go Return{} = return ()
-    go (FreshId k) = do
-      uuid <- nextRandom
-      go (k uuid)
-    go (Yield a next) = do
-      fulfill cb a
-      go next
-    go (SendPkg cmdReq cmdResp req next) = do
-      let request = Request { _requestOp       = op
-                            , _requestCmd      = cmdReq
-                            , _requestRespCmd  = cmdResp
-                            , _requestPayload  = runPut $ encodeMessage req
-                            , _requestResume   = next
-                            , _requestCallback = cb
-                            }
-
-      case mConn of
-        Nothing   -> scheduleAwait reg (AwaitingRequest request)
-        Just conn -> issueRequest reg conn request
-    go (Failure outcome) =
-      case outcome of
-        Just e  -> reject cb e
-        Nothing -> go op
+    operation = compute self session mConn
 
 --------------------------------------------------------------------------------
-issueRequest :: Registry -> Connection -> Request -> IO ()
-issueRequest reg@Registry{..} conn request = do
-  uuid <- nextRandom
-  now  <- getCurrentTime
-  let pkg     = packageOf _regSettings request uuid
-      pending = PendingRequest { _pendingRequest = request
-                               , _pendingRetries = 1
-                               , _pendingLastTry = now
-                               , _pendingConnId  = connectionId conn
-                               }
+data Computed
+  = Completed
+  | Suspended
+
+--------------------------------------------------------------------------------
+compute :: Registry -> Session -> Maybe Connection -> Execution Computed
+compute self@Registry{..} session@Session{..} mConn =
+  liftIO (readIORef sessionStack) >>= \case
+    Resolved action -> loop action
+    _               -> return Suspended
+  where
+    loop (MachineT m) = m >>= \case
+      Stop  -> return Completed
+      Yield a next -> do
+        liftIO $ fulfill sessionCallback a
+        loop next
+      Await k tpe _ ->
+        case tpe of
+          NeedRemote cmd payload -> do
+            let req = Request { _requestCmd     = cmd
+                              , _requestPayload = payload
+                              }
+            liftIO $ do
+              atomicWriteIORef sessionStack (Required k)
+              case mConn of
+                Nothing   -> scheduleAwait self (AwaitingRequest session req)
+                Just conn -> issueRequest self session conn req
+
+            return Suspended
+          WaitRemote uuid -> liftIO $ do
+            atomicWriteIORef sessionStack (Optional k)
+            case mConn of
+              Nothing   -> scheduleAwait self (Awaiting session)
+              Just conn -> do
+                pending <- createPending session _stopwatch conn Nothing
+                insertPending self uuid pending
+
+            return Suspended
+
+--------------------------------------------------------------------------------
+issueRequest :: Registry -> Session -> Connection -> Request -> IO ()
+issueRequest reg@Registry{..} session conn req = do
+  uuid    <- nextRandom
+  elapsed <- stopwatchElapsed _stopwatch
+  pending <- createPending session _stopwatch conn (Just req)
 
   insertPending reg uuid pending
-  enqueuePackage conn pkg
+  enqueuePackage conn (packageOf _regSettings req uuid)
 
 --------------------------------------------------------------------------------
-insertPending :: Registry -> UUID -> PendingRequest -> IO ()
+createPending :: Session
+              -> Stopwatch
+              -> Connection
+              -> Maybe Request
+              -> IO Pending
+createPending session stopwatch conn mReq = do
+  elapsed <- stopwatchElapsed stopwatch
+  let pending =
+        Pending { _pendingRequest = mReq
+                , _pendingSession = session
+                , _pendingRetries = 1
+                , _pendingLastTry = elapsed
+                , _pendingConnId  = connectionId conn
+                }
+
+  return pending
+
+--------------------------------------------------------------------------------
+insertPending :: Registry -> UUID -> Pending -> IO ()
 insertPending Registry{..} key pending =
   atomicModifyIORef' _regPendings $ \pendings ->
     (insertMap key pending pendings, ())
 
 --------------------------------------------------------------------------------
 register :: Registry -> Connection -> Operation a -> Callback a -> IO ()
-register reg conn op cb = execute reg (Just conn) op cb op
+register reg conn op cb = do
+  session <- createSession (_sessions reg) op cb
+  execute reg session (Just conn)
 
 --------------------------------------------------------------------------------
 abortPendingRequests :: Registry -> IO ()
@@ -212,8 +336,8 @@ handlePackage reg@Registry{..} pkg@Package{..} = do
     Just pending -> Just <$> executePending reg pkg pending
 
 --------------------------------------------------------------------------------
-executePending :: Registry -> Package -> PendingRequest -> IO Decision
-executePending reg@Registry{..} pkg@Package{..} p@PendingRequest{..} =
+executePending :: Registry -> Package -> Pending -> IO Decision
+executePending reg@Registry{..} pkg@Package{..} p@Pending{..} =
   case packageCmd of
     cmd | cmd == badRequestCmd -> do
             let reason = packageDataAsText pkg
@@ -232,18 +356,12 @@ executePending reg@Registry{..} pkg@Package{..} p@PendingRequest{..} =
                     info         = masterInfo details
                     node         = masterInfoNodeEndPoints info
 
-                restartRequest reg _pendingRequest
+                restartPending reg p
                 return $ Reconnect node
               -- In this case with just retry the operation.
-              _ -> do restartRequest reg _pendingRequest
-                      return Handled
-        | cmd /= _requestRespCmd _pendingRequest -> do
-            let reqCmd = _requestCmd _pendingRequest
-                resp   = InvalidServerResponse reqCmd cmd
-            rejectPending p resp
-            return Handled
+              _ -> Handled <$ restartPending reg p
         | otherwise -> do
-            applyResponse reg p packageData
+            applyResponse reg p pkg
             return Handled
 
 --------------------------------------------------------------------------------
@@ -257,50 +375,61 @@ instance Exception OperationMaxAttemptReached
 
 --------------------------------------------------------------------------------
 checkAndRetry :: Registry -> Connection -> IO ()
-checkAndRetry Registry{..} conn = do
+checkAndRetry self@Registry{..} conn = do
   pendings    <- readIORef _regPendings
-  now         <- getCurrentTime
-  newPendings <- foldM (checking now) pendings (mapToList pendings)
+  elapsed     <- stopwatchElapsed _stopwatch
+  newPendings <- foldM (checking elapsed) pendings (mapToList pendings)
   atomicWriteIORef _regPendings newPendings
   where
-    checking now reg (key, p)
-      | diffUTCTime now (_pendingLastTry p) >= s_operationTimeout _regSettings =
-        let retry = do
-              uuid <- nextRandom
-              let pkg        = packageOf _regSettings (_pendingRequest p) uuid
-                  newPending = p { _pendingLastTry = now
-                                 , _pendingRetries = _pendingRetries p + 1
-                                 , _pendingConnId  = connectionId conn
-                                 }
+    checking elapsed reg (key, p) =
+      case _pendingRequest p of
+        Nothing
+          | connectionId conn == _pendingConnId p -> return reg
+          | otherwise -> do
+            resumeNoPkgSession self (_pendingSession p)
+            disposed <- sessionDisposed _sessions (_pendingSession p)
+            let newReg = if disposed then deleteMap key reg else reg
+            return newReg
+        Just req -> do
+          let lastTry    = _pendingLastTry p
+              hasTimeout = elapsed - lastTry >= s_operationTimeout _regSettings
+          if hasTimeout || _pendingConnId p /= connectionId conn
+            then do
+              let retry = do
+                    uuid <- nextRandom
+                    let pkg     = packageOf _regSettings req uuid
+                        pending =
+                          p { _pendingLastTry = elapsed
+                            , _pendingRetries = _pendingRetries p + 1
+                            , _pendingConnId  = connectionId conn
+                            }
+                        nextReg = deleteMap key $ insertMap uuid pending reg
 
-                  newReg = deleteMap key $ insertMap uuid newPending reg
+                    enqueuePackage conn pkg
+                    return nextReg
 
-              enqueuePackage conn pkg
-              return reg in
-        case s_operationRetry _regSettings of
-          AtMost maxAttempts
-            | _pendingRetries p <= maxAttempts
-              -> retry
-            | otherwise
-              -> do let cmd    = _requestCmd $ _pendingRequest p
-                        action = rejectPending p
-                                   (OperationMaxAttemptReached key cmd)
-
+              case s_operationRetry _regSettings of
+                AtMost maxAttempts
+                  | _pendingRetries p <= maxAttempts
+                    -> retry
+                  | otherwise -> do
+                    let cmd = _requestCmd req
+                    destroyPendingSession _sessions p
+                    rejectPending p (OperationMaxAttemptReached key cmd)
                     return $ deleteMap key reg
-          KeepRetrying -> retry
-      | otherwise = return reg
+                KeepRetrying -> retry
+            else return reg
 
 --------------------------------------------------------------------------------
 startAwaitings :: Registry -> Connection -> IO ()
 startAwaitings reg@Registry{..} conn = do
-    awaitings <- atomicModifyIORef' _regAwaitings $ \stack ->
-      ([], stack)
+  awaitings <- atomicModifyIORef' _regAwaitings $ \stack ->
+    ([], reverse stack)
 
-    for_ awaitings $ \aw ->
-      case aw of
-        Awaiting{..}        -> register reg conn _awaitingOp _awaitingCallback
-        AwaitingRequest req -> issueRequest reg conn req
-
+  traverse_ starting awaitings
+  where
+    starting (Awaiting session)            = execute reg session (Just conn)
+    starting (AwaitingRequest session req) = issueRequest reg session conn req
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a

@@ -38,7 +38,7 @@ readStreamEvents :: Settings
                  -> Int32
                  -> Bool
                  -> Operation (ReadResult 'RegularStream StreamSlice)
-readStreamEvents Settings{..} dir s st cnt tos = do
+readStreamEvents Settings{..} dir s st cnt tos = construct $ do
     let req_cmd =
             case dir of
                 Forward  -> readStreamEventsForwardCmd

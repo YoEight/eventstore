@@ -43,7 +43,7 @@ deleteStream :: Settings
              -> ExpectedVersion
              -> Maybe Bool
              -> Operation DeleteResult
-deleteStream Settings{..} s v hard = do
+deleteStream Settings{..} s v hard = construct $ do
     let msg = newRequest s (expVersionInt32 v) s_requireMaster hard
     resp <- send deleteStreamCmd deleteStreamCompletedCmd msg
     let r            = getField $ _result resp

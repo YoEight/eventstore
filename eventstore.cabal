@@ -1,4 +1,4 @@
--- This file has been generated from package.yaml by hpack version 0.15.0.
+-- This file has been generated from package.yaml by hpack version 0.17.0.
 --
 -- see: https://github.com/sol/hpack
 
@@ -31,8 +31,8 @@ source-repository head
 
 library
   hs-source-dirs:
-      .
-  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards
+      ./.
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes
   build-depends:
       base >=4.7 && <5
     , aeson >=0.8 && <1.2
@@ -56,6 +56,9 @@ library
     , fast-logger
     , text-format
     , clock
+    , pipes
+    , machines >= 0.6
+    , bifunctors
   exposed-modules:
       Database.EventStore
       Database.EventStore.Internal.Callback
@@ -111,7 +114,7 @@ test-suite eventstore-tests
   main-is: Main.hs
   hs-source-dirs:
       tests
-  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5

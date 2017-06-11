@@ -1,8 +1,10 @@
-{-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE GADTs              #-}
-{-# LANGUAGE KindSignatures     #-}
-{-# LANGUAGE Rank2Types         #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures             #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE Rank2Types                 #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation
@@ -14,12 +16,39 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Operation where
+module Database.EventStore.Internal.Operation
+  ( OpResult(..)
+  , OperationError(..)
+  , Operation
+  , Need(..)
+  , Code
+  , Execution(..)
+  , Outcome(..)
+  , freshId
+  , failure
+  , retry
+  , send
+  , request
+  , waitFor
+  , waitForEither
+  , wrongVersion
+  , streamDeleted
+  , invalidTransaction
+  , accessDenied
+  , protobufDecodingError
+  , serverError
+  , invalidServerResponse
+  , module Data.Machine
+  ) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Control.Monad.Reader (local)
+import Data.Machine
 import Data.ProtocolBuffers
+import Data.Serialize
 import Data.UUID
+import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
@@ -61,125 +90,165 @@ data OperationError
 instance Exception OperationError
 
 --------------------------------------------------------------------------------
--- | Main operation state machine instruction.
-data SM o a
-    = Return a
-      -- ^ Lifts a pure value into the intruction tree. Also marks the end of
-      --   an instruction tree.
-    | Yield o (SM o a)
-      -- ^ Emits an operation return value.
-    | FreshId (UUID -> SM o a)
-      -- ^ Asks for an unused 'UUID'.
-    | forall rq rp. (Encode rq, Decode rp) =>
-      SendPkg Command Command rq (rp -> SM o a)
-      -- ^ Send a request message given a command and an expected command.
-      --   response. It also carries a callback to call when response comes in.
-    | Failure (Maybe OperationError)
-      -- ^ Ends the instruction interpretation. If holds Nothing, the
-      --   interpretation should resume from the beginning. Otherwise it ends
-      --   by indicating what went wrong.
+data Outcome a
+  = Succeeded a
+  | Retry
+  | Failed !OperationError
 
 --------------------------------------------------------------------------------
-instance Functor (SM o) where
-    fmap f (Return a)          = Return (f a)
-    fmap f (Yield o n)         = Yield o (fmap f n)
-    fmap f (FreshId k)         = FreshId (fmap f . k)
-    fmap f (SendPkg ci co p k) = SendPkg ci co p (fmap f . k)
-    fmap _ (Failure e)         = Failure e
+newtype Execution a = Execution { runExecution :: UUID -> IO (Outcome a) }
 
 --------------------------------------------------------------------------------
-instance Applicative (SM o) where
-    pure = return
-    (<*>) = ap
+instance Functor Execution where
+  fmap f (Execution k) = Execution (fmap go . k)
+    where
+      go (Succeeded a) = Succeeded (f a)
+      go Retry         = Retry
+      go (Failed e)    = Failed e
 
 --------------------------------------------------------------------------------
-instance Monad (SM o) where
-    return = Return
+instance Applicative Execution where
+  pure  = return
+  (<*>) = ap
 
-    Return a          >>= f = f a
-    Yield o n         >>= f = Yield o (n >>= f)
-    FreshId k         >>= f = FreshId ((f =<<) . k)
-    SendPkg ci co p k >>= f = SendPkg ci co p ((f =<<) . k)
-    Failure e         >>= _ = Failure e
+--------------------------------------------------------------------------------
+instance Monad Execution where
+  return a = Execution $ \_ -> return (Succeeded a)
+
+  Execution k >>= f = Execution $ \uuid ->
+    k uuid >>= \case
+      Retry       -> return Retry
+      Failed e    -> return (Failed e)
+      Succeeded a -> runExecution (f a) uuid
+
+--------------------------------------------------------------------------------
+instance MonadReader UUID Execution where
+  ask = Execution (return . Succeeded)
+
+  local f m = Execution $ \uuid -> runExecution m (f uuid)
+
+--------------------------------------------------------------------------------
+instance MonadIO Execution where
+  liftIO m = Execution $ \_ -> Succeeded <$> liftIO m
+
+--------------------------------------------------------------------------------
+type Operation output = MachineT Execution Need output
+
+--------------------------------------------------------------------------------
+data Need a where
+  NeedRemote :: Command -> ByteString -> Need Package
+  WaitRemote :: UUID -> Need (Maybe Package)
+
+--------------------------------------------------------------------------------
+-- | Instruction that composed an 'Operation'.
+type Code o a = PlanT Need o Execution a
 
 --------------------------------------------------------------------------------
 -- | Asks for a unused 'UUID'.
-freshId :: SM o UUID
-freshId = FreshId Return
+freshId :: Code o UUID
+freshId = liftIO nextRandom
 
 --------------------------------------------------------------------------------
 -- | Raises an 'OperationError'.
-failure :: OperationError -> SM o a
-failure e = Failure $ Just e
+failure :: OperationError -> Code o a
+failure e = lift $ Execution $ \_ -> return (Failed e)
 
 --------------------------------------------------------------------------------
 -- | Asks to resume the interpretation from the beginning.
-retry :: SM o a
-retry = Failure Nothing
+retry :: Code o a
+retry = lift $ Execution $ \_ -> return Retry
 
 --------------------------------------------------------------------------------
--- | Sends a request to the server given a command request and response. It
---   returns the expected deserialized message.
-send :: (Encode rq, Decode rp) => Command -> Command -> rq -> SM o rp
-send ci co rq = SendPkg ci co rq Return
+-- | Like 'request' except it discards the correlation id of the network
+--   exchange.
+send :: (Encode req, Decode resp)
+     => Command
+     -> Command
+     -> req
+     -> Code o resp
+send reqCmd expCmd req = snd <$> request reqCmd expCmd req
 
 --------------------------------------------------------------------------------
--- | Emits operation return value.
-yield :: o -> SM o ()
-yield o = Yield o (Return ())
+-- | Sends a message to remote server. It returns the expected deserialized
+--   message along with the correlation id of the network exchange.
+request :: (Encode req, Decode resp)
+        => Command
+        -> Command
+        -> req
+        -> Code o (UUID, resp)
+request reqCmd expCmd rq = do
+  let payload = runPut $ encodeMessage rq
+  pkg <- awaits $ NeedRemote reqCmd payload
+  let gotCmd = packageCmd pkg
+
+  when (gotCmd /= expCmd)
+    (invalidServerResponse expCmd gotCmd)
+
+  case runGet decodeMessage (packageData pkg) of
+    Left e     -> protobufDecodingError e
+    Right resp -> return (packageCorrelation pkg, resp)
 
 --------------------------------------------------------------------------------
--- | Replaces every emitted value, via 'yield' function by calling the given
---   callback.
-foreach :: SM a x -> (a -> SM b x) -> SM b x
-foreach start k = go start
-  where
-    go (Return x)           = Return x
-    go (Yield a n)          = k a >> go n
-    go (FreshId ki)         = FreshId (go . ki)
-    go (SendPkg ci co p kp) = SendPkg ci co p (go . kp)
-    go (Failure e)          = Failure e
+-- | Waits for a message from the server at the given correlation id. If the
+--   the connection has been reset in the meantime, it will emit a 'stop'.
+waitFor :: Decode resp => UUID -> Code o resp
+waitFor pid =
+  awaits (WaitRemote pid) >>= \case
+    Nothing  -> stop
+    Just pkg ->
+      case runGet decodeMessage (packageData pkg) of
+        Left e     -> protobufDecodingError e
+        Right resp -> return resp
 
 --------------------------------------------------------------------------------
--- | Maps every emitted value, via 'yield', using given function.
-mapOp :: (a -> b) -> SM a () -> SM b ()
-mapOp k sm = foreach sm (yield . k)
-
---------------------------------------------------------------------------------
--- | An operation is just a 'SM' tree.
-type Operation a = SM a ()
+-- | Waits for a message from the server at the given correlation id for either
+--   'Decode' value type. If the connection has been reset in the meantime,
+--   it will emit a 'stop'.
+waitForEither :: (Decode resp1, Decode resp2)
+              => UUID
+              -> Code o (Either resp1 resp2)
+waitForEither pid =
+  awaits (WaitRemote pid) >>= \case
+    Nothing  -> stop
+    Just pkg ->
+      case runGet decodeMessage (packageData pkg) of
+        Left _ ->
+          case runGet decodeMessage (packageData pkg) of
+            Left e     -> protobufDecodingError e
+            Right resp -> return (Right resp)
+        Right resp1 -> return (Left resp1)
 
 --------------------------------------------------------------------------------
 -- | Raises 'WrongExpectedVersion' exception.
-wrongVersion :: Text -> ExpectedVersion -> SM o a
+wrongVersion :: Text -> ExpectedVersion -> Code o a
 wrongVersion stream ver = failure (WrongExpectedVersion stream ver)
 
 --------------------------------------------------------------------------------
 -- | Raises 'StreamDeleted' exception.
-streamDeleted :: Text -> SM o a
+streamDeleted :: Text -> Code o a
 streamDeleted stream = failure (StreamDeleted stream)
 
 --------------------------------------------------------------------------------
 -- | Raises 'InvalidTransaction' exception.
-invalidTransaction :: SM o a
+invalidTransaction :: Code o a
 invalidTransaction = failure InvalidTransaction
 
 --------------------------------------------------------------------------------
 -- | Raises 'AccessDenied' exception.
-accessDenied :: StreamName -> SM o a
+accessDenied :: StreamName -> Code oconcat a
 accessDenied = failure . AccessDenied
 
 --------------------------------------------------------------------------------
 -- | Raises 'ProtobufDecodingError' exception.
-protobufDecodingError :: String -> SM o a
+protobufDecodingError :: String -> Code o a
 protobufDecodingError = failure . ProtobufDecodingError
 
 --------------------------------------------------------------------------------
 -- | Raises 'ServerError' exception.
-serverError :: Maybe Text -> SM o a
+serverError :: Maybe Text -> Code o a
 serverError = failure . ServerError
 
 --------------------------------------------------------------------------------
 -- | Raises 'InvalidServerResponse' exception.
-invalidServerResponse :: Command -> Command -> SM o a
+invalidServerResponse :: Command -> Command -> Code o a
 invalidServerResponse expe got = failure $ InvalidServerResponse expe got

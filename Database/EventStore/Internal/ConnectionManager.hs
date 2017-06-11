@@ -115,6 +115,7 @@ data Internal =
            , _subMgr    :: Subscription.Manager
            , _conn      :: MVar Connection
            , _stopwatch :: Stopwatch
+           , _lastCheck :: IORef NominalDiffTime
            }
 
 --------------------------------------------------------------------------------
@@ -127,13 +128,17 @@ connectionManager :: LogManager
 connectionManager logMgr setts builder disc mainBus = do
   let logger     = getLogger "ConnectionManager" logMgr
       mkInternal = Internal setts disc logger logMgr mainBus builder
+
+  stopwatch    <- newStopwatch
+  timeoutCheck <- stopwatchElapsed stopwatch
   internal <- mkInternal <$> newMVar Init
                          <*> newIORef Nothing
                          <*> newTVarIO False
                          <*> Operation.new logMgr setts
                          <*> Subscription.new logMgr setts
                          <*> newEmptyMVar
-                         <*> newStopwatch
+                         <*> return stopwatch
+                         <*> newIORef timeoutCheck
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onEstablish internal)
@@ -319,9 +324,14 @@ onTick self@Internal{..} _ =
           | otherwise -> putMVar _stage stage
         _ -> putMVar _stage stage
     stage@Connected -> do
-      conn <- readMVar _conn
-      Operation.check _opMgr conn
-      Subscription.check _subMgr conn
+      elapsed           <- stopwatchElapsed _stopwatch
+      timeoutCheckStart <- readIORef _lastCheck
+
+      when (elapsed - timeoutCheckStart >= s_operationTimeout _setts) $ do
+        conn <- readMVar _conn
+        Operation.check _opMgr conn
+        Subscription.check _subMgr conn
+
       putMVar _stage stage
     stage -> putMVar _stage stage
   where
