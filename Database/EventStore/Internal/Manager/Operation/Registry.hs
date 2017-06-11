@@ -28,13 +28,14 @@ module Database.EventStore.Internal.Manager.Operation.Registry
     ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-import Data.ProtocolBuffers
-import Data.Serialize
-import Data.Time
-import Data.UUID
-import Data.UUID.V4
--- import System.Random
+import           ClassyPrelude
+import           Data.ProtocolBuffers
+import           Data.Serialize
+import           Data.Time
+import           Data.UUID
+import           Data.UUID.V4
+import qualified Pipes         as Pipes
+import qualified Pipes.Prelude as Pipes
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
@@ -46,20 +47,21 @@ import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data Request =
-    forall result response. Decode response =>
+    forall result.
     Request { _requestOp       :: !(Operation result)
+            , _requestId       :: !UUID
             , _requestCmd      :: !Command
             , _requestRespCmd  :: !Command
             , _requestPayload  :: !ByteString
-            , _requestResume   :: response -> SM result ()
+            , _requestResume   :: ByteString -> Code () result ()
             , _requestCallback :: !(Callback result)
             }
 
 --------------------------------------------------------------------------------
-packageOf :: Settings -> Request -> UUID -> Package
-packageOf setts Request{..} uuid =
+packageOf :: Settings -> Request -> Package
+packageOf setts Request{..} =
   Package { packageCmd         = _requestCmd
-          , packageCorrelation = uuid
+          , packageCorrelation = _requestId
           , packageData        = _requestPayload
           , packageCred        = s_credentials setts
           }
@@ -135,33 +137,53 @@ execute :: Registry
         -> Maybe Connection
         -> Operation a
         -> Callback a
-        -> SM a ()
+        -> Code () a ()
         -> IO ()
-execute reg@Registry{..} mConn op cb = go
+execute self mConn op cb code = do
+  uuid <- nextRandom
+  runExecution (runEffect program) uuid  >>= \case
+    Succeeded _ -> return ()
+    Retry       -> execute self mConn op cb op
+    Failed e    -> reject cb e
+    Stop        -> return ()
   where
-    go Return{} = return ()
-    go (FreshId k) = do
-      uuid <- nextRandom
-      go (k uuid)
-    go (Yield a next) = do
-      fulfill cb a
-      go next
-    go (SendPkg cmdReq cmdResp req next) = do
+    operation = compute self op cb mConn >>~ (const code)
+    program   = Pipes.for operation (liftIO . fulfill cb)
+
+--------------------------------------------------------------------------------
+type Compute a = Server Ask Serve (Execution IO) a
+
+--------------------------------------------------------------------------------
+stop :: Compute a
+stop = lift (Execution $ \_ -> return Stop)
+
+--------------------------------------------------------------------------------
+compute :: Registry
+        -> Operation a
+        -> Callback a
+        -> Maybe Connection
+        -> Compute r
+compute self@Registry{..} op cb mConn = respond Ignore >>= loop
+  where
+    loop FreshId = do
+      uuid <- liftIO nextRandom
+      respond (NewId uuid) >>= loop
+    loop (SendPkg pid cmdReq cmdResp bytes) = do
       let request = Request { _requestOp       = op
+                            , _requestId       = pid
                             , _requestCmd      = cmdReq
                             , _requestRespCmd  = cmdResp
-                            , _requestPayload  = runPut $ encodeMessage req
-                            , _requestResume   = next
+                            , _requestPayload  = bytes
+                            , _requestResume   = respond . RespPkg
                             , _requestCallback = cb
                             }
 
-      case mConn of
-        Nothing   -> scheduleAwait reg (AwaitingRequest request)
-        Just conn -> issueRequest reg conn request
-    go (Failure outcome) =
-      case outcome of
-        Just e  -> reject cb e
-        Nothing -> go op
+      liftIO $
+        case mConn of
+          Nothing   -> scheduleAwait self (AwaitingRequest request)
+          Just conn -> issueRequest self conn request
+
+      stop
 
 --------------------------------------------------------------------------------
 issueRequest :: Registry -> Connection -> Request -> IO ()

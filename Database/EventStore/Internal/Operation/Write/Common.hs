@@ -34,7 +34,7 @@ data WriteResult
 
 --------------------------------------------------------------------------------
 -- | Constructs a 'NewEvent' from an 'Event'.
-eventToNewEvent :: Event -> SM a NewEvent
+eventToNewEvent :: Event -> Code o NewEvent
 eventToNewEvent evt = do
     uuid <- maybe freshId return evt_id
     return $ newEvent evt_type

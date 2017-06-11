@@ -39,7 +39,7 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 -- | Start transaction operation.
 transactionStart :: Settings -> Text -> ExpectedVersion -> Operation Int64
-transactionStart Settings{..} stream exp_v = do
+transactionStart Settings{..} stream exp_v = construct $ do
     let msg = newStart stream (expVersionInt32 exp_v) s_requireMaster
     resp <- send transactionStartCmd transactionStartCompletedCmd msg
     let tid = getField $ _transId resp
@@ -62,7 +62,7 @@ transactionWrite :: Settings
                  -> Int64
                  -> [Event]
                  -> Operation ()
-transactionWrite Settings{..} stream exp_v trans_id evts = do
+transactionWrite Settings{..} stream exp_v trans_id evts = construct $ do
     nevts <- traverse eventToNewEvent evts
     let msg = newWrite trans_id nevts s_requireMaster
     resp <- send transactionWriteCmd transactionWriteCompletedCmd msg
@@ -84,7 +84,7 @@ transactionCommit :: Settings
                   -> ExpectedVersion
                   -> Int64
                   -> Operation WriteResult
-transactionCommit Settings{..} stream exp_v trans_id = do
+transactionCommit Settings{..} stream exp_v trans_id = construct $ do
     let msg = newCommit trans_id s_requireMaster
     resp <- send transactionCommitCmd transactionCommitCompletedCmd msg
     let r = getField $ _ccResult resp

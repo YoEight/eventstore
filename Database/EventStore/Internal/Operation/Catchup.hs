@@ -25,7 +25,8 @@ import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import           ClassyPrelude
+import qualified Pipes as Pipes
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
@@ -60,6 +61,21 @@ data CatchupState
       --   the $all stream.
 
 --------------------------------------------------------------------------------
+makeOp :: Settings
+       -> Int32
+       -> Bool
+       -> CatchupState
+       -> Operation (Either (ReadResult 'RegularStream StreamSlice) AllSlice)
+makeOp setts batch tos tpe =
+    case tpe of
+        RegularCatchup stream fromEvt ->
+            fmap Left
+                (readStreamEvents setts Forward stream fromEvt batch tos)
+        AllCatchup comPos prePos ->
+            fmap Right
+                (readAllEvents setts comPos prePos batch tos Forward)
+
+--------------------------------------------------------------------------------
 catchupStreamName :: CatchupState -> Text
 catchupStreamName (RegularCatchup stream _) = stream
 catchupStreamName _ = "$all"
@@ -71,50 +87,51 @@ data CatchupOpResult =
                     , catchupCheckpoint :: !Checkpoint
                     }
 
+
+--------------------------------------------------------------------------------
+streaming :: Settings
+          -> Int32
+          -> Bool
+          -> CatchupState
+          -> Operation CatchupOpResult
+streaming setts batch tos = construct . go
+  where
+    go state = do
+        outcome <- deconstruct (fmap Left (makeOp setts batch tos state))
+        (eos, evts, nchk, nextState) <- extract state outcome
+        yield (CatchupOpResult evts eos nchk)
+        unless eos $ go nextState
+
+    extract _ (Right as) = do
+        let Position nxt_c nxt_p = sliceNext as
+            tmp_tpe = AllCatchup nxt_c nxt_p
+            chk     = CheckpointPosition $ sliceNext as
+        return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
+    extract state (Left rr) =
+        fromReadResult (catchupStreamName state) rr $ \as -> do
+            let RegularCatchup s _ = state
+                nxt = sliceNext as
+                tmp_tpe = RegularCatchup s nxt
+                chk = CheckpointNumber nxt
+            return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
+
 --------------------------------------------------------------------------------
 -- | Stream catching up operation.
 catchup :: Settings
         -> CatchupState
         -> Bool
         -> Maybe Int32
-        -> Operation CatchupOpResult -- ([ResolvedEvent], Bool, Checkpoint)
-catchup setts init_tpe tos bat_siz = go init_tpe
+        -> Operation CatchupOpResult
+catchup setts initState tos bat_siz =
+    streaming setts batch tos initState
   where
     batch = fromMaybe defaultBatchSize bat_siz
-    go tpe = do
-        let action =
-                case tpe of
-                    RegularCatchup stream cur_evt ->
-                        let op = readStreamEvents setts Forward stream cur_evt
-                                 batch tos in
-                        mapOp Left op
-                    AllCatchup c_pos p_pos ->
-                        let op = readAllEvents setts c_pos p_pos batch
-                                 tos Forward in
-                        mapOp Right op
-
-        foreach action $ \res -> do
-            (eos, evts, nchk, nxt_tpe) <- case res of
-                Right as -> do
-                    let Position nxt_c nxt_p = sliceNext as
-                        tmp_tpe = AllCatchup nxt_c nxt_p
-                        chk     = CheckpointPosition $ sliceNext as
-                    return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
-                Left rr -> fromReadResult (catchupStreamName tpe) rr $ \as ->
-                    let RegularCatchup s _ = tpe
-                        nxt = sliceNext as
-                        tmp_tpe = RegularCatchup s nxt
-                        chk = CheckpointNumber nxt in
-                    return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
-
-            yield (CatchupOpResult evts eos nchk)
-            unless eos $ go nxt_tpe
 
 --------------------------------------------------------------------------------
 fromReadResult :: Text
                -> ReadResult 'RegularStream a
-               -> (a -> SM b x)
-               -> SM b x
+               -> (a -> Code o x)
+               -> Code o x
 fromReadResult stream res k =
     case res of
         ReadNoStream        -> failure $ streamNotFound stream

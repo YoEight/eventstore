@@ -23,8 +23,9 @@ module Database.EventStore.Internal.Operation.StreamMetadata
 import Data.Int
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-import Data.Aeson (decode)
+import           ClassyPrelude
+import           Data.Aeson (decode)
+import qualified Pipes as Pipes
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
@@ -42,13 +43,14 @@ metaStream s = "$$" <> s
 --------------------------------------------------------------------------------
 -- | Read stream metadata operation.
 readMetaStream :: Settings -> Text -> Operation StreamMetadataResult
-readMetaStream setts s =
-    foreach (readEvent setts (metaStream s) (-1) False) $ \tmp -> do
-        onReadResult tmp $ \n e_num evt -> do
-            let bytes = recordedEventData $ resolvedEventOriginal evt
-            case decode $ fromStrict bytes of
-                Just pv -> yield $ StreamMetadataResult n e_num pv
-                Nothing -> failure invalidFormat
+readMetaStream setts s = construct $ do
+    let op = readEvent setts (metaStream s) (-1) False
+    tmp <- deconstruct (fmap Left op)
+    onReadResult tmp $ \n e_num evt -> do
+        let bytes = recordedEventData $ resolvedEventOriginal evt
+        case decode $ fromStrict bytes of
+            Just pv -> yield $ StreamMetadataResult n e_num pv
+            Nothing -> failure invalidFormat
 
 --------------------------------------------------------------------------------
 -- | Set stream metadata operation.
@@ -60,9 +62,8 @@ setMetaStream :: Settings
 setMetaStream setts s v meta =
     let stream = metaStream s
         json   = streamMetadataJSON meta
-        evt    = createEvent StreamMetadataType Nothing (withJson json)
-        inner  = writeEvents setts stream v [evt] in
-    foreach inner yield
+        evt    = createEvent StreamMetadataType Nothing (withJson json) in
+     writeEvents setts stream v [evt]
 
 --------------------------------------------------------------------------------
 invalidFormat :: OperationError
@@ -74,8 +75,8 @@ streamNotFound = InvalidOperation "Read metadata on an inexistant stream"
 
 --------------------------------------------------------------------------------
 onReadResult :: ReadResult 'RegularStream ReadEvent
-             -> (Text -> Int32 -> ResolvedEvent -> SM a b)
-             -> SM a b
+             -> (Text -> Int32 -> ResolvedEvent -> Code o a)
+             -> Code o a
 onReadResult (ReadSuccess r) k =
     case r of
       ReadEvent s n e -> k s n e

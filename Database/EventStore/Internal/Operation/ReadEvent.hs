@@ -51,7 +51,7 @@ readEvent :: Settings
           -> Int32
           -> Bool
           -> Operation (ReadResult 'RegularStream ReadEvent)
-readEvent Settings{..} s evtn tos = do
+readEvent Settings{..} s evtn tos = construct $ do
     let msg = newRequest s evtn tos s_requireMaster
     resp <- send readEventCmd readEventCompletedCmd msg
     let r         = getField $ _result resp
