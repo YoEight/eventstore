@@ -255,8 +255,8 @@ check self conn = do
   registerAwaiting self conn
 
 --------------------------------------------------------------------------------
-submit :: Manager -> Maybe Connection -> SubmitSubscription -> IO ()
-submit m@Manager{..} oConn cmd =
+submit :: Manager -> SubmitSubscription -> Maybe Connection -> IO ()
+submit m@Manager{..} cmd oConn =
   case oConn of
     Nothing   -> schedule m req
     Just conn -> register m conn req

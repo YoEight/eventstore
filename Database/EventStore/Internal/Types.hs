@@ -611,7 +611,13 @@ data Package
       , packageData        :: !ByteString
       , packageCred        :: !(Maybe Credentials)
       }
-    deriving Show
+
+--------------------------------------------------------------------------------
+instance Show Package where
+  show Package{..} =
+    "Package [" ++ show packageCorrelation
+                ++ "], command: "
+                ++ show packageCmd
 
 --------------------------------------------------------------------------------
 packageDataAsText :: Package -> Maybe Text

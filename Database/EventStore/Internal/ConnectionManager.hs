@@ -140,6 +140,7 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onEstablished internal)
   subscribe mainBus (onArrived internal)
   subscribe mainBus (onSubmitOperation internal)
+  subscribe mainBus (onSubmitSubscription internal)
   subscribe mainBus (onConnectionError internal)
   subscribe mainBus (onConnectionClosed internal)
   subscribe mainBus (onShutdown internal)
@@ -358,7 +359,13 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
         enqueuePackage conn heartbeatResponse
       | otherwise =
         Operation.handle _opMgr pkg >>= \case
-          Nothing       -> return ()
+          Nothing -> Subscription.handle _subMgr pkg >>= \case
+            Nothing ->
+              logFormat _logger Warn "Package not handled: {}" (Only $ Shown pkg)
+            Just decision ->
+              case decision of
+                Subscription.Handled        -> return ()
+                Subscription.Reconnect node -> forceReconnect self node
           Just decision ->
             case decision of
                Operation.Handled        -> return ()
@@ -408,3 +415,8 @@ onShutdown Internal{..} _ = do
 onSubmitOperation :: Internal -> SubmitOperation -> IO ()
 onSubmitOperation Internal{..} (SubmitOperation callback op) =
   Operation.submit _opMgr op callback =<< tryReadMVar _conn
+
+--------------------------------------------------------------------------------
+onSubmitSubscription :: Internal -> SubmitSubscription -> IO ()
+onSubmitSubscription Internal{..} cmd =
+  Subscription.submit _subMgr cmd =<< tryReadMVar _conn
