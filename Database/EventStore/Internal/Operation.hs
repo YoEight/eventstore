@@ -19,9 +19,8 @@
 module Database.EventStore.Internal.Operation
   ( OpResult(..)
   , OperationError(..)
-  , Ask(..)
-  , Serve(..)
   , Operation
+  , Need(..)
   , Code
   , Execution(..)
   , Outcome(..)
@@ -46,8 +45,7 @@ import Data.Machine
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.UUID
-import Pipes
-import Pipes.Core
+import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
@@ -89,27 +87,16 @@ data OperationError
 instance Exception OperationError
 
 --------------------------------------------------------------------------------
-data Ask
-  = FreshId
-  | SendPkg !UUID !Command !Command !ByteString
-
---------------------------------------------------------------------------------
-data Serve
-  = Ignore
-  | NewId !UUID
-  | RespPkg !ByteString
-
---------------------------------------------------------------------------------
 data Outcome a
   = Succeeded a
   | Retry
   | Failed !OperationError
 
 --------------------------------------------------------------------------------
-newtype Execution m a = Execution { runExecution :: UUID -> m (Outcome a) }
+newtype Execution a = Execution { runExecution :: UUID -> IO (Outcome a) }
 
 --------------------------------------------------------------------------------
-instance Functor m => Functor (Execution m) where
+instance Functor Execution where
   fmap f (Execution k) = Execution (fmap go . k)
     where
       go (Succeeded a) = Succeeded (f a)
@@ -117,12 +104,12 @@ instance Functor m => Functor (Execution m) where
       go (Failed e)    = Failed e
 
 --------------------------------------------------------------------------------
-instance Monad m => Applicative (Execution m) where
+instance Applicative Execution where
   pure  = return
   (<*>) = ap
 
 --------------------------------------------------------------------------------
-instance Monad m => Monad (Execution m) where
+instance Monad Execution where
   return a = Execution $ \_ -> return (Succeeded a)
 
   Execution k >>= f = Execution $ \uuid ->
@@ -132,34 +119,30 @@ instance Monad m => Monad (Execution m) where
       Succeeded a -> runExecution (f a) uuid
 
 --------------------------------------------------------------------------------
-instance Monad m => MonadReader UUID (Execution m) where
+instance MonadReader UUID Execution where
   ask = Execution (return . Succeeded)
 
   local f m = Execution $ \uuid -> runExecution m (f uuid)
 
 --------------------------------------------------------------------------------
-instance MonadIO m => MonadIO (Execution m) where
+instance MonadIO Execution where
   liftIO m = Execution $ \_ -> Succeeded <$> liftIO m
 
 --------------------------------------------------------------------------------
-type Operation output = forall m. Monad m => MachineT (Execution m) Need output
+type Operation output = MachineT Execution Need output
 
 --------------------------------------------------------------------------------
 data Need a where
-  NeedId     :: Need UUID
   NeedRemote :: UUID -> Command -> Command -> ByteString -> Need ByteString
 
 --------------------------------------------------------------------------------
 -- | Instruction that composed an 'Operation'.
-type Code' m o a = PlanT Need o (Execution m) a
-
---------------------------------------------------------------------------------
-type Code o a  = forall m. Monad m => Code' m o a
+type Code o a = PlanT Need o Execution a
 
 --------------------------------------------------------------------------------
 -- | Asks for a unused 'UUID'.
 freshId :: Code o UUID
-freshId = awaits NeedId
+freshId = liftIO nextRandom
 
 --------------------------------------------------------------------------------
 -- | Raises an 'OperationError'.

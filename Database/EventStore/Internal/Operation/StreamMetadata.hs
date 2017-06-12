@@ -23,9 +23,8 @@ module Database.EventStore.Internal.Operation.StreamMetadata
 import Data.Int
 
 --------------------------------------------------------------------------------
-import           ClassyPrelude
-import           Data.Aeson (decode)
-import qualified Pipes as Pipes
+import ClassyPrelude
+import Data.Aeson (decode)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation

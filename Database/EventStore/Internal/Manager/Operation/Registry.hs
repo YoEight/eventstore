@@ -28,14 +28,12 @@ module Database.EventStore.Internal.Manager.Operation.Registry
     ) where
 
 --------------------------------------------------------------------------------
-import           ClassyPrelude
-import           Data.ProtocolBuffers
-import           Data.Serialize
-import           Data.Time
-import           Data.UUID
-import           Data.UUID.V4
-import qualified Pipes         as Pipes
-import qualified Pipes.Prelude as Pipes
+import ClassyPrelude
+import Data.ProtocolBuffers
+import Data.Serialize
+import Data.Time
+import Data.UUID
+import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
@@ -49,19 +47,18 @@ import Database.EventStore.Internal.Types
 data Request =
     forall result.
     Request { _requestOp       :: !(Operation result)
-            , _requestId       :: !UUID
             , _requestCmd      :: !Command
             , _requestRespCmd  :: !Command
             , _requestPayload  :: !ByteString
-            , _requestResume   :: ByteString -> Code () result ()
+            , _requestResume   :: ByteString -> Operation result
             , _requestCallback :: !(Callback result)
             }
 
 --------------------------------------------------------------------------------
-packageOf :: Settings -> Request -> Package
-packageOf setts Request{..} =
+packageOf :: Settings -> Request -> UUID -> Package
+packageOf setts Request{..} uuid =
   Package { packageCmd         = _requestCmd
-          , packageCorrelation = _requestId
+          , packageCorrelation = uuid
           , packageData        = _requestPayload
           , packageCred        = s_credentials setts
           }
@@ -100,11 +97,7 @@ applyResponse :: Registry -> PendingRequest -> ByteString -> IO ()
 applyResponse reg p@PendingRequest{..} = go _pendingRequest
   where
     go Request{..} bytes =
-      case runGet decodeMessage bytes of
-        Left e ->
-          reject _requestCallback (ProtobufDecodingError e)
-        Right resp ->
-          execute reg Nothing _requestOp _requestCallback (_requestResume resp)
+      execute reg Nothing _requestOp _requestCallback (_requestResume bytes)
 
 --------------------------------------------------------------------------------
 data Registry =
@@ -137,53 +130,46 @@ execute :: Registry
         -> Maybe Connection
         -> Operation a
         -> Callback a
-        -> Code () a ()
+        -> Operation a
         -> IO ()
 execute self mConn op cb code = do
   uuid <- nextRandom
-  runExecution (runEffect program) uuid  >>= \case
+  runExecution operation uuid >>= \case
     Succeeded _ -> return ()
     Retry       -> execute self mConn op cb op
     Failed e    -> reject cb e
-    Stop        -> return ()
   where
-    operation = compute self op cb mConn >>~ (const code)
-    program   = Pipes.for operation (liftIO . fulfill cb)
-
---------------------------------------------------------------------------------
-type Compute a = Server Ask Serve (Execution IO) a
-
---------------------------------------------------------------------------------
-stop :: Compute a
-stop = lift (Execution $ \_ -> return Stop)
+    operation = compute self op cb mConn code
 
 --------------------------------------------------------------------------------
 compute :: Registry
         -> Operation a
         -> Callback a
         -> Maybe Connection
-        -> Compute r
-compute self@Registry{..} op cb mConn = respond Ignore >>= loop
+        -> Operation a
+        -> Execution ()
+compute self@Registry{..} op cb mConn = loop
   where
-    loop FreshId = do
-      uuid <- liftIO nextRandom
-      respond (NewId uuid) >>= loop
-    loop (SendPkg pid cmdReq cmdResp bytes) = do
-      let request = Request { _requestOp       = op
-                            , _requestId       = pid
-                            , _requestCmd      = cmdReq
-                            , _requestRespCmd  = cmdResp
-                            , _requestPayload  = bytes
-                            , _requestResume   = respond . RespPkg
-                            , _requestCallback = cb
-                            }
-
-      liftIO $
-        case mConn of
-          Nothing   -> scheduleAwait self (AwaitingRequest request)
-          Just conn -> issueRequest self conn request
-
-      stop
+    loop (MachineT m) = m >>= \case
+      Stop  -> return ()
+      Yield a next -> do
+        liftIO $ fulfill cb a
+        loop next
+      Await k tpe _ ->
+        case tpe of
+          NeedRemote pid cmdReq cmdResp bytes -> do
+            let request = Request { _requestOp       = op
+                                  , _requestCmd      = cmdReq
+                                  , _requestRespCmd  = cmdResp
+                                  , _requestPayload  = bytes
+                                  , _requestResume   = k
+                                  , _requestCallback = cb
+                                  }
+            liftIO $
+              case mConn of
+                Nothing   -> scheduleAwait self (AwaitingRequest request)
+                Just conn -> issueRequest self conn request
+            return ()
 
 --------------------------------------------------------------------------------
 issueRequest :: Registry -> Connection -> Request -> IO ()
