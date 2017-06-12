@@ -281,19 +281,16 @@ checkAndRetry Registry{..} conn = do
                                  , _pendingConnId  = connectionId conn
                                  }
 
-                  newReg = deleteMap key $ insertMap uuid newPending reg
-
               enqueuePackage conn pkg
-              return reg in
+              return (deleteMap key $ insertMap uuid newPending reg) in
         case s_operationRetry _regSettings of
           AtMost maxAttempts
             | _pendingRetries p <= maxAttempts
               -> retry
             | otherwise
-              -> do let cmd    = _requestCmd $ _pendingRequest p
-                        action = rejectPending p
-                                   (OperationMaxAttemptReached key cmd)
+              -> do let cmd = _requestCmd $ _pendingRequest p
 
+                    rejectPending p (OperationMaxAttemptReached key cmd)
                     return $ deleteMap key reg
           KeepRetrying -> retry
       | otherwise = return reg
