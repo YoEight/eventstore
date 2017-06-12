@@ -50,7 +50,7 @@ data Request =
             , _requestCmd      :: !Command
             , _requestRespCmd  :: !Command
             , _requestPayload  :: !ByteString
-            , _requestResume   :: ByteString -> Operation result
+            , _requestResume   :: (UUID, ByteString) -> Operation result
             , _requestCallback :: !(Callback result)
             }
 
@@ -93,11 +93,12 @@ rejectPending PendingRequest{..} e = go _pendingRequest
     go Request{..} = reject _requestCallback e
 
 --------------------------------------------------------------------------------
-applyResponse :: Registry -> PendingRequest -> ByteString -> IO ()
-applyResponse reg p@PendingRequest{..} = go _pendingRequest
+applyResponse :: Registry -> PendingRequest -> Package -> IO ()
+applyResponse reg p@PendingRequest{..} Package{..} = go _pendingRequest
   where
-    go Request{..} bytes =
-      execute reg Nothing _requestOp _requestCallback (_requestResume bytes)
+    go Request{..} =
+      let resp = (packageCorrelation, packageData) in
+      execute reg Nothing _requestOp _requestCallback (_requestResume resp)
 
 --------------------------------------------------------------------------------
 data Registry =
@@ -157,7 +158,7 @@ compute self@Registry{..} op cb mConn = loop
         loop next
       Await k tpe _ ->
         case tpe of
-          NeedRemote pid cmdReq cmdResp bytes -> do
+          NeedRemote cmdReq cmdResp bytes -> do
             let request = Request { _requestOp       = op
                                   , _requestCmd      = cmdReq
                                   , _requestRespCmd  = cmdResp
@@ -251,7 +252,7 @@ executePending reg@Registry{..} pkg@Package{..} p@PendingRequest{..} =
             rejectPending p resp
             return Handled
         | otherwise -> do
-            applyResponse reg p packageData
+            applyResponse reg p pkg
             return Handled
 
 --------------------------------------------------------------------------------

@@ -133,7 +133,7 @@ type Operation output = MachineT Execution Need output
 
 --------------------------------------------------------------------------------
 data Need a where
-  NeedRemote :: UUID -> Command -> Command -> ByteString -> Need ByteString
+  NeedRemote :: Command -> Command -> ByteString -> Need (UUID, ByteString)
 
 --------------------------------------------------------------------------------
 -- | Instruction that composed an 'Operation'.
@@ -163,9 +163,8 @@ send :: (Encode req, Decode resp)
      -> req
      -> Code o resp
 send ci co rq = do
-  selfId <- ask
   let reqPayload = runPut $ encodeMessage rq
-  respPayload <- awaits $ NeedRemote selfId ci co reqPayload
+  (_, respPayload) <- awaits $ NeedRemote ci co reqPayload
   case runGet decodeMessage respPayload of
     Left e     -> failure (ProtobufDecodingError e)
     Right resp -> return resp
