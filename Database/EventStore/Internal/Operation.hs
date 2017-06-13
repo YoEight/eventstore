@@ -28,6 +28,7 @@ module Database.EventStore.Internal.Operation
   , failure
   , retry
   , send
+  , request
   , wrongVersion
   , streamDeleted
   , invalidTransaction
@@ -133,7 +134,7 @@ type Operation output = MachineT Execution Need output
 
 --------------------------------------------------------------------------------
 data Need a where
-  NeedRemote :: Command -> Command -> ByteString -> Need (UUID, ByteString)
+  NeedRemote :: Command -> ByteString -> Need Package
 
 --------------------------------------------------------------------------------
 -- | Instruction that composed an 'Operation'.
@@ -155,19 +156,34 @@ retry :: Code o a
 retry = lift $ Execution $ \_ -> return Retry
 
 --------------------------------------------------------------------------------
--- | Sends a Ask to the server given a command Ask and response. It
---   returns the expected deserialized message.
+-- | Like 'request' except it discards the correlation id of the network
+--   exchange.
 send :: (Encode req, Decode resp)
      => Command
      -> Command
      -> req
      -> Code o resp
-send ci co rq = do
-  let reqPayload = runPut $ encodeMessage rq
-  (_, respPayload) <- awaits $ NeedRemote ci co reqPayload
-  case runGet decodeMessage respPayload of
+send reqCmd expCmd req = snd <$> request reqCmd expCmd req
+
+--------------------------------------------------------------------------------
+-- | Sends a message to remote server. It returns the expected deserialized
+--   message along with the correlation id of the network exchange.
+request :: (Encode req, Decode resp)
+        => Command
+        -> Command
+        -> req
+        -> Code o (UUID, resp)
+request reqCmd expCmd rq = do
+  let payload = runPut $ encodeMessage rq
+  pkg <- awaits $ NeedRemote reqCmd payload
+  let gotCmd = packageCmd pkg
+
+  when (gotCmd /= expCmd)
+    (invalidServerResponse expCmd gotCmd)
+
+  case runGet decodeMessage (packageData pkg) of
     Left e     -> failure (ProtobufDecodingError e)
-    Right resp -> return resp
+    Right resp -> return (packageCorrelation pkg, resp)
 
 --------------------------------------------------------------------------------
 -- | Raises 'WrongExpectedVersion' exception.

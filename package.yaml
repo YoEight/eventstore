@@ -55,6 +55,7 @@ library:
     - clock
     - pipes
     - machines >= 0.6
+    - bifunctors
 
 tests:
   eventstore-tests:

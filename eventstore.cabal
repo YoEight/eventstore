@@ -58,6 +58,7 @@ library
     , clock
     , pipes
     , machines >= 0.6
+    , bifunctors
   exposed-modules:
       Database.EventStore
       Database.EventStore.Internal.Callback
