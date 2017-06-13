@@ -29,6 +29,8 @@ module Database.EventStore.Internal.Operation
   , retry
   , send
   , request
+  , waitFor
+  , waitForEither
   , wrongVersion
   , streamDeleted
   , invalidTransaction
@@ -135,6 +137,7 @@ type Operation output = MachineT Execution Need output
 --------------------------------------------------------------------------------
 data Need a where
   NeedRemote :: Command -> ByteString -> Need Package
+  WaitRemote :: UUID -> Need (Maybe Package)
 
 --------------------------------------------------------------------------------
 -- | Instruction that composed an 'Operation'.
@@ -182,8 +185,38 @@ request reqCmd expCmd rq = do
     (invalidServerResponse expCmd gotCmd)
 
   case runGet decodeMessage (packageData pkg) of
-    Left e     -> failure (ProtobufDecodingError e)
+    Left e     -> protobufDecodingError e
     Right resp -> return (packageCorrelation pkg, resp)
+
+--------------------------------------------------------------------------------
+-- | Waits for a message from the server at the given correlation id. If the
+--   the connection has been reset in the meantime, it will emit a 'stop'.
+waitFor :: Decode resp => UUID -> Code o resp
+waitFor pid =
+  awaits (WaitRemote pid) >>= \case
+    Nothing  -> stop
+    Just pkg ->
+      case runGet decodeMessage (packageData pkg) of
+        Left e     -> protobufDecodingError e
+        Right resp -> return resp
+
+--------------------------------------------------------------------------------
+-- | Waits for a message from the server at the given correlation id for either
+--   'Decode' value type. If the connection has been reset in the meantime,
+--   it will emit a 'stop'.
+waitForEither :: (Decode resp1, Decode resp2)
+              => UUID
+              -> Code o (Either resp1 resp2)
+waitForEither pid =
+  awaits (WaitRemote pid) >>= \case
+    Nothing  -> stop
+    Just pkg ->
+      case runGet decodeMessage (packageData pkg) of
+        Left _ ->
+          case runGet decodeMessage (packageData pkg) of
+            Left e     -> protobufDecodingError e
+            Right resp -> return (Right resp)
+        Right resp1 -> return (Left resp1)
 
 --------------------------------------------------------------------------------
 -- | Raises 'WrongExpectedVersion' exception.

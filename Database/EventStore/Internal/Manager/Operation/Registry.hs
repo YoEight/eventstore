@@ -59,9 +59,62 @@ data Request =
 data Expect =
   forall result.
   Expect { _expectOp       :: !(Operation result)
-         , _expectResume   :: !(Package -> Operation result)
+         , _expectResume   :: !(Maybe Package -> Operation result)
          , _expectCallback :: !(Callback result)
          }
+
+--------------------------------------------------------------------------------
+data Suspend a
+  = Required (Package -> Operation a)
+  | Optional (Maybe Package -> Operation a)
+
+--------------------------------------------------------------------------------
+type SessionId  = Integer
+type SessionMap = Map SessionId Session
+
+--------------------------------------------------------------------------------
+data Session =
+  forall result.
+  Session { sessionId       :: !SessionId
+          , sessionOp       :: !(Operation result)
+          , sessionLastSusp :: !(IORef (Maybe (Suspend result)))
+          , sessionCallback :: !(Callback result)
+          }
+
+--------------------------------------------------------------------------------
+startSession :: Session -> IO ()
+startSession _ = return ()
+
+--------------------------------------------------------------------------------
+data Sessions =
+  Sessions { sessionsNextId :: IORef SessionId
+           , sessionsMap    :: IORef SessionMap
+           }
+
+--------------------------------------------------------------------------------
+createSession :: Sessions -> Operation a -> Callback a -> IO Session
+createSession Sessions{..} op cb = do
+  sid <- atomicModifyIORef' sessionsNextId $ \i -> (succ i, i)
+  ref <- newIORef Nothing
+  atomicModifyIORef' sessionsMap $ \m ->
+    let session =
+          Session { sessionId       = sid
+                  , sessionOp       = op
+                  , sessionLastSusp = ref
+                  , sessionCallback = cb
+                  } in
+    (insertMap sid session m, session)
+
+--------------------------------------------------------------------------------
+destroySession :: Sessions -> Session -> IO ()
+destroySession Sessions{..} s =
+  atomicModifyIORef' sessionsMap $ \m -> (deleteMap (sessionId s) m, ())
+
+--------------------------------------------------------------------------------
+newSessions :: IO Sessions
+newSessions =
+  Sessions <$> newIORef 0 
+           <*> newIORef mempty
 
 --------------------------------------------------------------------------------
 packageOf :: Settings -> Request -> UUID -> Package
@@ -109,7 +162,7 @@ applyResponse reg Pending{..} pkg = bitraverse_ onRequest onExpect _pendingType
     onRequest Request{..} =
       execute reg Nothing _requestOp _requestCallback (_requestResume pkg)
     onExpect Expect{..} =
-      execute reg Nothing _expectOp _expectCallback (_expectResume pkg)
+      execute reg Nothing _expectOp _expectCallback (_expectResume (Just pkg))
 
 --------------------------------------------------------------------------------
 data Registry =
@@ -117,6 +170,7 @@ data Registry =
               , _regPendings  :: IORef PendingRequests
               , _regAwaitings :: IORef Awaitings
               , _stopwatch    :: Stopwatch
+              , _sessions     :: Sessions
               }
 
 --------------------------------------------------------------------------------
@@ -124,6 +178,7 @@ newRegistry :: Settings -> IO Registry
 newRegistry setts = Registry setts <$> newIORef mempty
                                    <*> newIORef []
                                    <*> newStopwatch
+                                   <*> newSessions
 
 --------------------------------------------------------------------------------
 restart :: Registry -> Either Request Expect -> IO ()
@@ -157,33 +212,41 @@ execute self mConn op cb code = do
     operation = compute self op cb mConn code
 
 --------------------------------------------------------------------------------
+data Computed
+  = Completed
+  | Suspended
+
+--------------------------------------------------------------------------------
 compute :: Registry
         -> Operation a
         -> Callback a
         -> Maybe Connection
         -> Operation a
-        -> Execution ()
+        -> Execution Computed
 compute self@Registry{..} op cb mConn = loop
   where
     loop (MachineT m) = m >>= \case
-      Stop  -> return ()
+      Stop  -> return Completed
       Yield a next -> do
         liftIO $ fulfill cb a
         loop next
       Await k tpe _ ->
         case tpe of
           NeedRemote cmd payload -> do
-            let request = Request { _requestOp       = op
-                                  , _requestCmd      = cmd
-                                  , _requestPayload  = payload
-                                  , _requestResume   = k
-                                  , _requestCallback = cb
-                                  }
+            let req = Request { _requestOp       = op
+                              , _requestCmd      = cmd
+                              , _requestPayload  = payload
+                              , _requestResume   = k
+                              , _requestCallback = cb
+                              }
             liftIO $
               case mConn of
-                Nothing   -> scheduleAwait self (AwaitingRequest request)
-                Just conn -> issueRequest self conn request
-            return ()
+                Nothing   -> scheduleAwait self (AwaitingRequest req)
+                Just conn -> issueRequest self conn req
+
+            return Suspended
+          -- WaitRemote uuid ->
+          --   let expp =
 
 --------------------------------------------------------------------------------
 issueRequest :: Registry -> Connection -> Request -> IO ()
