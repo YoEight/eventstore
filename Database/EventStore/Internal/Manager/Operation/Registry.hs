@@ -259,35 +259,46 @@ compute self@Registry{..} session@Session{..} mConn =
               atomicWriteIORef sessionStack (Required k)
               case mConn of
                 Nothing   -> scheduleAwait self (AwaitingRequest session req)
-                Just conn -> issuePending self session conn (Just req)
+                Just conn -> issueRequest self session conn req
 
             return Suspended
           WaitRemote uuid -> liftIO $ do
             atomicWriteIORef sessionStack (Optional k)
             case mConn of
               Nothing   -> scheduleAwait self (Awaiting session)
-              Just conn -> issuePending self session conn Nothing
+              Just conn -> do
+                pending <- createPending session _stopwatch conn Nothing
+                insertPending self uuid pending
 
             return Suspended
 
 --------------------------------------------------------------------------------
-issuePending :: Registry -> Session -> Connection -> Maybe Request -> IO ()
-issuePending reg@Registry{..} session conn mReq = do
+issueRequest :: Registry -> Session -> Connection -> Request -> IO ()
+issueRequest reg@Registry{..} session conn req = do
   uuid    <- nextRandom
   elapsed <- stopwatchElapsed _stopwatch
-  let
-      pending = Pending { _pendingRequest = mReq
-                        , _pendingSession = session
-                        , _pendingRetries = 1
-                        , _pendingLastTry = elapsed
-                        , _pendingConnId  = connectionId conn
-                        }
+  pending <- createPending session _stopwatch conn (Just req)
 
   insertPending reg uuid pending
-  traverse_ (handleReq uuid) mReq
-  where
-    handleReq uuid req =
-      enqueuePackage conn (packageOf _regSettings req uuid)
+  enqueuePackage conn (packageOf _regSettings req uuid)
+
+--------------------------------------------------------------------------------
+createPending :: Session
+              -> Stopwatch
+              -> Connection
+              -> Maybe Request
+              -> IO Pending
+createPending session stopwatch conn mReq = do
+  elapsed <- stopwatchElapsed stopwatch
+  let pending =
+        Pending { _pendingRequest = mReq
+                , _pendingSession = session
+                , _pendingRetries = 1
+                , _pendingLastTry = elapsed
+                , _pendingConnId  = connectionId conn
+                }
+
+  return pending
 
 --------------------------------------------------------------------------------
 insertPending :: Registry -> UUID -> Pending -> IO ()
@@ -417,10 +428,8 @@ startAwaitings reg@Registry{..} conn = do
 
   traverse_ starting awaitings
   where
-    starting (Awaiting session) =
-      execute reg session (Just conn)
-    starting (AwaitingRequest session req) =
-      issuePending reg session conn (Just req)
+    starting (Awaiting session)            = execute reg session (Just conn)
+    starting (AwaitingRequest session req) = issueRequest reg session conn req
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a
