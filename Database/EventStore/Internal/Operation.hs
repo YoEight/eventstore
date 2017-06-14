@@ -29,6 +29,7 @@ module Database.EventStore.Internal.Operation
   , retry
   , send
   , request
+  , requestEither
   , waitFor
   , waitForEither
   , wrongVersion
@@ -187,6 +188,24 @@ request reqCmd expCmd rq = do
   case runGet decodeMessage (packageData pkg) of
     Left e     -> protobufDecodingError e
     Right resp -> return (packageCorrelation pkg, resp)
+
+--------------------------------------------------------------------------------
+-- | Sends a message to remote server. It returns one of expected deserialized
+--   messages along with the correlation id of the network exchange.
+requestEither :: (Encode req, Decode resp1, Decode resp2)
+              => Command
+              -> req
+              -> Code o (UUID, Either resp1 resp2)
+requestEither reqCmd rq = do
+  let payload = runPut $ encodeMessage rq
+  pkg <- awaits $ NeedRemote reqCmd payload
+
+  case runGet decodeMessage (packageData pkg) of
+    Left e ->
+      case runGet decodeMessage (packageData pkg) of
+        Left e      -> protobufDecodingError e
+        Right resp2 -> return (packageCorrelation pkg, Right resp2)
+    Right resp1 -> return (packageCorrelation pkg, Left resp1)
 
 --------------------------------------------------------------------------------
 -- | Waits for a message from the server at the given correlation id. If the

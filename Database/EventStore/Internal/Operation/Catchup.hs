@@ -25,8 +25,7 @@ import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import           ClassyPrelude
-import qualified Pipes as Pipes
+import ClassyPrelude
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
