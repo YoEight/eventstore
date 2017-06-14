@@ -62,14 +62,6 @@ data ErrorMsg
     | UnknownMsg !(Maybe Command)
 
 --------------------------------------------------------------------------------
-toSubDropReason :: DropReason -> SubDropReason
-toSubDropReason D_Unsubscribed                  = SubUnsubscribed
-toSubDropReason D_NotFound                      = SubNotFound
-toSubDropReason D_AccessDenied                  = SubAccessDenied
-toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
-toSubDropReason D_SubscriberMaxCountReached     = SubSubscriberMaxCountReached
-
---------------------------------------------------------------------------------
 decodeServerMessage :: Package -> ServerMessage
 decodeServerMessage pkg = fromMaybe err go
   where

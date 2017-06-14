@@ -1,0 +1,72 @@
+--------------------------------------------------------------------------------
+-- |
+-- Module : Database.EventStore.Internal.Operation.Volatile
+-- Copyright : (C) 2017 Yorick Laupa
+-- License : (see the file LICENSE)
+--
+-- Maintainer : Yorick Laupa <yo.eight@gmail.com>
+-- Stability : provisional
+-- Portability : non-portable
+--
+--------------------------------------------------------------------------------
+module Database.EventStore.Internal.Operation.Volatile (volatile) where
+
+--------------------------------------------------------------------------------
+import ClassyPrelude
+import Data.ProtocolBuffers
+import Data.UUID
+
+--------------------------------------------------------------------------------
+import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Subscription.Message
+import Database.EventStore.Internal.Subscription.Types
+import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+volatile :: Text -> Bool -> Operation SubAction
+volatile stream tos = construct (issueRequest stream tos)
+
+--------------------------------------------------------------------------------
+issueRequest :: Text -> Bool -> Code SubAction ()
+issueRequest stream tos = do
+   let req = subscribeToStream stream tos
+   (sid, outcome) <- requestEither subscribeToStreamCmd req
+   case outcome of
+     Right d  -> handleDropped d
+     Left c -> do
+       let lcp     = getField $ subscribeLastCommitPos c
+           len     = getField $ subscribeLastEventNumber c
+           details =
+             SubDetails
+             { subId           = sid
+             , subCommitPos    = lcp
+             , subLastEventNum = len
+             , subSubId        = Nothing
+             }
+
+       yield (Confirmed details)
+       live sid
+
+--------------------------------------------------------------------------------
+eventAppeared :: StreamEventAppeared -> Code SubAction ()
+eventAppeared e = do
+  let evt = newResolvedEventFromBuf $ getField $ streamResolvedEvent e
+  yield (Submit evt)
+
+--------------------------------------------------------------------------------
+live :: UUID -> Code SubAction ()
+live subscriptionId = loop
+  where
+    loop =
+      waitForEither subscriptionId >>= \case
+        Left d  -> handleDropped d
+        Right e -> do
+          eventAppeared e
+          loop
+
+--------------------------------------------------------------------------------
+handleDropped :: SubscriptionDropped -> Code SubAction ()
+handleDropped d = do
+  let reason = fromMaybe D_Unsubscribed (getField $ dropReason d)
+  yield (Dropped $ toSubDropReason reason)

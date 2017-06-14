@@ -19,6 +19,7 @@ import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Exec
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Operation.Volatile
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Api
 import Database.EventStore.Internal.Subscription.Types
@@ -78,7 +79,7 @@ newRegularSubscription exec stream tos = do
           else Just <$> readTQueue queue
 
       callback (Confirmed details) = atomically $
-        writeTVar phaseVar (Running details)
+          writeTVar phaseVar (Running details)
       callback (Dropped r) = atomically $
         writeTVar phaseVar (Closed $ Just r)
       callback (Submit e) = atomically $ do
@@ -88,5 +89,5 @@ newRegularSubscription exec stream tos = do
           _         -> return ()
 
   cb <- newCallbackSimple callback
-  publish exec (ConnectStream cb name tos)
+  publish exec (SubmitOperation cb (volatile name tos))
   return sub

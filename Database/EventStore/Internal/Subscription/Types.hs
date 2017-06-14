@@ -43,6 +43,14 @@ data SubDropReason
     deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
+toSubDropReason :: DropReason -> SubDropReason
+toSubDropReason D_Unsubscribed                  = SubUnsubscribed
+toSubDropReason D_NotFound                      = SubNotFound
+toSubDropReason D_AccessDenied                  = SubAccessDenied
+toSubDropReason D_PersistentSubscriptionDeleted = SubPersistDeleted
+toSubDropReason D_SubscriberMaxCountReached     = SubSubscriberMaxCountReached
+
+--------------------------------------------------------------------------------
 data SubscriptionClosed = SubscriptionClosed (Maybe SubDropReason)
   deriving (Show, Typeable)
 
