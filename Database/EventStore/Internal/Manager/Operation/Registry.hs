@@ -85,6 +85,15 @@ resumeSession reg session@Session{..} pkg = do
   execute reg session Nothing
 
 --------------------------------------------------------------------------------
+resumeNoPkgSession :: Registry -> Session -> IO ()
+resumeNoPkgSession reg session@Session{..} = do
+  atomicModifyIORef' sessionStack $ \case
+    Optional k -> (Resolved $ k Nothing, ())
+    same       -> (same, ())
+
+  execute reg session Nothing
+
+--------------------------------------------------------------------------------
 reinitSession :: Session -> IO ()
 reinitSession Session{..} = atomicWriteIORef sessionStack (Resolved sessionOp)
 
@@ -118,6 +127,10 @@ createSession Sessions{..} op cb = do
 destroySession :: Sessions -> Session -> IO ()
 destroySession Sessions{..} s =
   atomicModifyIORef' sessionsMap $ \m -> (deleteMap (sessionId s) m, ())
+
+--------------------------------------------------------------------------------
+sessionDisposed :: Sessions -> Session -> IO Bool
+sessionDisposed Sessions{..} s = notMember (sessionId s) <$> readIORef sessionsMap
 
 --------------------------------------------------------------------------------
 newSessions :: IO Sessions
@@ -246,19 +259,24 @@ compute self@Registry{..} session@Session{..} mConn =
               atomicWriteIORef sessionStack (Required k)
               case mConn of
                 Nothing   -> scheduleAwait self (AwaitingRequest session req)
-                Just conn -> issueRequest self session conn req
+                Just conn -> issuePending self session conn (Just req)
 
             return Suspended
-          -- WaitRemote uuid ->
-          --   let expp =
+          WaitRemote uuid -> liftIO $ do
+            atomicWriteIORef sessionStack (Optional k)
+            case mConn of
+              Nothing   -> scheduleAwait self (Awaiting session)
+              Just conn -> issuePending self session conn Nothing
+
+            return Suspended
 
 --------------------------------------------------------------------------------
-issueRequest :: Registry -> Session -> Connection -> Request -> IO ()
-issueRequest reg@Registry{..} session conn request = do
+issuePending :: Registry -> Session -> Connection -> Maybe Request -> IO ()
+issuePending reg@Registry{..} session conn mReq = do
   uuid    <- nextRandom
   elapsed <- stopwatchElapsed _stopwatch
-  let pkg     = packageOf _regSettings request uuid
-      pending = Pending { _pendingRequest = Just request
+  let
+      pending = Pending { _pendingRequest = mReq
                         , _pendingSession = session
                         , _pendingRetries = 1
                         , _pendingLastTry = elapsed
@@ -266,7 +284,10 @@ issueRequest reg@Registry{..} session conn request = do
                         }
 
   insertPending reg uuid pending
-  enqueuePackage conn pkg
+  traverse_ (handleReq uuid) mReq
+  where
+    handleReq uuid req =
+      enqueuePackage conn (packageOf _regSettings req uuid)
 
 --------------------------------------------------------------------------------
 insertPending :: Registry -> UUID -> Pending -> IO ()
@@ -343,7 +364,7 @@ instance Exception OperationMaxAttemptReached
 
 --------------------------------------------------------------------------------
 checkAndRetry :: Registry -> Connection -> IO ()
-checkAndRetry Registry{..} conn = do
+checkAndRetry self@Registry{..} conn = do
   pendings    <- readIORef _regPendings
   elapsed     <- stopwatchElapsed _stopwatch
   newPendings <- foldM (checking elapsed) pendings (mapToList pendings)
@@ -351,9 +372,13 @@ checkAndRetry Registry{..} conn = do
   where
     checking elapsed reg (key, p) =
       case _pendingRequest p of
-        Nothing ->
-          -- Not Implemented yet
-          return reg
+        Nothing
+          | connectionId conn == _pendingConnId p -> return reg
+          | otherwise -> do
+            resumeNoPkgSession self (_pendingSession p)
+            disposed <- sessionDisposed _sessions (_pendingSession p)
+            let newReg = if disposed then deleteMap key reg else reg
+            return newReg
         Just req -> do
           let lastTry    = _pendingLastTry p
               hasTimeout = elapsed - lastTry >= s_operationTimeout _regSettings
@@ -392,8 +417,10 @@ startAwaitings reg@Registry{..} conn = do
 
   traverse_ starting awaitings
   where
-    starting (Awaiting session)            = execute reg session (Just conn)
-    starting (AwaitingRequest session req) = issueRequest reg session conn req
+    starting (Awaiting session) =
+      execute reg session (Just conn)
+    starting (AwaitingRequest session req) =
+      issuePending reg session conn (Just req)
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a
