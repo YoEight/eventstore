@@ -92,7 +92,7 @@ reinitSession Session{..} = atomicWriteIORef sessionStack (Resolved sessionOp)
 restartSession :: Registry -> Session -> IO ()
 restartSession reg session = do
   reinitSession session
-
+  scheduleSession reg session
 
 --------------------------------------------------------------------------------
 data Sessions =
@@ -144,6 +144,11 @@ data Pending =
             }
 
 --------------------------------------------------------------------------------
+destroyPendingSession :: Sessions -> Pending -> IO ()
+destroyPendingSession sessions Pending{..} =
+  destroySession sessions _pendingSession
+
+--------------------------------------------------------------------------------
 type PendingRequests = HashMap UUID Pending
 
 --------------------------------------------------------------------------------
@@ -163,6 +168,10 @@ applyResponse :: Registry -> Pending -> Package -> IO ()
 applyResponse reg Pending{..} = resumeSession reg _pendingSession
 
 --------------------------------------------------------------------------------
+restartPending :: Registry -> Pending -> IO ()
+restartPending reg Pending{..} = restartSession reg _pendingSession
+
+--------------------------------------------------------------------------------
 data Registry =
     Registry  { _regSettings  :: Settings
               , _regPendings  :: IORef PendingRequests
@@ -180,7 +189,11 @@ newRegistry setts = Registry setts <$> newIORef mempty
 
 --------------------------------------------------------------------------------
 schedule :: Registry -> Operation a -> Callback a -> IO ()
-schedule reg op cb = scheduleAwait reg (Awaiting op cb)
+schedule reg op cb = scheduleSession reg =<< createSession (_sessions reg) op cb
+
+--------------------------------------------------------------------------------
+scheduleSession :: Registry -> Session -> IO ()
+scheduleSession reg session = scheduleAwait reg (Awaiting session)
 
 --------------------------------------------------------------------------------
 scheduleAwait :: Registry -> Awaiting -> IO ()
@@ -232,7 +245,7 @@ compute self@Registry{..} session@Session{..} mConn =
             liftIO $ do
               atomicWriteIORef sessionStack (Required k)
               case mConn of
-                Nothing   -> scheduleAwait self (AwaitingRequest req)
+                Nothing   -> scheduleAwait self (AwaitingRequest session req)
                 Just conn -> issueRequest self session conn req
 
             return Suspended
@@ -311,11 +324,10 @@ executePending reg@Registry{..} pkg@Package{..} p@Pending{..} =
                     info         = masterInfo details
                     node         = masterInfoNodeEndPoints info
 
-                restart reg _pendingRequest
+                restartPending reg p
                 return $ Reconnect node
               -- In this case with just retry the operation.
-              _ -> do restart reg _pendingRequest
-                      return Handled
+              _ -> Handled <$ restartPending reg p
         | otherwise -> do
             applyResponse reg p pkg
             return Handled
@@ -339,10 +351,10 @@ checkAndRetry Registry{..} conn = do
   where
     checking elapsed reg (key, p) =
       case _pendingRequest p of
-        Right _  ->
+        Nothing ->
           -- Not Implemented yet
           return reg
-        Left req -> do
+        Just req -> do
           let lastTry    = _pendingLastTry p
               hasTimeout = elapsed - lastTry >= s_operationTimeout _regSettings
           if hasTimeout || _pendingConnId p /= connectionId conn
@@ -366,6 +378,7 @@ checkAndRetry Registry{..} conn = do
                     -> retry
                   | otherwise -> do
                     let cmd = _requestCmd req
+                    destroyPendingSession _sessions p
                     rejectPending p (OperationMaxAttemptReached key cmd)
                     return $ deleteMap key reg
                 KeepRetrying -> retry
