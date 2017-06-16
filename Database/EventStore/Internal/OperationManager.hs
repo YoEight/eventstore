@@ -40,9 +40,10 @@ data Manager =
 
 --------------------------------------------------------------------------------
 new :: LogManager -> Settings -> IO Manager
-new mgr setts = Manager logger <$> newRegistry setts
+new mgr setts = Manager logger <$> newRegistry setts regLogger
   where
-    logger = getLogger "OperationManager" mgr
+    logger    = getLogger "OperationManager" mgr
+    regLogger = getLogger "Registry"  mgr
 
 --------------------------------------------------------------------------------
 submit :: Manager

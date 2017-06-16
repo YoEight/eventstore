@@ -60,6 +60,7 @@ data Exec =
 --------------------------------------------------------------------------------
 data Internal =
   Internal { _logger    :: Logger
+          ,  __logMgr   :: LogManager
            , _initRef   :: IORef ServicePendingInit
            , _finishRef :: IORef ServicePendingInit
            , _stageVar  :: TVar Stage
@@ -111,10 +112,10 @@ newExec :: Settings
 newExec setts logMgr mainBus builder disc = do
   let logger = getLogger "Exec" logMgr
 
-  internal <- Internal logger <$> newIORef initServicePending
-                              <*> newIORef initServicePending
-                              <*> newTVarIO Init
-                              <*> return mainBus
+  internal <- Internal logger logMgr <$> newIORef initServicePending
+                                     <*> newIORef initServicePending
+                                     <*> newTVarIO Init
+                                     <*> return mainBus
 
   let stagePub = stageSTM $ _stageVar internal
       exe      = Exec setts stagePub logMgr internal
@@ -172,8 +173,9 @@ onTerminated Internal{..} (ServiceTerminated svc) = do
     (m', null m')
 
   when terminated $ do
-    busStop _mainBus
     logMsg _logger Info "Entire system shutdown properly"
+    closeLogManager __logMgr
+    busStop _mainBus
 
 --------------------------------------------------------------------------------
 shutdown :: Internal -> IO ()

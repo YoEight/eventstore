@@ -30,23 +30,23 @@ volatile stream tos = construct (issueRequest stream tos)
 --------------------------------------------------------------------------------
 issueRequest :: Text -> Bool -> Code SubAction ()
 issueRequest stream tos = do
-   let req = subscribeToStream stream tos
-   (sid, outcome) <- requestEither subscribeToStreamCmd req
-   case outcome of
-     Right d  -> handleDropped d
-     Left c -> do
-       let lcp     = getField $ subscribeLastCommitPos c
-           len     = getField $ subscribeLastEventNumber c
-           details =
-             SubDetails
-             { subId           = sid
-             , subCommitPos    = lcp
-             , subLastEventNum = len
-             , subSubId        = Nothing
-             }
-
-       yield (Confirmed details)
-       live sid
+  let req = subscribeToStream stream tos
+  request subscribeToStreamCmd req
+    [ Expect subscriptionDroppedCmd $ \_ d ->
+        handleDropped d
+    , Expect subscriptionConfirmationCmd $ \sid c -> do
+        let lcp     = getField $ subscribeLastCommitPos c
+            len     = getField $ subscribeLastEventNumber c
+            details =
+              SubDetails
+              { subId           = sid
+              , subCommitPos    = lcp
+              , subLastEventNum = len
+              , subSubId        = Nothing
+              }
+        yield (Confirmed details)
+        live sid
+    ]
 
 --------------------------------------------------------------------------------
 eventAppeared :: StreamEventAppeared -> Code SubAction ()
@@ -59,11 +59,13 @@ live :: UUID -> Code SubAction ()
 live subscriptionId = loop
   where
     loop =
-      waitForEither subscriptionId >>= \case
-        Left d  -> handleDropped d
-        Right e -> do
-          eventAppeared e
-          loop
+      waitFor subscriptionId
+        [ Expect subscriptionDroppedCmd $ \_ d ->
+            handleDropped d
+        , Expect streamEventAppearedCmd $ \_ e -> do
+            eventAppeared e
+            loop
+        ]
 
 --------------------------------------------------------------------------------
 handleDropped :: SubscriptionDropped -> Code SubAction ()
