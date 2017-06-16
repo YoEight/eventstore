@@ -145,18 +145,11 @@ connectionManager logMgr setts builder disc mainBus = do
   subscribe mainBus (onEstablished internal)
   subscribe mainBus (onArrived internal)
   subscribe mainBus (onSubmitOperation internal)
-  subscribe mainBus (onSubmitSubscription internal)
   subscribe mainBus (onConnectionError internal)
   subscribe mainBus (onConnectionClosed internal)
   subscribe mainBus (onShutdown internal)
   subscribe mainBus (onTick internal)
-
-  -- subscribe mainBus (onArrived internal)
-  -- subscribe mainBus (onShutdown internal)
-  -- subscribe mainBus (onTick internal)
-  -- subscribe mainBus (onSubmitOperation internal)
-  -- subscribe mainBus (onConnectionError internal)
-  -- subscribe mainBus (onSubmitSubscription internal)
+  subscribe mainBus (onSendPackage internal)
 
   publish mainBus (NewTimer Tick timerPeriod False)
 
@@ -350,8 +343,7 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
   knownConn <- readMVar _conn
 
   when (validStage stage && knownConn == conn) $ do
-    logFormat _logger Debug "Package received: command {}"
-      (Only $ Shown packageCmd)
+    logFormat _logger Debug "Package received:  {}" (Only $ Shown pkg)
 
     handlePackage
 
@@ -427,6 +419,8 @@ onSubmitOperation Internal{..} (SubmitOperation callback op) =
   Operation.submit _opMgr op callback =<< tryReadMVar _conn
 
 --------------------------------------------------------------------------------
-onSubmitSubscription :: Internal -> SubmitSubscription -> IO ()
-onSubmitSubscription Internal{..} cmd =
-  Subscription.submit _subMgr cmd =<< tryReadMVar _conn
+onSendPackage :: Internal -> SendPackage -> IO ()
+onSendPackage Internal{..} (SendPackage pkg) =
+  traverse_ sending =<< tryReadMVar _conn
+  where
+    sending conn = enqueuePackage conn pkg

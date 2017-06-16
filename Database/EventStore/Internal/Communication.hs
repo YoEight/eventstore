@@ -103,3 +103,6 @@ data Check = Check deriving Typeable
 --------------------------------------------------------------------------------
 data ConnectionChanged = ConnectionChanged
   deriving Typeable
+
+--------------------------------------------------------------------------------
+newtype SendPackage = SendPackage Package deriving Typeable

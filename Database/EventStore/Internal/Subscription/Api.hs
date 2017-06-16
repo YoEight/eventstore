@@ -23,6 +23,7 @@ import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Types
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Stream
+import Database.EventStore.Internal.Subscription.Packages
 import Database.EventStore.Internal.Subscription.Types
 
 --------------------------------------------------------------------------------
@@ -100,8 +101,9 @@ subUnsubscribe pub s = do
       then return Nothing
       else Just <$> getSubscriptionDetailsSTM s
 
-  for_ outcome $ \details ->
-    publish pub (Unsubscribe details)
+  for_ outcome $ \details -> do
+    let pkg = createUnsubscribePackage (subId details)
+    publish pub (SendPackage pkg)
 
 --------------------------------------------------------------------------------
 -- | If the subscription is on the $all stream.

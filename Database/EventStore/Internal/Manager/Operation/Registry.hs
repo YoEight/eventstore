@@ -41,6 +41,7 @@ import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Operation hiding (retry)
 import Database.EventStore.Internal.Stopwatch
 import Database.EventStore.Internal.Types
@@ -187,18 +188,21 @@ restartPending reg Pending{..} = restartSession reg _pendingSession
 --------------------------------------------------------------------------------
 data Registry =
     Registry  { _regSettings  :: Settings
+              , _logger       :: Logger
               , _regPendings  :: IORef PendingRequests
               , _regAwaitings :: IORef Awaitings
               , _stopwatch    :: Stopwatch
               , _sessions     :: Sessions
+              , _lastConnId   :: IORef (Maybe UUID)
               }
 
 --------------------------------------------------------------------------------
-newRegistry :: Settings -> IO Registry
-newRegistry setts = Registry setts <$> newIORef mempty
-                                   <*> newIORef []
-                                   <*> newStopwatch
-                                   <*> newSessions
+newRegistry :: Settings -> Logger -> IO Registry
+newRegistry setts logger = Registry setts logger  <$> newIORef mempty
+                                                  <*> newIORef []
+                                                  <*> newStopwatch
+                                                  <*> newSessions
+                                                  <*> newIORef Nothing
 
 --------------------------------------------------------------------------------
 schedule :: Registry -> Operation a -> Callback a -> IO ()
@@ -263,12 +267,14 @@ compute self@Registry{..} session@Session{..} mConn =
 
             return Suspended
           WaitRemote uuid -> liftIO $ do
+            lastConnId <- readIORef _lastConnId
             atomicWriteIORef sessionStack (Optional k)
-            case mConn of
-              Nothing   -> scheduleAwait self (Awaiting session)
-              Just conn -> do
-                pending <- createPending session _stopwatch conn Nothing
-                insertPending self uuid pending
+            let mConnId = fmap connectionId mConn <|> lastConnId
+                mkNewPending connId = do
+                  pending <- createPending session _stopwatch connId Nothing
+                  insertPending self uuid pending
+
+            traverse_ mkNewPending mConnId
 
             return Suspended
 
@@ -276,8 +282,7 @@ compute self@Registry{..} session@Session{..} mConn =
 issueRequest :: Registry -> Session -> Connection -> Request -> IO ()
 issueRequest reg@Registry{..} session conn req = do
   uuid    <- nextRandom
-  elapsed <- stopwatchElapsed _stopwatch
-  pending <- createPending session _stopwatch conn (Just req)
+  pending <- createPending session _stopwatch (connectionId conn) (Just req)
 
   insertPending reg uuid pending
   enqueuePackage conn (packageOf _regSettings req uuid)
@@ -285,17 +290,17 @@ issueRequest reg@Registry{..} session conn req = do
 --------------------------------------------------------------------------------
 createPending :: Session
               -> Stopwatch
-              -> Connection
+              -> UUID
               -> Maybe Request
               -> IO Pending
-createPending session stopwatch conn mReq = do
+createPending session stopwatch connId mReq = do
   elapsed <- stopwatchElapsed stopwatch
   let pending =
         Pending { _pendingRequest = mReq
                 , _pendingSession = session
                 , _pendingRetries = 1
                 , _pendingLastTry = elapsed
-                , _pendingConnId  = connectionId conn
+                , _pendingConnId  = connId
                 }
 
   return pending
@@ -309,6 +314,7 @@ insertPending Registry{..} key pending =
 --------------------------------------------------------------------------------
 register :: Registry -> Connection -> Operation a -> Callback a -> IO ()
 register reg conn op cb = do
+  atomicWriteIORef (_lastConnId reg) (Just $ connectionId conn)
   session <- createSession (_sessions reg) op cb
   execute reg session (Just conn)
 
@@ -376,9 +382,11 @@ instance Exception OperationMaxAttemptReached
 --------------------------------------------------------------------------------
 checkAndRetry :: Registry -> Connection -> IO ()
 checkAndRetry self@Registry{..} conn = do
+  atomicWriteIORef _lastConnId (Just $ connectionId conn)
   pendings    <- readIORef _regPendings
   elapsed     <- stopwatchElapsed _stopwatch
   newPendings <- foldM (checking elapsed) pendings (mapToList pendings)
+  atomicModifyIORef' _regPendings $ \m -> (m <> newPendings, ())
   atomicWriteIORef _regPendings newPendings
   where
     checking elapsed reg (key, p) =

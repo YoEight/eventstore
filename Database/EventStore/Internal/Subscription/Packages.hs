@@ -124,11 +124,11 @@ createNakPackage Settings{..} corr sid act txt eids =
 
 --------------------------------------------------------------------------------
 -- | Create an unsubscribe 'Package'.
-createUnsubscribePackage :: Settings -> UUID -> Package
-createUnsubscribePackage Settings{..} uuid =
+createUnsubscribePackage :: UUID -> Package
+createUnsubscribePackage uuid =
     Package
     { packageCmd         = unsubscribeFromStreamCmd
     , packageCorrelation = uuid
     , packageData        = runPut $ encodeMessage UnsubscribeFromStream
-    , packageCred        = s_credentials
+    , packageCred        = Nothing
     }

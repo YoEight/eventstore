@@ -24,14 +24,13 @@ module Database.EventStore.Internal.Operation
   , Code
   , Execution(..)
   , Outcome(..)
+  , Expect(..)
   , freshId
   , failure
   , retry
   , send
   , request
-  , requestEither
   , waitFor
-  , waitForEither
   , wrongVersion
   , streamDeleted
   , invalidTransaction
@@ -167,18 +166,8 @@ send :: (Encode req, Decode resp)
      -> Command
      -> req
      -> Code o resp
-send reqCmd expCmd req = snd <$> request reqCmd expCmd req
-
---------------------------------------------------------------------------------
--- | Sends a message to remote server. It returns the expected deserialized
---   message along with the correlation id of the network exchange.
-request :: (Encode req, Decode resp)
-        => Command
-        -> Command
-        -> req
-        -> Code o (UUID, resp)
-request reqCmd expCmd rq = do
-  let payload = runPut $ encodeMessage rq
+send reqCmd expCmd req = do
+  let payload = runPut $ encodeMessage req
   pkg <- awaits $ NeedRemote reqCmd payload
   let gotCmd = packageCmd pkg
 
@@ -187,55 +176,45 @@ request reqCmd expCmd rq = do
 
   case runGet decodeMessage (packageData pkg) of
     Left e     -> protobufDecodingError e
-    Right resp -> return (packageCorrelation pkg, resp)
+    Right resp -> return resp
 
 --------------------------------------------------------------------------------
--- | Sends a message to remote server. It returns one of expected deserialized
---   messages along with the correlation id of the network exchange.
-requestEither :: (Encode req, Decode resp1, Decode resp2)
-              => Command
-              -> req
-              -> Code o (UUID, Either resp1 resp2)
-requestEither reqCmd rq = do
+data Expect o where
+  Expect :: Decode resp => Command -> (UUID -> resp -> Code o ()) -> Expect o
+
+--------------------------------------------------------------------------------
+-- | Runs the first expection that match.
+runFirstMatch :: Package -> [Expect o] -> Code o ()
+runFirstMatch _ [] = invalidOperation "No expection was fulfilled"
+runFirstMatch pkg (Expect cmd k:rest)
+  | packageCmd pkg /= cmd = runFirstMatch pkg rest
+  | otherwise =
+    case runGet decodeMessage (packageData pkg) of
+      Left e     -> protobufDecodingError e
+      Right resp -> k (packageCorrelation pkg) resp
+
+--------------------------------------------------------------------------------
+-- | Sends a message to remote server. It returns the expected deserialized
+--   message along with the correlation id of the network exchange.
+request :: Encode req
+        => Command
+        -> req
+        -> [Expect o]
+        -> Code o ()
+request reqCmd rq exps = do
   let payload = runPut $ encodeMessage rq
   pkg <- awaits $ NeedRemote reqCmd payload
-
-  case runGet decodeMessage (packageData pkg) of
-    Left e ->
-      case runGet decodeMessage (packageData pkg) of
-        Left e      -> protobufDecodingError e
-        Right resp2 -> return (packageCorrelation pkg, Right resp2)
-    Right resp1 -> return (packageCorrelation pkg, Left resp1)
+  runFirstMatch pkg exps
 
 --------------------------------------------------------------------------------
 -- | Waits for a message from the server at the given correlation id. If the
 --   the connection has been reset in the meantime, it will emit a 'stop'.
-waitFor :: Decode resp => UUID -> Code o resp
-waitFor pid =
+waitFor :: UUID -> [Expect o] -> Code o ()
+waitFor pid exps =
   awaits (WaitRemote pid) >>= \case
     Nothing  -> stop
     Just pkg ->
-      case runGet decodeMessage (packageData pkg) of
-        Left e     -> protobufDecodingError e
-        Right resp -> return resp
-
---------------------------------------------------------------------------------
--- | Waits for a message from the server at the given correlation id for either
---   'Decode' value type. If the connection has been reset in the meantime,
---   it will emit a 'stop'.
-waitForEither :: (Decode resp1, Decode resp2)
-              => UUID
-              -> Code o (Either resp1 resp2)
-waitForEither pid =
-  awaits (WaitRemote pid) >>= \case
-    Nothing  -> stop
-    Just pkg ->
-      case runGet decodeMessage (packageData pkg) of
-        Left _ ->
-          case runGet decodeMessage (packageData pkg) of
-            Left e     -> protobufDecodingError e
-            Right resp -> return (Right resp)
-        Right resp1 -> return (Left resp1)
+      runFirstMatch pkg exps
 
 --------------------------------------------------------------------------------
 -- | Raises 'WrongExpectedVersion' exception.
@@ -271,3 +250,7 @@ serverError = failure . ServerError
 -- | Raises 'InvalidServerResponse' exception.
 invalidServerResponse :: Command -> Command -> Code o a
 invalidServerResponse expe got = failure $ InvalidServerResponse expe got
+
+--------------------------------------------------------------------------------
+invalidOperation :: Text -> Code o a
+invalidOperation = failure . InvalidOperation
