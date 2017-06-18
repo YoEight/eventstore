@@ -14,6 +14,7 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Exec
   ( Exec(..)
+  , Terminated(..)
   , newExec
   , execWaitTillClosed
   ) where
@@ -69,9 +70,13 @@ data Internal =
 
 --------------------------------------------------------------------------------
 instance Pub Exec where
-  publish e a = do
-    pub <- atomically $ _execPub e
-    publish pub a
+  publishSTM e a = do
+    pub     <- _execPub e
+    handled <- publishSTM pub a
+    unless handled $
+      throwSTM $ Terminated "Connection Closed."
+
+    return handled
 
 --------------------------------------------------------------------------------
 instance Sub Exec where
@@ -128,6 +133,7 @@ newExec setts logMgr mainBus builder disc = do
   subscribe mainBus (onInitFailed internal)
   subscribe mainBus (onFatal internal)
   subscribe mainBus (onTerminated internal)
+  subscribe mainBus (onShutdown internal)
 
   publish mainBus SystemInit
 
@@ -174,8 +180,13 @@ onTerminated Internal{..} (ServiceTerminated svc) = do
 
   when terminated $ do
     logMsg _logger Info "Entire system shutdown properly"
-    closeLogManager __logMgr
+    -- closeLogManager __logMgr
     busStop _mainBus
+
+--------------------------------------------------------------------------------
+onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown Internal{..} _ =
+  atomically $ writeTVar _stageVar (Errored "Connection closed")
 
 --------------------------------------------------------------------------------
 shutdown :: Internal -> IO ()

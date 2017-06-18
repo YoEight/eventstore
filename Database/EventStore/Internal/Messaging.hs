@@ -32,6 +32,7 @@ module Database.EventStore.Internal.Messaging
   , toMsg
   , fromMsg
   , busProcessedEverything
+  , publish
   ) where
 
 --------------------------------------------------------------------------------
@@ -41,7 +42,6 @@ import Control.Monad.Fix
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.Sequence (ViewL(..), viewl, (|>))
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Logger
@@ -63,7 +63,13 @@ fromMsg (Message a) = cast a
 
 --------------------------------------------------------------------------------
 class Pub p where
-  publish :: Typeable a => p -> a -> IO ()
+  publishSTM :: Typeable a => p -> a -> STM Bool
+
+--------------------------------------------------------------------------------
+publish :: (Pub p, Typeable a) => p -> a -> IO ()
+publish p a = atomically $ do
+  _ <- publishSTM p a
+  return ()
 
 --------------------------------------------------------------------------------
 class Sub s where
@@ -74,7 +80,7 @@ data Publish = forall p. Pub p => Publish p
 
 --------------------------------------------------------------------------------
 instance Pub Publish where
-  publish (Publish p) a = publish p a
+  publishSTM (Publish p) a = publishSTM p a
 
 --------------------------------------------------------------------------------
 data Subscribe = forall p. Sub p => Subscribe p
@@ -92,7 +98,7 @@ instance Sub Hub where
 
 --------------------------------------------------------------------------------
 instance Pub Hub where
-  publish (Hub h) = publish h
+  publishSTM (Hub h) = publishSTM h
 
 --------------------------------------------------------------------------------
 asSub :: Sub s => s -> Subscribe
@@ -230,14 +236,18 @@ instance Sub Bus where
 
 --------------------------------------------------------------------------------
 instance Pub Bus where
-  publish Bus{..} a = atomically $ writeTBMQueue _busQueue (toMsg a)
+  publishSTM Bus{..} a = do
+    closed <- isClosedTBMQueue _busQueue
+    writeTBMQueue _busQueue (toMsg a)
+    return $ not closed
 
 --------------------------------------------------------------------------------
 publishing :: Typeable a => Logger -> Callbacks -> a -> IO ()
 publishing logger callbacks a = do
   let tpe = getType (FromTypeable a)
-
+  logFormat logger Debug "Publishing message {}." (Only $ Shown tpe)
   traverse_ (propagate logger a) (lookup tpe callbacks)
+  logFormat logger Debug "Message {} propagated." (Only $ Shown tpe)
   if tpe == messageType
     then return ()
     else traverse_ (propagate logger (toMsg a)) (lookup messageType callbacks)
