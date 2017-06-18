@@ -15,6 +15,9 @@
 module Database.EventStore.Internal.Subscription.Catchup where
 
 --------------------------------------------------------------------------------
+import Control.Monad.Fix
+
+--------------------------------------------------------------------------------
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
@@ -25,6 +28,7 @@ import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Catchup
+import Database.EventStore.Internal.Operation.Volatile
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Api
 import Database.EventStore.Internal.Subscription.Types
@@ -34,7 +38,7 @@ import Database.EventStore.Internal.Types
 data Phase
   = CatchingUp
   | Running SubDetails
-  | Closed (Maybe SubDropReason)
+  | Closed (Either SomeException SubDropReason)
 
 --------------------------------------------------------------------------------
 data Chk = Chk !Int32 !Position
@@ -69,7 +73,7 @@ instance Subscription CatchupSubscription where
     p <- readTVar (_catchupPhase s)
     case p of
       Running details -> return details
-      Closed r        -> throwSTM (SubscriptionClosed r)
+      Closed r        -> throwClosed r
       _               -> retrySTM
 
   subscriptionStream = _catchupStream
@@ -82,6 +86,11 @@ streamName (RegularCatchup stream _) = StreamName stream
 streamName _                         = "$all"
 
 --------------------------------------------------------------------------------
+streamText :: StreamName -> Text
+streamText (StreamName s) = s
+streamText _              = ""
+
+--------------------------------------------------------------------------------
 newCatchupSubscription :: Exec
                        -> Bool
                        -> Maybe Int32
@@ -91,30 +100,41 @@ newCatchupSubscription exec tos batch state = do
   phaseVar <- newTVarIO CatchingUp
   queue    <- newTQueueIO
 
-  let sub = CatchupSubscription exec (streamName state) phaseVar $ do
+  let stream = streamName state
+      sub = CatchupSubscription exec (streamName state) phaseVar $ do
         p       <- readTVar phaseVar
         isEmpty <- isEmptyTQueue queue
         if isEmpty
           then
             case p of
-              Closed r -> throwSTM (SubscriptionClosed r)
+              Closed r -> throwClosed r
               _        -> return Nothing
           else Just <$> readTQueue queue
 
-      callback (Confirmed details) = atomically $
-          writeTVar phaseVar (Running details)
-      callback (Dropped r) = atomically $
-        writeTVar phaseVar (Closed $ Just r)
-      callback (Submit e) = atomically $ do
-        p <- readTVar phaseVar
-        case p of
-          Closed{}  -> return ()
-          _         -> writeTQueue queue e
+      callback cb (Left e) =
+        case fromException e of
+          Just opE ->
+            case opE of
+              StreamNotFound{} -> do
+                let op = volatile (streamText stream) tos
+                publish exec (SubmitOperation cb op)
+              _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
+          _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
+      callback _ (Right action) = atomically $
+        case action of
+          Confirmed details -> writeTVar phaseVar (Running details)
+          Dropped r         -> writeTVar phaseVar (Closed $ Right r)
+          Submit e          -> writeTQueue queue e
 
-  cb <- newCallbackSimple callback
+  cb <- mfix $ \self -> newCallback (callback self)
   let op = catchup (execSettings exec) state tos batch
   publish exec (SubmitOperation cb op)
   return sub
+
+--------------------------------------------------------------------------------
+throwClosed :: Either SomeException SubDropReason -> STM a
+throwClosed (Left e)  = throwSTM e
+throwClosed (Right r) = throwSTM (SubscriptionClosed $ Just r)
 
 --------------------------------------------------------------------------------
 -- | Non blocking version of `waitTillCatchup`.
@@ -134,4 +154,7 @@ hasCaughtUpSTM CatchupSubscription{..} = do
   case p of
     CatchingUp -> return False
     Running{}  -> return True
-    Closed r   -> throwSTM (SubscriptionClosed r)
+    Closed tpe ->
+      case tpe of
+        Left e  -> throwSTM e
+        Right r -> throwSTM (SubscriptionClosed $ Just r)

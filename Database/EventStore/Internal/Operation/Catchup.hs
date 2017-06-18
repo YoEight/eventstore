@@ -48,8 +48,7 @@ defaultBatchSize = 500
 
 --------------------------------------------------------------------------------
 streamNotFound :: Text -> OperationError
-streamNotFound stream =
-  InvalidOperation $ "Catchup. inexistant stream [" <> stream <> "]"
+streamNotFound stream = StreamNotFound stream
 
 --------------------------------------------------------------------------------
 -- | Catchup operation state.
