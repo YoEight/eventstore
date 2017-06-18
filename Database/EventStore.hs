@@ -566,9 +566,10 @@ createPersistentSubscription :: Connection
                              -> StreamName
                              -> PersistentSubscriptionSettings
                              -> IO (Async (Maybe PersistActionException))
-createPersistentSubscription Connection{..} group stream sett = do
+createPersistentSubscription Connection{..} grp stream sett = do
     p <- newPromise
-    publish _exec (CreatePersist p group (streamNameRaw stream) sett)
+    let op = Op.createPersist grp (streamNameRaw stream) sett
+    publish _exec (SubmitOperation p op)
     async $ do
         outcome <- tryRetrieve p
         case outcome of
@@ -582,9 +583,10 @@ updatePersistentSubscription :: Connection
                              -> StreamName
                              -> PersistentSubscriptionSettings
                              -> IO (Async (Maybe PersistActionException))
-updatePersistentSubscription Connection{..} group stream sett = do
+updatePersistentSubscription Connection{..} grp stream sett = do
     p <- newPromise
-    publish _exec (UpdatePersist p group (streamNameRaw stream) sett)
+    let op = Op.updatePersist grp (streamNameRaw stream) sett
+    publish _exec (SubmitOperation p op)
     async $ do
         outcome <- tryRetrieve p
         case outcome of
@@ -597,9 +599,10 @@ deletePersistentSubscription :: Connection
                              -> Text
                              -> StreamName
                              -> IO (Async (Maybe PersistActionException))
-deletePersistentSubscription Connection{..} group stream = do
+deletePersistentSubscription Connection{..} grp stream = do
     p <- newPromise
-    publish _exec (DeletePersist p group (streamNameRaw stream))
+    let op = Op.deletePersist grp (streamNameRaw stream)
+    publish _exec (SubmitOperation p op)
     async $ do
         outcome <- tryRetrieve p
         case outcome of

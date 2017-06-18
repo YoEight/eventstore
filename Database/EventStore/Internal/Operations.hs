@@ -13,6 +13,7 @@
 module Database.EventStore.Internal.Operations
        ( module Database.EventStore.Internal.Operation.Catchup
        , module Database.EventStore.Internal.Operation.DeleteStream
+       , module Database.EventStore.Internal.Operation.PersistOperations
        , module Database.EventStore.Internal.Operation.ReadAllEvents
        , module Database.EventStore.Internal.Operation.ReadEvent
        , module Database.EventStore.Internal.Operation.ReadStreamEvents
@@ -24,6 +25,7 @@ module Database.EventStore.Internal.Operations
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation.Catchup
 import Database.EventStore.Internal.Operation.DeleteStream
+import Database.EventStore.Internal.Operation.PersistOperations
 import Database.EventStore.Internal.Operation.ReadAllEvents
 import Database.EventStore.Internal.Operation.ReadEvent
 import Database.EventStore.Internal.Operation.ReadStreamEvents
