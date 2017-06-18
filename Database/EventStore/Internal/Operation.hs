@@ -80,6 +80,7 @@ data OperationError
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason
     | InvalidOperation Text
+    | StreamNotFound Text
     | NotAuthenticatedOp
       -- ^ Invalid operation state. If happens, it's a driver bug.
     | Aborted
