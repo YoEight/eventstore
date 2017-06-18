@@ -77,6 +77,7 @@ library
       Database.EventStore.Internal.Operation.Catchup
       Database.EventStore.Internal.Operation.DeleteStream
       Database.EventStore.Internal.Operation.DeleteStream.Message
+      Database.EventStore.Internal.Operation.PersistOperations
       Database.EventStore.Internal.Operation.Read.Common
       Database.EventStore.Internal.Operation.ReadAllEvents
       Database.EventStore.Internal.Operation.ReadAllEvents.Message
