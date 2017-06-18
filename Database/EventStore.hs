@@ -525,7 +525,7 @@ subscribeToAllFrom conn resLnkTos lastChkPt batch =
     subscribeFromCommon conn resLnkTos batch tpe
   where
     Position cPos pPos = fromMaybe positionStart lastChkPt
-    tpe = Op.AllCatchup cPos pPos
+    tpe = Op.AllCatchup (Position cPos pPos)
 
 --------------------------------------------------------------------------------
 subscribeFromCommon :: Connection

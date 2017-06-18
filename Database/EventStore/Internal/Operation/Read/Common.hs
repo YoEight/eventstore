@@ -99,6 +99,8 @@ class Slice a where
     -- ^ Gets the starting location of this slice.
     sliceNext :: a -> Loc a
     -- ^ Gets the next location of this slice.
+    toSlice :: a -> SomeSlice
+    -- ^ Returns a common view of a slice.
 
 --------------------------------------------------------------------------------
 -- | Regular stream slice.
@@ -123,6 +125,15 @@ instance Slice StreamSlice where
     sliceFrom      = _ssFrom
     sliceNext      = _ssNext
 
+    toSlice s =
+        SomeSlice
+        { __events = sliceEvents s
+        , __eos    = sliceEOS s
+        , __dir    = sliceDirection s
+        , __from   = StreamEventNumber $ sliceFrom s
+        , __next   = StreamEventNumber $ sliceNext s
+        }
+
 --------------------------------------------------------------------------------
 -- | Represents a slice of the $all stream.
 data AllSlice =
@@ -143,3 +154,39 @@ instance Slice AllSlice where
     sliceEOS       = _saEOS
     sliceFrom      = _saFrom
     sliceNext      = _saNext
+
+    toSlice s =
+        SomeSlice
+        { __events = sliceEvents s
+        , __eos    = sliceEOS s
+        , __dir    = sliceDirection s
+        , __from   = StreamPosition $ sliceFrom s
+        , __next   = StreamPosition $ sliceNext s
+        }
+
+--------------------------------------------------------------------------------
+data Location
+    = StreamEventNumber !Int32
+    | StreamPosition !Position
+    deriving Show
+
+--------------------------------------------------------------------------------
+data SomeSlice =
+    SomeSlice
+    { __events :: ![ResolvedEvent]
+    , __eos    :: !Bool
+    , __dir    :: !ReadDirection
+    , __from   :: !Location
+    , __next   :: !Location
+    } deriving Show
+
+--------------------------------------------------------------------------------
+instance Slice SomeSlice where
+    type Loc SomeSlice = Location
+
+    sliceEvents    = __events
+    sliceDirection = __dir
+    sliceEOS       = __eos
+    sliceFrom      = __from
+    sliceNext      = __next
+    toSlice        = id

@@ -229,8 +229,7 @@ receiving ConnectionState{..} self tcpConnAsync =
 --------------------------------------------------------------------------------
 enqueue :: ConnectionState -> Package -> IO ()
 enqueue ConnectionState{..} pkg@Package{..} = do
-  logFormat _logger Debug "Package {} enqueued: command {}"
-    (Shown packageCorrelation, Shown packageCmd)
+  logFormat _logger Debug "Package enqueued: {}" (Only $ Shown pkg)
   atomically $ writeTBMQueue _sendQueue pkg
 
 --------------------------------------------------------------------------------
@@ -245,7 +244,9 @@ sending ConnectionState{..} self tcpConnAsync = go =<< waitAsync tcpConnAsync
           send pkg =
             tryAny (Network.connectionPut conn bytes) >>= \case
               Left e  -> publish _bus (ConnectionClosed self e)
-              Right _ -> loop
+              Right _ -> do
+                logFormat _logger Debug "Package sent: {}" (Only $ Shown pkg)
+                loop
             where
               bytes = runPut $ putPackage pkg in
       loop
