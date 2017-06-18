@@ -193,7 +193,7 @@ data Registry =
               , _regAwaitings :: IORef Awaitings
               , _stopwatch    :: Stopwatch
               , _sessions     :: Sessions
-              , _lastConnId   :: IORef (Maybe UUID)
+              , _lastConn     :: IORef (Maybe Connection)
               }
 
 --------------------------------------------------------------------------------
@@ -261,16 +261,17 @@ compute self@Registry{..} session@Session{..} mConn =
                               }
             liftIO $ do
               atomicWriteIORef sessionStack (Required k)
-              case mConn of
+              readIORef _lastConn >>= \case
                 Nothing   -> scheduleAwait self (AwaitingRequest session req)
                 Just conn -> issueRequest self session conn req
 
             return Suspended
           WaitRemote uuid -> liftIO $ do
-            lastConnId <- readIORef _lastConnId
+            lastConn <- readIORef _lastConn
             atomicWriteIORef sessionStack (Optional k)
-            let mConnId = fmap connectionId mConn <|> lastConnId
-                mkNewPending connId = do
+            let mConnId = mConn <|> lastConn
+                mkNewPending conn = do
+                  let connId = connectionId conn
                   pending <- createPending session _stopwatch connId Nothing
                   insertPending self uuid pending
 
@@ -314,7 +315,7 @@ insertPending Registry{..} key pending =
 --------------------------------------------------------------------------------
 register :: Registry -> Connection -> Operation a -> Callback a -> IO ()
 register reg conn op cb = do
-  atomicWriteIORef (_lastConnId reg) (Just $ connectionId conn)
+  atomicWriteIORef (_lastConn reg) (Just conn)
   session <- createSession (_sessions reg) op cb
   execute reg session (Just conn)
 
@@ -382,7 +383,7 @@ instance Exception OperationMaxAttemptReached
 --------------------------------------------------------------------------------
 checkAndRetry :: Registry -> Connection -> IO ()
 checkAndRetry self@Registry{..} conn = do
-  atomicWriteIORef _lastConnId (Just $ connectionId conn)
+  atomicWriteIORef _lastConn (Just conn)
   pendings    <- readIORef _regPendings
   elapsed     <- stopwatchElapsed _stopwatch
   newPendings <- foldM (checking elapsed) pendings (mapToList pendings)

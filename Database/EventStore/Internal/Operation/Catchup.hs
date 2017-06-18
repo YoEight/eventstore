@@ -17,7 +17,6 @@ module Database.EventStore.Internal.Operation.Catchup
     , CatchupOpResult(..)
     , Checkpoint(..)
     , catchup
-    , catchupStreamName
     ) where
 
 --------------------------------------------------------------------------------
@@ -32,7 +31,9 @@ import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadAllEvents
 import Database.EventStore.Internal.Operation.ReadStreamEvents
+import Database.EventStore.Internal.Operation.Volatile
 import Database.EventStore.Internal.Stream
+import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -55,29 +56,54 @@ streamNotFound stream =
 data CatchupState
     = RegularCatchup Text Int32
       -- ^ Indicates the stream name and the next event number to start from.
-    | AllCatchup Int64 Int64
+    | AllCatchup Position
       -- ^ Indicates the commit and prepare position. Used when catching up from
       --   the $all stream.
 
 --------------------------------------------------------------------------------
-makeOp :: Settings
-       -> Int32
-       -> Bool
-       -> CatchupState
-       -> Operation (Either (ReadResult 'RegularStream StreamSlice) AllSlice)
-makeOp setts batch tos tpe =
-    case tpe of
-        RegularCatchup stream fromEvt ->
-            fmap Left
-                (readStreamEvents setts Forward stream fromEvt batch tos)
-        AllCatchup comPos prePos ->
-            fmap Right
-                (readAllEvents setts comPos prePos batch tos Forward)
+data CatchupEvent
+    = RunningLive
+    | SubAction !SubAction
+
+--------------------------------------------------------------------------------
+fetch :: Settings -> Int32 -> Bool -> CatchupState -> Code o SomeSlice
+fetch setts batch tos state =
+    case state of
+        RegularCatchup stream n -> do
+            outcome <- deconstruct $ fmap Left $
+                           readStreamEvents setts Forward stream n batch tos
+            fromReadResult stream outcome (return . toSlice)
+        AllCatchup (Position com pre) ->
+            deconstruct $ fmap (Left . toSlice) $
+                readAllEvents setts com pre batch tos Forward
+
+--------------------------------------------------------------------------------
+updateState :: CatchupState -> Location -> CatchupState
+updateState (RegularCatchup stream _) (StreamEventNumber n) =
+    RegularCatchup stream n
+updateState (AllCatchup _) (StreamPosition p) = AllCatchup p
+
+--------------------------------------------------------------------------------
+sourceStream :: Settings
+             -> Int32
+             -> Bool
+             -> CatchupState
+             -> Operation SubAction
+sourceStream setts batch tos start = unfoldPlan start go
+  where
+    go state = do
+        s <- fetch setts batch tos state
+        traverse_ (yield . Submit) (sliceEvents s)
+
+        when (sliceEOS s)
+            stop
+
+        return $ updateState state (sliceNext s)
 
 --------------------------------------------------------------------------------
 catchupStreamName :: CatchupState -> Text
 catchupStreamName (RegularCatchup stream _) = stream
-catchupStreamName _ = "$all"
+catchupStreamName _ = ""
 
 --------------------------------------------------------------------------------
 data CatchupOpResult =
@@ -86,45 +112,18 @@ data CatchupOpResult =
                     , catchupCheckpoint :: !Checkpoint
                     }
 
-
---------------------------------------------------------------------------------
-streaming :: Settings
-          -> Int32
-          -> Bool
-          -> CatchupState
-          -> Operation CatchupOpResult
-streaming setts batch tos = construct . go
-  where
-    go state = do
-        outcome <- deconstruct (fmap Left (makeOp setts batch tos state))
-        (eos, evts, nchk, nextState) <- extract state outcome
-        yield (CatchupOpResult evts eos nchk)
-        unless eos $ go nextState
-
-    extract _ (Right as) = do
-        let Position nxt_c nxt_p = sliceNext as
-            tmp_tpe = AllCatchup nxt_c nxt_p
-            chk     = CheckpointPosition $ sliceNext as
-        return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
-    extract state (Left rr) =
-        fromReadResult (catchupStreamName state) rr $ \as -> do
-            let RegularCatchup s _ = state
-                nxt = sliceNext as
-                tmp_tpe = RegularCatchup s nxt
-                chk = CheckpointNumber nxt
-            return (sliceEOS as, sliceEvents as, chk, tmp_tpe)
-
 --------------------------------------------------------------------------------
 -- | Stream catching up operation.
 catchup :: Settings
         -> CatchupState
         -> Bool
         -> Maybe Int32
-        -> Operation CatchupOpResult
-catchup setts initState tos bat_siz =
-    streaming setts batch tos initState
+        -> Operation SubAction
+catchup setts state tos batchSiz =
+    sourceStream setts batch tos state <> volatile stream tos
   where
-    batch = fromMaybe defaultBatchSize bat_siz
+    batch  = fromMaybe defaultBatchSize batchSiz
+    stream = catchupStreamName state
 
 --------------------------------------------------------------------------------
 fromReadResult :: Text

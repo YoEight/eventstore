@@ -31,6 +31,7 @@ module Database.EventStore.Internal.Operation
   , send
   , request
   , waitFor
+  , embed
   , wrongVersion
   , streamDeleted
   , invalidTransaction
@@ -183,7 +184,7 @@ data Expect o where
   Expect :: Decode resp => Command -> (UUID -> resp -> Code o ()) -> Expect o
 
 --------------------------------------------------------------------------------
--- | Runs the first expection that match.
+-- | Runs the first expection that matches.
 runFirstMatch :: Package -> [Expect o] -> Code o ()
 runFirstMatch _ [] = invalidOperation "No expection was fulfilled"
 runFirstMatch pkg (Expect cmd k:rest)
@@ -215,6 +216,11 @@ waitFor pid exps =
     Nothing  -> stop
     Just pkg ->
       runFirstMatch pkg exps
+
+--------------------------------------------------------------------------------
+-- | Incorporates an 'Operation'.
+embed :: Operation o -> Code o ()
+embed op = deconstruct (Right <$> op)
 
 --------------------------------------------------------------------------------
 -- | Raises 'WrongExpectedVersion' exception.
