@@ -27,6 +27,7 @@ import Data.UUID.V4
 import Data.Time
 
 --------------------------------------------------------------------------------
+import           Database.EventStore.Internal.Callback
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Communication
 import           Database.EventStore.Internal.Connection
@@ -34,6 +35,7 @@ import           Database.EventStore.Internal.Discovery
 import           Database.EventStore.Internal.EndPoint
 import           Database.EventStore.Internal.Logger
 import           Database.EventStore.Internal.Messaging
+import           Database.EventStore.Internal.Operation
 import qualified Database.EventStore.Internal.OperationManager as Operation
 import           Database.EventStore.Internal.Stopwatch
 import qualified Database.EventStore.Internal.SubscriptionManager as Subscription
@@ -274,23 +276,26 @@ data ForceReconnect = ForceReconnect EndPoint deriving (Typeable, Show)
 instance Exception ForceReconnect
 
 --------------------------------------------------------------------------------
-forceReconnect :: Internal -> NodeEndPoints -> IO ()
+forceReconnect :: Internal -> NodeEndPoints -> IO Bool
 forceReconnect self@Internal{..} node = do
   let ept = if isJust $ s_ssl _setts
             then let Just pt = secureEndPoint node in pt
             else tcpEndPoint node
 
   conn <- readMVar _conn
-  when (connectionEndPoint conn /= ept) $ do
-    closeTcpConnection self (ForceReconnect ept) conn
-    att <- freshAttempt _stopwatch
-    _   <- swapMVar _stage (Connecting att EndpointDiscovery)
-    let msg = "Connection {}: going to reconnect to [{}], current [{}]."
-    logFormat _logger Info msg ( Shown $ connectionId conn
-                               , Shown ept
-                               , Shown $ connectionEndPoint conn
-                               )
-    establish self ept
+  if connectionEndPoint conn /= ept
+    then do
+      closeTcpConnection self (ForceReconnect ept) conn
+      att <- freshAttempt _stopwatch
+      putMVar _stage (Connecting att EndpointDiscovery)
+      let msg = "Connection {}: going to reconnect to [{}], current [{}]."
+      logFormat _logger Info msg ( Shown $ connectionId conn
+                                 , Shown ept
+                                 , Shown $ connectionEndPoint conn
+                                 )
+      establish self ept
+      return True
+  else return False
 
 --------------------------------------------------------------------------------
 onEstablish :: Internal -> EstablishConnection -> IO ()
@@ -339,16 +344,21 @@ onTick self@Internal{..} _ =
 --------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> IO ()
 onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
-  stage     <- takeMVar _stage
-  knownConn <- readMVar _conn
+  stage <- takeMVar _stage
 
-  when (validStage stage && knownConn == conn) $ do
-    logFormat _logger Debug "Package received:  {}" (Only $ Shown pkg)
-
-    handlePackage
-
-  putMVar _stage stage
-
+  if validStage stage
+    then do
+      knownConn <- readMVar _conn
+      if knownConn == conn
+        then do
+          logFormat _logger Debug "Package received:  {}" (Only $ Shown pkg)
+          handlePackage stage
+        else do
+          logFormat _logger Debug "Package IGNORED: {}" (Only $ Shown pkg)
+          putMVar _stage stage
+    else do
+      logFormat _logger Debug "Package IGNORED: {}" (Only $ Shown pkg)
+      putMVar _stage stage
   where
     validStage Connecting{} = True
     validStage Connected    = True
@@ -356,22 +366,22 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
 
     heartbeatResponse = heartbeatResponsePackage packageCorrelation
 
-    handlePackage
-      | packageCmd == heartbeatRequestCmd =
+    handlePackage stage
+      | packageCmd == heartbeatRequestCmd = do
         enqueuePackage conn heartbeatResponse
+        putMVar _stage stage
       | otherwise =
         Operation.handle _opMgr pkg >>= \case
-          Nothing -> Subscription.handle _subMgr pkg >>= \case
-            Nothing ->
-              logFormat _logger Warn "Package not handled: {}" (Only $ Shown pkg)
-            Just decision ->
-              case decision of
-                Subscription.Handled        -> return ()
-                Subscription.Reconnect node -> forceReconnect self node
+          Nothing -> do
+            logFormat _logger Warn "Package not handled: {}" (Only $ Shown pkg)
+            putMVar _stage stage
           Just decision ->
             case decision of
-               Operation.Handled        -> return ()
-               Operation.Reconnect node -> forceReconnect self node
+              Operation.Handled        -> putMVar _stage stage
+              Operation.Reconnect node -> do
+                done <- forceReconnect self node
+                unless done $
+                  putMVar _stage stage
 
 --------------------------------------------------------------------------------
 onConnectionError :: Internal -> ConnectionError -> IO ()
@@ -416,7 +426,9 @@ onShutdown Internal{..} _ = do
 --------------------------------------------------------------------------------
 onSubmitOperation :: Internal -> SubmitOperation -> IO ()
 onSubmitOperation Internal{..} (SubmitOperation callback op) =
-  Operation.submit _opMgr op callback =<< tryReadMVar _conn
+  readMVar _stage >>= \case
+    Closed -> reject callback Aborted
+    _      -> Operation.submit _opMgr op callback =<< tryReadMVar _conn
 
 --------------------------------------------------------------------------------
 onSendPackage :: Internal -> SendPackage -> IO ()

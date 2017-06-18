@@ -570,11 +570,7 @@ createPersistentSubscription Connection{..} grp stream sett = do
     p <- newPromise
     let op = Op.createPersist grp (streamNameRaw stream) sett
     publish _exec (SubmitOperation p op)
-    async $ do
-        outcome <- tryRetrieve p
-        case outcome of
-            Right _ -> return Nothing
-            Left e  -> return $ fromException e
+    async (persistAsync p)
 
 --------------------------------------------------------------------------------
 -- | Asynchronously update a persistent subscription group on a stream.
@@ -587,11 +583,7 @@ updatePersistentSubscription Connection{..} grp stream sett = do
     p <- newPromise
     let op = Op.updatePersist grp (streamNameRaw stream) sett
     publish _exec (SubmitOperation p op)
-    async $ do
-        outcome <- tryRetrieve p
-        case outcome of
-            Right _ -> return Nothing
-            Left e  -> return $ fromException e
+    async (persistAsync p)
 
 --------------------------------------------------------------------------------
 -- | Asynchronously delete a persistent subscription group on a stream.
@@ -603,11 +595,7 @@ deletePersistentSubscription Connection{..} grp stream = do
     p <- newPromise
     let op = Op.deletePersist grp (streamNameRaw stream)
     publish _exec (SubmitOperation p op)
-    async $ do
-        outcome <- tryRetrieve p
-        case outcome of
-            Right _ -> return Nothing
-            Left e  -> return $ fromException e
+    async (persistAsync p)
 
 --------------------------------------------------------------------------------
 -- | Asynchronously connect to a persistent subscription given a group on a
@@ -619,3 +607,8 @@ connectToPersistentSubscription :: Connection
                                 -> IO PersistentSubscription
 connectToPersistentSubscription Connection{..} group stream bufSize =
     newPersistentSubscription _exec group stream bufSize
+
+--------------------------------------------------------------------------------
+persistAsync :: Callback (Maybe PersistActionException)
+             -> IO (Maybe PersistActionException)
+persistAsync = either throw return <=< tryRetrieve
