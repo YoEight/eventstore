@@ -23,9 +23,11 @@ import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Exec
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Operation.Persist
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Api
 import Database.EventStore.Internal.Subscription.Message
+import Database.EventStore.Internal.Subscription.Packages
 import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
@@ -84,7 +86,7 @@ newPersistentSubscription exec grp stream bufSize = do
           else Just <$> readTQueue queue
 
       callback (Confirmed details) = atomically $
-        writeTVar phaseVar (Running details)
+          writeTVar phaseVar (Running details)
       callback (Dropped r) = atomically $
         writeTVar phaseVar (Closed $ Just r)
       callback (Submit e) = atomically $ do
@@ -94,7 +96,7 @@ newPersistentSubscription exec grp stream bufSize = do
           _         -> return ()
 
   cb <- newCallbackSimple callback
-  publish exec (ConnectPersist cb grp name bufSize)
+  publish exec (SubmitOperation cb (persist grp name bufSize))
   return sub
 
 --------------------------------------------------------------------------------
@@ -108,7 +110,11 @@ notifyEventsProcessed PersistentSubscription{..} evts = do
       Pending   -> retrySTM
       Running d -> return d
 
-  publish _perExec (AckPersist details evts)
+  let setts    = execSettings _perExec
+      uuid     = subId details
+      Just sid = subSubId details
+      pkg      = createAckPackage setts uuid sid evts
+  publish _perExec (SendPackage pkg)
 
 --------------------------------------------------------------------------------
 -- | Acknowledges that 'ResolvedEvent' has been successfully processed.
@@ -156,4 +162,8 @@ notifyEventsFailed PersistentSubscription{..} act res evts = do
       Pending   -> retrySTM
       Running d -> return d
 
-  publish _perExec (NakPersist details act res evts)
+  let setts    = execSettings _perExec
+      uuid     = subId details
+      Just sid = subSubId details
+      pkg      = createNakPackage setts uuid sid act res evts
+  publish _perExec (SendPackage pkg)
