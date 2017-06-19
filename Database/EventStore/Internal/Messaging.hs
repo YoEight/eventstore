@@ -159,12 +159,13 @@ type Callbacks = HashMap Type (Seq Callback)
 propagate :: Typeable a => Logger -> a -> Seq Callback -> IO ()
 propagate logger a = traverse_ $ \(Callback k) -> do
   let Just b = cast a
+      tpe    = typeOf b
   outcome <- tryAny $ k b
   case outcome of
     Right _ ->
       return ()
     Left e ->
-      logFormat logger Error "Exception when propagating {}" (Only $ Shown e)
+      logFormat logger Error "Exception when propagating {}: {}" (Shown tpe, Shown e)
 
 --------------------------------------------------------------------------------
 data Callback =
