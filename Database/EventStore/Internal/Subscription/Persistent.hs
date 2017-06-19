@@ -35,7 +35,7 @@ import Database.EventStore.Internal.Types
 data Phase
   = Pending
   | Running SubDetails
-  | Closed (Maybe SubDropReason)
+  | Closed (Either SomeException SubDropReason)
 
 --------------------------------------------------------------------------------
 -- | The server remembers the state of the subscription. This allows for many
@@ -58,7 +58,10 @@ instance Subscription PersistentSubscription where
     case p of
       Pending         -> retrySTM
       Running details -> return details
-      Closed r        -> throwSTM (SubscriptionClosed r)
+      Closed outcome  ->
+        case outcome of
+          Right r -> throwSTM (SubscriptionClosed $ Just r)
+          Left e  -> throwSTM e
 
   subscriptionStream = _perStream
 
@@ -81,21 +84,27 @@ newPersistentSubscription exec grp stream bufSize = do
         if isEmpty
           then
             case p of
-              Closed r -> throwSTM (SubscriptionClosed r)
-              _        -> return Nothing
+              Closed outcome ->
+                case outcome of
+                  Right r -> throwSTM (SubscriptionClosed $ Just r)
+                  Left e  -> throwSTM e
+              _ -> return Nothing
           else Just <$> readTQueue queue
 
-      callback (Confirmed details) = atomically $
-          writeTVar phaseVar (Running details)
-      callback (Dropped r) = atomically $
-        writeTVar phaseVar (Closed $ Just r)
-      callback (Submit e) = atomically $ do
-        p <- readTVar phaseVar
-        case p of
-          Running{} -> writeTQueue queue e
-          _         -> return ()
+      callback (Left e) = atomically $
+          writeTVar phaseVar (Closed $ Left e)
+      callback (Right action) =
+        case action of
+          Confirmed details -> atomically $
+            writeTVar phaseVar (Running details)
+          Dropped r -> atomically $
+            writeTVar phaseVar (Closed $ Right r)
+          Submit e -> atomically $ do
+            readTVar phaseVar >>= \case
+              Running{} -> writeTQueue queue e
+              _         -> return ()
 
-  cb <- newCallbackSimple callback
+  cb <- newCallback callback
   publish exec (SubmitOperation cb (persist grp name bufSize))
   return sub
 
@@ -106,7 +115,10 @@ notifyEventsProcessed PersistentSubscription{..} evts = do
   details <- atomically $ do
     p <- readTVar _perPhase
     case p of
-      Closed r  -> throwSTM (SubscriptionClosed r)
+      Closed outcome  ->
+        case outcome of
+          Right r -> throwSTM (SubscriptionClosed $ Just r)
+          Left e  -> throwSTM e
       Pending   -> retrySTM
       Running d -> return d
 
@@ -158,7 +170,10 @@ notifyEventsFailed PersistentSubscription{..} act res evts = do
   details <- atomically $ do
     p <- readTVar _perPhase
     case p of
-      Closed r  -> throwSTM (SubscriptionClosed r)
+      Closed outcome  ->
+        case outcome of
+          Right r -> throwSTM (SubscriptionClosed $ Just r)
+          Left e  -> throwSTM e
       Pending   -> retrySTM
       Running d -> return d
 

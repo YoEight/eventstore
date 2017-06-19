@@ -16,7 +16,6 @@ module Database.EventStore.Internal.Callback
   ( Callback
   , newPromise
   , newCallback
-  , newCallbackSimple
   , fulfill
   , reject
   , retrieve
@@ -74,13 +73,6 @@ newCallback :: (Either SomeException a -> IO ()) -> IO (Callback a)
 newCallback k = do
   mvar <- newEmptyTMVarIO
   return $ callback mvar k
-
---------------------------------------------------------------------------------
-newCallbackSimple :: (a -> IO ()) -> IO (Callback a)
-newCallbackSimple k = newCallback $ \outcome ->
-  case outcome of
-    Right a -> k a
-    Left (e :: SomeException) -> throw e
 
 --------------------------------------------------------------------------------
 promise :: forall a. TMVar (Either SomeException a) -> Callback a
