@@ -13,7 +13,7 @@
 --
 -- Gathers all EventStore operations tests.
 --------------------------------------------------------------------------------
-module Test.Integration.Tests (tests) where
+module Test.Integration.Tests (spec) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
@@ -25,35 +25,51 @@ import Data.UUID hiding (null)
 import Data.UUID.V4
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
 import Database.EventStore
+import Test.Common
 
 --------------------------------------------------------------------------------
-tests :: Connection -> [TestTree]
-tests conn =
-    [ testCase "Write event" $ writeEventTest conn
-    , testCase "Read event" $ readEventTest conn
-    , testCase "Delete stream" $ deleteStreamTest conn
-    , testCase "Transaction" $ transactionTest conn
-    , testCase "Read forward" $ readStreamEventForwardTest conn
-    , testCase "Read backward" $ readStreamEventBackwardTest conn
-    , testCase "Real $all forward" $ readAllEventsForwardTest conn
-    , testCase "Real $all backward" $ readAllEventsBackwardTest conn
-    , testCase "Subscription test" $ subscribeTest conn
-    , testCase "Subscription from test" $ subscribeFromTest conn
-    , testCase "Subscription from catchup not blocking" $
-          subscribeFromNoStreamTest conn
-    , testCase "Set Stream Metadata" $ setStreamMetadataTest conn
-    , testCase "Get Stream Metadata" $ getStreamMetadataTest conn
-    , testCase "Create persistent sub" $ createPersistentTest conn
-    , testCase "Update persistent sub" $ updatePersistentTest conn
-    , testCase "Delete persistent sub" $ deletePersistentTest conn
-    , testCase "Connect persistent sub" $ connectToPersistentTest conn
-    , testCase "MaxAge metadata test" $ maxAgeTest conn
-    , testCase "Shutdown connection" $ shutdownTest conn
-    ]
+createConnection :: IO Connection
+createConnection = do
+    let setts = defaultSettings
+                { s_credentials = Just $ credentials "admin" "changeit"
+                , s_reconnect_delay = 3
+                , s_logger = Nothing
+                , s_loggerSettings = testLoggerSettings
+                }
 
+    connect setts (Static "127.0.0.1" 1113)
+
+--------------------------------------------------------------------------------
+shuttingDown :: Connection -> IO ()
+shuttingDown conn = do
+    shutdown conn
+    waitTillClosed conn
+
+--------------------------------------------------------------------------------
+spec :: Spec
+spec = beforeAll createConnection $ afterAll shuttingDown $ describe "Features" $ do
+    it "writes events" writeEventTest
+    it "reads events" readEventTest
+    it "deletes stream" deleteStreamTest
+    it "uses transactions" transactionTest
+    it "reads forward" readStreamEventForwardTest
+    it "reads backward" readStreamEventBackwardTest
+    it "reads $all forward" readAllEventsForwardTest
+    it "reads $all backward" readAllEventsBackwardTest
+    it "creates a volatile subscription" subscribeTest
+    it "creates a catchup subscription" subscribeFromTest
+    it "proves catchup subscriptions don't deadlock on non existant streams" subscribeFromNoStreamTest
+    it "sets stream metadata" setStreamMetadataTest
+    it "gets stream metadata" getStreamMetadataTest
+    it "creates a persistent subscription" createPersistentTest
+    it "updates a persistent subscription"  updatePersistentTest
+    it "deletes a persistent subscription" deletePersistentTest
+    it "connects to a persistent subscription" connectToPersistentTest
+    it "set MaxAge metadata correctly" maxAgeTest
 
 --------------------------------------------------------------------------------
 freshStreamId :: IO StreamName
@@ -251,10 +267,6 @@ data SubNoStreamTest
   deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
-secs :: Int
-secs = 1000 * 1000
-
---------------------------------------------------------------------------------
 subscribeFromNoStreamTest :: Connection -> IO ()
 subscribeFromNoStreamTest conn = do
   stream <- freshStreamId
@@ -398,18 +410,3 @@ maxAgeTest conn = do
             assertEqual "Should have equal timespan" (Just timespan)
             (streamMetadataMaxAge m)
         _ -> fail $ "Stream " <> show stream <> " doesn't exist"
-
---------------------------------------------------------------------------------
-shutdownTest :: Connection -> IO ()
-shutdownTest conn = do
-    stream <- freshStreamId
-    let js     = object ["baz" .= True]
-        evt    = createEvent "foo" Nothing $ withJson js
-        action = do
-            _ <- sendEvent conn stream anyVersion evt
-            return False
-    shutdown conn
-    waitTillClosed conn
-    res <- catch action $ \(_ :: SomeException) -> return True
-
-    assertBool "Should have raised an exception" res

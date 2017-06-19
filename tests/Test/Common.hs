@@ -56,7 +56,7 @@ secs = 1000 * 1000
 testLoggerSettings :: LoggerSettings
 testLoggerSettings = LoggerSettings
                      { loggerLevel = Debug
-                     , loggerType  = LogStdout 0
+                     , loggerType  = LogNone
                      }
 
 --------------------------------------------------------------------------------
@@ -64,4 +64,3 @@ initLogManager :: ActionWith LogManager -> IO ()
 initLogManager action = do
   logMgr <- newLogManager testLoggerSettings
   action logMgr
-  closeLogManager logMgr
