@@ -15,22 +15,12 @@ module Test.Integration (tests) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Database.EventStore
-import Test.Common
 import Test.Tasty
+import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
 import qualified Test.Integration.Tests as Tests
 
 --------------------------------------------------------------------------------
 tests :: IO [TestTree]
-tests = do
-    let setts = defaultSettings
-                { s_credentials = Just $ credentials "admin" "changeit"
-                , s_reconnect_delay = 3
-                , s_logger = Nothing
-                , s_loggerSettings = testLoggerSettings
-                }
-
-    conn <- connect setts (Static "127.0.0.1" 1113)
-    return $ Tests.tests conn
+tests = testSpecs Tests.spec
