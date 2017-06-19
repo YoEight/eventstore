@@ -64,6 +64,11 @@ data Connection =
              }
 
 --------------------------------------------------------------------------------
+instance Show Connection where
+  show Connection{..} = "Connection [" ++ show connectionId ++ "] on "
+                        ++ show connectionEndPoint
+
+--------------------------------------------------------------------------------
 instance Eq Connection where
   a == b = connectionId a == connectionId b
 
