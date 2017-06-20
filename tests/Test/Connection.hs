@@ -16,7 +16,6 @@ import ClassyPrelude
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Communication
-import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Exec
 import Database.EventStore.Internal.Logger
@@ -26,9 +25,7 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 import Test.Bogus.Connection
 import Test.Common
-import Test.Tasty
 import Test.Tasty.Hspec
-import System.Log.FastLogger
 
 spec :: LogManager -> Spec
 spec logMgr = do
@@ -39,8 +36,6 @@ spec logMgr = do
         disc    = staticEndPointDiscovery "localhost" 2000
         setts   = defaultSettings { s_retry           = atMost 3
                                   , s_reconnect_delay = 0.25 -- seconds
-                                  , s_loggerSettings  = defaultLoggerSettings
-                                                        { loggerType = LogNone }
                                   }
 
     exec <- newExec setts logMgr bus builder disc

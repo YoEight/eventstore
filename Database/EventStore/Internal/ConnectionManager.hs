@@ -240,17 +240,10 @@ closeConnection self@Internal{..} cause = do
 
 --------------------------------------------------------------------------------
 lookupConnectionAndSwitchToClosed :: Internal -> IO (Maybe Connection)
-lookupConnectionAndSwitchToClosed Internal{..} =
-  readIORef _stage >>= \case
-    Connected conn -> do
-      atomicWriteIORef _stage Closed
-      return $ Just conn
-    Connecting _ (ConnectionEstablishing conn) -> do
-      atomicWriteIORef _stage Closed
-      return $ Just conn
-    _ -> do
-      atomicWriteIORef _stage Closed
-      return Nothing
+lookupConnectionAndSwitchToClosed self@Internal{..} = do
+  outcome <- lookupConnection self
+  atomicWriteIORef _stage Closed
+  return outcome
 
 --------------------------------------------------------------------------------
 closeTcpConnection :: Exception e => Internal -> e -> Connection -> IO ()
@@ -306,22 +299,21 @@ onEstablish i (EstablishConnection ept) = establish i ept
 onTick :: Internal -> Tick -> IO ()
 onTick self@Internal{..} _ =
   readIORef _stage >>= \case
-    Connecting Attempts{..} s -> do
-      elapsed <- stopwatchElapsed _stopwatch
-      case s of
-        Reconnecting
-          | elapsed - attemptLastStart >= s_reconnect_delay _setts
-            -> do
-              let retries = attemptCount + 1
-                  att     = Attempts retries elapsed
-              atomicWriteIORef _stage (Connecting att Reconnecting)
-              case s_retry _setts of
-                AtMost n
-                  | attemptCount <= n -> retryConnection attemptCount
-                  | otherwise -> maxAttemptReached
-                KeepRetrying -> retryConnection attemptCount
-          | otherwise -> return ()
-        _ -> return ()
+    Connecting Attempts{..} s
+      | onGoingConnection s -> do
+        elapsed <- stopwatchElapsed _stopwatch
+        if elapsed - attemptLastStart >= s_reconnect_delay _setts
+          then do
+            let retries = attemptCount + 1
+                att     = Attempts retries elapsed
+            atomicWriteIORef _stage (Connecting att Reconnecting)
+            case s_retry _setts of
+              AtMost n
+                | attemptCount <= n -> retryConnection attemptCount
+                | otherwise -> maxAttemptReached
+              KeepRetrying -> retryConnection attemptCount
+          else return ()
+      | otherwise -> return ()
     Connected conn -> do
       elapsed           <- stopwatchElapsed _stopwatch
       timeoutCheckStart <- readIORef _lastCheck
@@ -331,6 +323,10 @@ onTick self@Internal{..} _ =
         atomicWriteIORef _lastCheck elapsed
     _ -> return ()
   where
+    onGoingConnection Reconnecting             = True
+    onGoingConnection ConnectionEstablishing{} = True
+    onGoingConnection _                        = False
+
     maxAttemptReached = do
       closeConnection self ConnectionMaxAttemptReached
       publish _mainBus (FatalException ConnectionMaxAttemptReached)
