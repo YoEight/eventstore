@@ -661,19 +661,17 @@ keepRetrying = KeepRetrying
 -- | Global 'Connection' settings
 data Settings
     = Settings
-      { s_heartbeatInterval    :: NominalDiffTime
-      , s_heartbeatTimeout     :: NominalDiffTime
-      , s_requireMaster        :: Bool
-      , s_credentials          :: Maybe Credentials
-      , s_retry                :: Retry
-      , s_reconnect_delay      :: NominalDiffTime
-      , s_logger               :: Maybe (Log -> IO ())
-      , s_ssl                  :: Maybe TLSSettings
-      , s_loggerSettings       :: LoggerSettings
-      , s_operationTimeout     :: NominalDiffTime
-      , s_operationRetry       :: Retry
-      , s_subscriptionTimeout  :: NominalDiffTime
-      , s_subscriptionRetry    :: Retry
+      { s_heartbeatInterval :: NominalDiffTime
+      , s_heartbeatTimeout  :: NominalDiffTime
+      , s_requireMaster     :: Bool
+      , s_credentials       :: Maybe Credentials
+      , s_retry             :: Retry
+      , s_reconnect_delay   :: NominalDiffTime
+      , s_logger            :: Maybe (Log -> IO ())
+      , s_ssl               :: Maybe TLSSettings
+      , s_loggerSettings    :: LoggerSettings
+      , s_operationTimeout  :: NominalDiffTime
+      , s_operationRetry    :: Retry
       }
 
 --------------------------------------------------------------------------------
@@ -687,37 +685,25 @@ data Settings
 --   s_logger               = Nothing
 --   s_operationTimeout     = 10 seconds
 --   s_operationRetry       = 'atMost' 3
---   s_subscriptionTimeout  = 10 seconds
---   s_subscriptionRetry    = 'atMost' 3
 defaultSettings :: Settings
 defaultSettings  = Settings
-                   { s_heartbeatInterval    = msDiffTime 750  -- 750ms
-                   , s_heartbeatTimeout     = msDiffTime 1500 -- 1500ms
-                   , s_requireMaster        = True
-                   , s_credentials          = Nothing
-                   , s_retry                = atMost 3
-                   , s_reconnect_delay      = 3
-                   , s_logger               = Nothing
-                   , s_ssl                  = Nothing
-                   , s_loggerSettings       = defaultLoggerSettings
-                   , s_operationTimeout     = 10 -- secs
-                   , s_operationRetry       = atMost 3
-                   , s_subscriptionTimeout  = 10 -- secs
-                   , s_subscriptionRetry    = atMost 3
+                   { s_heartbeatInterval = msDiffTime 750  -- 750ms
+                   , s_heartbeatTimeout  = msDiffTime 1500 -- 1500ms
+                   , s_requireMaster     = True
+                   , s_credentials       = Nothing
+                   , s_retry             = atMost 3
+                   , s_reconnect_delay   = 3
+                   , s_logger            = Nothing
+                   , s_ssl               = Nothing
+                   , s_loggerSettings    = defaultLoggerSettings
+                   , s_operationTimeout  = 10 -- secs
+                   , s_operationRetry    = atMost 3
                    }
 
 --------------------------------------------------------------------------------
 -- | Default SSL settings based on 'defaultSettings'.
 defaultSSLSettings :: TLSSettings -> Settings
 defaultSSLSettings tls = defaultSettings { s_ssl = Just tls }
-
---------------------------------------------------------------------------------
--- | Triggers the logger callback if it has been set.
-_settingsLog :: Settings -> Log -> IO ()
-_settingsLog Settings{..} l =
-    case s_logger of
-        Just k -> k l
-        _      -> return ()
 
 --------------------------------------------------------------------------------
 -- | Millisecond timespan

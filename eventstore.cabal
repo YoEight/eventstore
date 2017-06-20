@@ -105,7 +105,6 @@ library
       Database.EventStore.Internal.Subscription.Persistent
       Database.EventStore.Internal.Subscription.Regular
       Database.EventStore.Internal.Subscription.Types
-      Database.EventStore.Internal.SubscriptionManager
       Database.EventStore.Internal.TimerService
       Database.EventStore.Internal.Types
       Database.EventStore.Internal.Utils
