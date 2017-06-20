@@ -18,12 +18,9 @@ module Database.EventStore.Internal.ConnectionManager
 
 --------------------------------------------------------------------------------
 import Data.Typeable
-import Text.Printf
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.UUID
-import Data.UUID.V4
 import Data.Time
 
 --------------------------------------------------------------------------------
@@ -38,7 +35,6 @@ import           Database.EventStore.Internal.Messaging
 import           Database.EventStore.Internal.Operation
 import qualified Database.EventStore.Internal.OperationManager as Operation
 import           Database.EventStore.Internal.Stopwatch
-import qualified Database.EventStore.Internal.SubscriptionManager as Subscription
 import           Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -121,7 +117,6 @@ data Internal =
            , _last      :: IORef (Maybe EndPoint)
            , _sending   :: TVar Bool
            , _opMgr     :: Operation.Manager
-           , _subMgr    :: Subscription.Manager
            , _stopwatch :: Stopwatch
            , _lastCheck :: IORef NominalDiffTime
            }
@@ -144,7 +139,6 @@ connectionManager logMgr setts builder disc mainBus = do
   internal <- mkInternal <$> newIORef Nothing
                          <*> newTVarIO False
                          <*> Operation.new logMgr setts knownConn
-                         <*> Subscription.new logMgr setts
                          <*> return stopwatch
                          <*> newIORef timeoutCheck
 
@@ -239,7 +233,6 @@ closeConnection self@Internal{..} cause = do
   logFormat _logger Debug "CloseConnection: {}" (Only $ Shown cause)
   mConn <- lookupConnectionAndSwitchToClosed self
   Operation.cleanup _opMgr
-  Subscription.cleanup _subMgr
   traverse_ (closeTcpConnection self cause) mConn
   logFormat _logger Info "CloseConnection: connection cleanup done for [{}]"
     (Only $ Shown cause)
@@ -335,7 +328,6 @@ onTick self@Internal{..} _ =
 
       when (elapsed - timeoutCheckStart >= s_operationTimeout _setts) $ do
         Operation.check _opMgr conn
-        Subscription.check _subMgr conn
         atomicWriteIORef _lastCheck elapsed
     _ -> return ()
   where
@@ -407,7 +399,6 @@ onShutdown self@Internal{..} _ = do
   logMsg _logger Debug "Shutting down..."
   mConn <- lookupConnectionAndSwitchToClosed self
   Operation.cleanup _opMgr
-  Subscription.cleanup _subMgr
   traverse_ dispose mConn
   logMsg _logger Debug "Shutdown properly."
   publish _mainBus (ServiceTerminated ConnectionManager)
