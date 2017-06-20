@@ -50,7 +50,7 @@ data Stage
 
 --------------------------------------------------------------------------------
 instance Show Stage where
-  show Init = "Init"
+  show Init             = "Init"
   show (Connecting a s) = "Connecting: " ++ show (a, s)
   show (Connected c)    = "Connected on" ++ show c
   show Closed           = "Closed"
@@ -134,15 +134,16 @@ connectionManager :: LogManager
                   -> Hub
                   -> IO ()
 connectionManager logMgr setts builder disc mainBus = do
-  let logger     = getLogger "ConnectionManager" logMgr
-      mkInternal = Internal setts disc logger logMgr mainBus builder
+  stageRef <- newIORef Init
+  let knownConn  = Operation.KnownConnection $ lookingUpConnection stageRef
+      logger     = getLogger "ConnectionManager" logMgr
+      mkInternal = Internal setts disc logger logMgr mainBus builder stageRef
 
   stopwatch    <- newStopwatch
   timeoutCheck <- stopwatchElapsed stopwatch
-  internal <- mkInternal <$> newIORef Init
-                         <*> newIORef Nothing
+  internal <- mkInternal <$> newIORef Nothing
                          <*> newTVarIO False
-                         <*> Operation.new logMgr setts
+                         <*> Operation.new logMgr setts knownConn
                          <*> Subscription.new logMgr setts
                          <*> return stopwatch
                          <*> newIORef timeoutCheck
@@ -415,11 +416,8 @@ onShutdown self@Internal{..} _ = do
 onSubmitOperation :: Internal -> SubmitOperation -> IO ()
 onSubmitOperation Internal{..} (SubmitOperation callback op) =
   readIORef _stage >>= \case
-    Closed         -> reject callback Aborted
-    Connected conn -> Operation.submit _opMgr op callback (Just conn)
-    Connecting _ (ConnectionEstablishing conn) ->
-       Operation.submit _opMgr op callback (Just conn)
-    _ ->  Operation.submit _opMgr op callback Nothing
+    Closed -> reject callback Aborted
+    _      -> Operation.submit _opMgr op callback
 
 --------------------------------------------------------------------------------
 onCloseConnection :: Internal -> CloseConnection -> IO ()
@@ -427,7 +425,11 @@ onCloseConnection self e = closeConnection self e
 
 --------------------------------------------------------------------------------
 lookupConnection :: Internal -> IO (Maybe Connection)
-lookupConnection Internal{..} = go <$> readIORef _stage
+lookupConnection Internal{..} = lookingUpConnection _stage
+
+--------------------------------------------------------------------------------
+lookingUpConnection :: IORef Stage -> IO (Maybe Connection)
+lookingUpConnection ref = go <$> readIORef ref
   where
     go (Connected conn)                             = Just conn
     go (Connecting _ (ConnectionEstablishing conn)) = Just conn

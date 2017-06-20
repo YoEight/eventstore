@@ -51,7 +51,7 @@ shuttingDown conn = do
 
 --------------------------------------------------------------------------------
 spec :: Spec
-spec = beforeAll createConnection $ afterAll shuttingDown $ describe "Features" $ do
+spec = beforeAll createConnection $ afterAll shuttingDown $ describe "Features" $ parallel $ do
     it "writes events" writeEventTest
     it "reads events" readEventTest
     it "deletes stream" deleteStreamTest
