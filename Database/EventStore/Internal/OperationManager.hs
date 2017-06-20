@@ -14,6 +14,7 @@
 module Database.EventStore.Internal.OperationManager
   ( Manager
   , Decision(..)
+  , KnownConnection(..)
   , new
   , submit
   , handle
@@ -39,22 +40,15 @@ data Manager =
           }
 
 --------------------------------------------------------------------------------
-new :: LogManager -> Settings -> IO Manager
-new mgr setts = Manager logger <$> newRegistry setts regLogger
+new :: LogManager -> Settings -> KnownConnection -> IO Manager
+new mgr setts conn = Manager logger <$> newRegistry setts regLogger conn
   where
     logger    = getLogger "OperationManager" mgr
     regLogger = getLogger "Registry"  mgr
 
 --------------------------------------------------------------------------------
-submit :: Manager
-       -> Operation a
-       -> Callback a
-       -> Maybe Connection
-       -> IO ()
-submit Manager{..} op cb outcome =
-  case outcome of
-    Just conn -> register _reg conn op cb
-    Nothing   -> schedule _reg op cb
+submit :: Manager -> Operation a -> Callback a -> IO ()
+submit Manager{..} op cb = register _reg op cb
 
 --------------------------------------------------------------------------------
 handle :: Manager -> Package -> IO (Maybe Decision)

@@ -18,9 +18,9 @@ module Database.EventStore.Internal.Manager.Operation.Registry
     ( Registry
     , OperationMaxAttemptReached(..)
     , Decision(..)
+    , KnownConnection(..)
     , newRegistry
     , register
-    , schedule
     , handlePackage
     , abortPendingRequests
     , checkAndRetry
@@ -29,7 +29,6 @@ module Database.EventStore.Internal.Manager.Operation.Registry
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.Bifoldable (bitraverse_)
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.Time
@@ -83,7 +82,7 @@ resumeSession reg session@Session{..} pkg = do
       Optional k -> (Resolved $ k (Just pkg), ())
       same       -> (same, ())
 
-  execute reg session Nothing
+  execute reg session
 
 --------------------------------------------------------------------------------
 resumeNoPkgSession :: Registry -> Session -> IO ()
@@ -92,7 +91,7 @@ resumeNoPkgSession reg session@Session{..} = do
     Optional k -> (Resolved $ k Nothing, ())
     same       -> (same, ())
 
-  execute reg session Nothing
+  execute reg session
 
 --------------------------------------------------------------------------------
 reinitSession :: Session -> IO ()
@@ -102,7 +101,7 @@ reinitSession Session{..} = atomicWriteIORef sessionStack (Resolved sessionOp)
 restartSession :: Registry -> Session -> IO ()
 restartSession reg session = do
   reinitSession session
-  scheduleSession reg session
+  execute reg session
 
 --------------------------------------------------------------------------------
 data Sessions =
@@ -119,7 +118,7 @@ createSession Sessions{..} op cb = do
     let session =
           Session { sessionId       = sid
                   , sessionOp       = op
-                  , sessionStack = ref
+                  , sessionStack    = ref
                   , sessionCallback = cb
                   } in
     (insertMap sid session m, session)
@@ -186,31 +185,27 @@ restartPending :: Registry -> Pending -> IO ()
 restartPending reg Pending{..} = restartSession reg _pendingSession
 
 --------------------------------------------------------------------------------
+newtype KnownConnection =
+  KnownConnection { lookupKnownConnection :: IO (Maybe Connection) }
+
+--------------------------------------------------------------------------------
 data Registry =
     Registry  { _regSettings  :: Settings
               , _logger       :: Logger
+              , _conn         :: KnownConnection
               , _regPendings  :: IORef PendingRequests
               , _regAwaitings :: IORef Awaitings
               , _stopwatch    :: Stopwatch
               , _sessions     :: Sessions
-              , _lastConn     :: IORef (Maybe Connection)
               }
 
 --------------------------------------------------------------------------------
-newRegistry :: Settings -> Logger -> IO Registry
-newRegistry setts logger = Registry setts logger  <$> newIORef mempty
-                                                  <*> newIORef []
-                                                  <*> newStopwatch
-                                                  <*> newSessions
-                                                  <*> newIORef Nothing
-
---------------------------------------------------------------------------------
-schedule :: Registry -> Operation a -> Callback a -> IO ()
-schedule reg op cb = scheduleSession reg =<< createSession (_sessions reg) op cb
-
---------------------------------------------------------------------------------
-scheduleSession :: Registry -> Session -> IO ()
-scheduleSession reg session = scheduleAwait reg (Awaiting session)
+newRegistry :: Settings -> Logger -> KnownConnection -> IO Registry
+newRegistry setts logger conn =
+   Registry setts logger conn <$> newIORef mempty
+                              <*> newIORef []
+                              <*> newStopwatch
+                              <*> newSessions
 
 --------------------------------------------------------------------------------
 scheduleAwait :: Registry -> Awaiting -> IO ()
@@ -219,8 +214,8 @@ scheduleAwait Registry{..} aw =
     (aw : stack, ())
 
 --------------------------------------------------------------------------------
-execute :: Registry -> Session -> Maybe Connection -> IO ()
-execute self session mConn = do
+execute :: Registry -> Session -> IO ()
+execute self session = do
   uuid <- nextRandom
   runExecution operation uuid >>= \case
     Succeeded decision ->
@@ -229,12 +224,12 @@ execute self session mConn = do
         Suspended -> return ()
     Retry -> do
       reinitSession session
-      execute self session mConn
+      execute self session
     Failed e -> do
       destroySession (_sessions self) session
       rejectSession session e
   where
-    operation = compute self session mConn
+    operation = compute self session
 
 --------------------------------------------------------------------------------
 data Computed
@@ -242,8 +237,8 @@ data Computed
   | Suspended
 
 --------------------------------------------------------------------------------
-compute :: Registry -> Session -> Maybe Connection -> Execution Computed
-compute self@Registry{..} session@Session{..} mConn =
+compute :: Registry -> Session -> Execution Computed
+compute self@Registry{..} session@Session{..} =
   liftIO (readIORef sessionStack) >>= \case
     Resolved action -> loop action
     _               -> return Suspended
@@ -261,22 +256,19 @@ compute self@Registry{..} session@Session{..} mConn =
                               }
             liftIO $ do
               atomicWriteIORef sessionStack (Required k)
-              readIORef _lastConn >>= \case
+              lookupKnownConnection _conn >>= \case
                 Nothing   -> scheduleAwait self (AwaitingRequest session req)
                 Just conn -> issueRequest self session conn req
 
             return Suspended
           WaitRemote uuid -> liftIO $ do
-            lastConn <- readIORef _lastConn
             atomicWriteIORef sessionStack (Optional k)
-            let mConnId = mConn <|> lastConn
-                mkNewPending conn = do
+            let mkNewPending conn = do
                   let connId = connectionId conn
                   pending <- createPending session _stopwatch connId Nothing
                   insertPending self uuid pending
 
-            traverse_ mkNewPending mConnId
-
+            traverse_ mkNewPending =<< lookupKnownConnection _conn
             return Suspended
 
 --------------------------------------------------------------------------------
@@ -313,11 +305,10 @@ insertPending Registry{..} key pending =
     (insertMap key pending pendings, ())
 
 --------------------------------------------------------------------------------
-register :: Registry -> Connection -> Operation a -> Callback a -> IO ()
-register reg conn op cb = do
-  atomicWriteIORef (_lastConn reg) (Just conn)
+register :: Registry -> Operation a -> Callback a -> IO ()
+register reg op cb = do
   session <- createSession (_sessions reg) op cb
-  execute reg session (Just conn)
+  execute reg session
 
 --------------------------------------------------------------------------------
 abortPendingRequests :: Registry -> IO ()
@@ -383,11 +374,9 @@ instance Exception OperationMaxAttemptReached
 --------------------------------------------------------------------------------
 checkAndRetry :: Registry -> Connection -> IO ()
 checkAndRetry self@Registry{..} conn = do
-  atomicWriteIORef _lastConn (Just conn)
   pendings    <- readIORef _regPendings
   elapsed     <- stopwatchElapsed _stopwatch
   newPendings <- foldM (checking elapsed) pendings (mapToList pendings)
-  atomicModifyIORef' _regPendings $ \m -> (m <> newPendings, ())
   atomicWriteIORef _regPendings newPendings
   where
     checking elapsed reg (key, p) =
@@ -437,7 +426,7 @@ startAwaitings reg@Registry{..} conn = do
 
   traverse_ starting awaitings
   where
-    starting (Awaiting session)            = execute reg session (Just conn)
+    starting (Awaiting session)            = execute reg session
     starting (AwaitingRequest session req) = issueRequest reg session conn req
 
 --------------------------------------------------------------------------------
