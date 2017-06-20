@@ -38,8 +38,8 @@ main = do
 
   integration <- Integration.tests
 
-  let tree = [ -- testGroup "Internal" internal
-             testGroup "Integration" integration
+  let tree = [ testGroup "Internal" internal
+             , testGroup "Integration" integration
              ]
 
   defaultMain (testGroup "EventStore tests" tree)

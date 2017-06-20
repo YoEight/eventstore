@@ -15,25 +15,29 @@ module Test.Bogus.Connection where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.UUID
 import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
-import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- | Creates a 'ConnectionBuilder' that always fails. The first parameter is an
 --   action that will be executed every time the builder is ask to create a
---   connection.
+--   connection. In this case, it fails because it never sends to the
+--   connection manager 'ConnectionEstablished' event.
 alwaysFailConnectionBuilder :: IO () -> ConnectionBuilder
-alwaysFailConnectionBuilder onConnect = ConnectionBuilder $ \_ -> do
+alwaysFailConnectionBuilder onConnect = ConnectionBuilder $ \ept -> do
   onConnect
-  fail "we simulate a connection problem."
+  uuid <- nextRandom
+  return Connection { connectionId       = uuid
+                    , connectionEndPoint = ept
+                    , enqueuePackage     = \_ -> return ()
+                    , dispose            = return ()
+                    }
 
 --------------------------------------------------------------------------------
 -- | Creates a 'ConnectionBuilder' that allows to respond to 'Package' different
@@ -66,4 +70,5 @@ respondMWithConnectionBuilder pub resp = ConnectionBuilder $ \ept -> do
           , dispose = return ()
           }
 
+  publish pub (ConnectionEstablished conn)
   return conn

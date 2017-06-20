@@ -21,7 +21,6 @@ module Database.EventStore.Internal.Connection
   , ConnectionClosed(..)
   , connectionBuilder
   , connectionError
-  , dumbConnection
   ) where
 
 --------------------------------------------------------------------------------
@@ -71,15 +70,6 @@ instance Show Connection where
 --------------------------------------------------------------------------------
 instance Eq Connection where
   a == b = connectionId a == connectionId b
-
---------------------------------------------------------------------------------
-dumbConnection :: Connection
-dumbConnection =
-  Connection { connectionId       = nil
-             , connectionEndPoint = EndPoint "dumb" 0
-             , enqueuePackage     = \_ -> return ()
-             , dispose            = return ()
-             }
 
 --------------------------------------------------------------------------------
 data ConnectionState =
