@@ -296,7 +296,7 @@ subscribeFromNoStreamTest conn = do
           loop jss
           return SubNoStreamTestSuccess
       timeout = do
-          threadDelay (10 * secs)
+          threadDelay (12 * secs)
           return SubNoStreamTestTimeout
 
   res <- race subAction timeout
