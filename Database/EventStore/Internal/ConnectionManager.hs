@@ -69,12 +69,6 @@ freshAttempt :: Stopwatch -> IO Attempts
 freshAttempt = fmap (Attempts 1) . stopwatchElapsed
 
 --------------------------------------------------------------------------------
-data UnableToConnect = UnableToConnect deriving (Show, Typeable)
-
---------------------------------------------------------------------------------
-instance Exception UnableToConnect
-
---------------------------------------------------------------------------------
 data ConnectionMaxAttemptReached = ConnectionMaxAttemptReached
   deriving Typeable
 
@@ -84,9 +78,6 @@ instance Show ConnectionMaxAttemptReached where
 
 --------------------------------------------------------------------------------
 instance Exception ConnectionMaxAttemptReached
-
---------------------------------------------------------------------------------
-data StartConnect = StartConnect deriving Typeable
 
 --------------------------------------------------------------------------------
 data EstablishConnection = EstablishConnection EndPoint deriving Typeable
@@ -197,7 +188,7 @@ discover Internal{..} =
                     Just ept -> publish _mainBus (EstablishConnection ept)
           return ()
         _ -> return ()
-    s -> return ()
+    _ -> return ()
 
 --------------------------------------------------------------------------------
 establish :: Internal -> EndPoint -> IO ()
@@ -349,8 +340,8 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
     withConnection :: (Connection -> IO ()) -> IO ()
     withConnection k = do
       readIORef _stage >>= \case
-        Connecting _ (ConnectionEstablishing conn) -> k conn
-        Connected conn -> k conn
+        Connecting _ (ConnectionEstablishing c) -> k c
+        Connected c -> k c
         _ -> logFormat _logger Debug "Package IGNORED: {}" (Only $ Shown pkg)
 
     heartbeatResponse = heartbeatResponsePackage packageCorrelation

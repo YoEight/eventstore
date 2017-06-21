@@ -38,7 +38,6 @@ import           Network.Connection (TLSSettings)
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
-import Database.EventStore.Logging
 
 --------------------------------------------------------------------------------
 -- Exceptions
@@ -667,7 +666,6 @@ data Settings
       , s_credentials       :: Maybe Credentials
       , s_retry             :: Retry
       , s_reconnect_delay   :: NominalDiffTime
-      , s_logger            :: Maybe (Log -> IO ())
       , s_ssl               :: Maybe TLSSettings
       , s_loggerSettings    :: LoggerSettings
       , s_operationTimeout  :: NominalDiffTime
@@ -682,7 +680,6 @@ data Settings
 --   s_credentials          = Nothing
 --   s_retry                = 'atMost' 3
 --   s_reconnect_delay      = 3 seconds
---   s_logger               = Nothing
 --   s_operationTimeout     = 10 seconds
 --   s_operationRetry       = 'atMost' 3
 defaultSettings :: Settings
@@ -693,7 +690,6 @@ defaultSettings  = Settings
                    , s_credentials       = Nothing
                    , s_retry             = atMost 3
                    , s_reconnect_delay   = 3
-                   , s_logger            = Nothing
                    , s_ssl               = Nothing
                    , s_loggerSettings    = defaultLoggerSettings
                    , s_operationTimeout  = 10 -- secs

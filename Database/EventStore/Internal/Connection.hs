@@ -37,7 +37,6 @@ import qualified Network.Connection as Network
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
-import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
