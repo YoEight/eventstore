@@ -346,6 +346,7 @@ executePending reg@Registry{..} pkg@Package{..} p@Pending{..} =
             rejectPending p NotAuthenticatedOp
             return Handled
         | cmd == notHandledCmd -> do
+            logFormat _logger Debug "NotHandled response received: {}" (Only $ Shown pkg)
             let Just msg = maybeDecodeMessage packageData
                 reason   = getField $ notHandledReason msg
             case reason of
