@@ -13,16 +13,12 @@
 module Test.Bus where
 
 --------------------------------------------------------------------------------
-import Data.Typeable
-
---------------------------------------------------------------------------------
 import ClassyPrelude
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 
 --------------------------------------------------------------------------------
 import Test.Common
-import Test.Tasty
 import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
@@ -31,7 +27,7 @@ spec mgr = do
   specify "Bus dispatches only one time" $ do
     bus <- newBus mgr "test"
 
-    ref <- newIORef 0
+    ref <- newIORef (0 :: Int)
     subscribe bus $ \Foo ->
       atomicModifyIORef' ref $ \i -> (i+1, ())
 
@@ -46,7 +42,7 @@ spec mgr = do
   specify "Bus dispatches given and parent message type" $ do
     bus <- newBus mgr "test"
 
-    ref <- newIORef 0
+    ref <- newIORef (0 :: Int)
     subscribe bus $ \Foo ->
       atomicModifyIORef' ref $ \i -> (i+1, ())
 

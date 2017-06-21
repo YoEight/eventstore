@@ -24,7 +24,6 @@ import ClassyPrelude
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Catchup

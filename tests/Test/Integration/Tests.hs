@@ -23,7 +23,6 @@ import Data.Aeson
 import Data.DotNet.TimeSpan
 import Data.UUID hiding (null)
 import Data.UUID.V4
-import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.Hspec
 
@@ -37,7 +36,6 @@ createConnection = do
     let setts = defaultSettings
                 { s_credentials = Just $ credentials "admin" "changeit"
                 , s_reconnect_delay = 3
-                , s_logger = Nothing
                 , s_loggerSettings = testLoggerSettings
                 }
 

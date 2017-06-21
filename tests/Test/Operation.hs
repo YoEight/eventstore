@@ -18,7 +18,6 @@ import Data.Serialize
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
-import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Exec
 import Database.EventStore.Internal.Logger
@@ -29,9 +28,7 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 import Test.Bogus.Connection
 import Test.Common
-import Test.Tasty
 import Test.Tasty.Hspec
-import System.Log.FastLogger
 
 --------------------------------------------------------------------------------
 alwaysNotHandled :: Package -> Package
@@ -61,8 +58,8 @@ spec logMgr = do
     bus <- newBus logMgr "operation-not-handled-test"
     var <- newEmptyMVar
     let builder = respondMWithConnectionBuilder (asPub bus) $ \ept pkg -> do
-            empty <- isEmptyMVar var
-            when (ept == EndPoint "addr" 1 && empty) $
+            emptyVar <- isEmptyMVar var
+            when (ept == EndPoint "addr" 1 && emptyVar) $
               putMVar var ()
 
             return $ alwaysNotHandled pkg

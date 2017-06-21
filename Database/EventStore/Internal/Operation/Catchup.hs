@@ -58,11 +58,7 @@ data CatchupState
     | AllCatchup Position
       -- ^ Indicates the commit and prepare position. Used when catching up from
       --   the $all stream.
-
---------------------------------------------------------------------------------
-data CatchupEvent
-    = RunningLive
-    | SubAction !SubAction
+    deriving Show
 
 --------------------------------------------------------------------------------
 fetch :: Settings -> Int32 -> Bool -> CatchupState -> Code o SomeSlice
@@ -81,6 +77,7 @@ updateState :: CatchupState -> Location -> CatchupState
 updateState (RegularCatchup stream _) (StreamEventNumber n) =
     RegularCatchup stream n
 updateState (AllCatchup _) (StreamPosition p) = AllCatchup p
+updateState x y = error $ "Unexpected input updateState: " ++ show (x,y)
 
 --------------------------------------------------------------------------------
 sourceStream :: Settings
