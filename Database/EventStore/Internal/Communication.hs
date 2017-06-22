@@ -18,11 +18,9 @@ module Database.EventStore.Internal.Communication where
 import Data.Typeable
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

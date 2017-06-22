@@ -20,10 +20,8 @@ module Database.EventStore.Internal.Exec
   ) where
 
 --------------------------------------------------------------------------------
+import Prelude (String)
 import Data.Typeable
-
---------------------------------------------------------------------------------
-import ClassyPrelude
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Communication
@@ -32,6 +30,7 @@ import Database.EventStore.Internal.ConnectionManager
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.TimerService
 import Database.EventStore.Internal.Types
 

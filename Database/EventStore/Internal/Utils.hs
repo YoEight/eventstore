@@ -12,14 +12,15 @@
 module Database.EventStore.Internal.Utils (prettyWord8) where
 
 --------------------------------------------------------------------------------
+import Prelude (String)
 import Numeric
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 prettyWord8 :: Word8 -> String
-prettyWord8 w = "0x" ++ padding (showHex w "")
+prettyWord8 w = "0x" <> padding (showHex w "")
 
 --------------------------------------------------------------------------------
 padding :: String -> String

@@ -23,10 +23,10 @@ module Database.EventStore.Internal.Operation.ReadEvent.Message where
 import Data.Int
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

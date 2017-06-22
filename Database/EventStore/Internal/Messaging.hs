@@ -41,10 +41,8 @@ import Data.Typeable.Internal
 import Control.Monad.Fix
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
 import Database.EventStore.Internal.Logger
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 data Message = forall a. Typeable a => Message a deriving Typeable
@@ -191,7 +189,7 @@ busStop Bus{..} = atomically $ closeTBMQueue _busQueue
 
 --------------------------------------------------------------------------------
 busProcessedEverything :: Bus -> IO ()
-busProcessedEverything Bus{..} = waitAsync _workerAsync
+busProcessedEverything Bus{..} = wait _workerAsync
 
 --------------------------------------------------------------------------------
 messageType :: Type

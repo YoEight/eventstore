@@ -18,9 +18,6 @@ module Database.EventStore.Internal.Subscription.Catchup where
 import Control.Monad.Fix
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Exec
@@ -28,6 +25,7 @@ import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Catchup
 import Database.EventStore.Internal.Operation.Volatile
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Api
 import Database.EventStore.Internal.Subscription.Types

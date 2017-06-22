@@ -16,8 +16,10 @@ module Database.EventStore.Internal.Stopwatch
   ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.Time
+
+--------------------------------------------------------------------------------
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 data Internal =

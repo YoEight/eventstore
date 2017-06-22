@@ -24,7 +24,7 @@ module Database.EventStore.Internal.Callback
   ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 newtype Callback a =

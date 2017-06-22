@@ -13,9 +13,9 @@
 module Test.Common where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 import Test.Tasty.Hspec
 

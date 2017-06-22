@@ -12,7 +12,6 @@
 module Test.Operation (spec) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers
 import Data.Serialize
 import Database.EventStore.Internal.Callback
@@ -23,6 +22,7 @@ import Database.EventStore.Internal.Exec
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operations
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

@@ -24,11 +24,11 @@ module Database.EventStore.Internal.Connection
   ) where
 
 --------------------------------------------------------------------------------
+import Prelude (String)
 import Control.Monad.Fix
 import Text.Printf
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Control.Concurrent.Async (uninterruptibleCancel)
 import Data.Serialize
 import Data.UUID
@@ -40,6 +40,7 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -63,8 +64,8 @@ data Connection =
 
 --------------------------------------------------------------------------------
 instance Show Connection where
-  show Connection{..} = "Connection [" ++ show connectionId ++ "] on "
-                        ++ show connectionEndPoint
+  show Connection{..} = "Connection [" <> show connectionId <> "] on "
+                        <> show connectionEndPoint
 
 --------------------------------------------------------------------------------
 instance Eq Connection where
@@ -175,7 +176,7 @@ createConnection setts ctx ept = Network.connectTo ctx params
 
 --------------------------------------------------------------------------------
 disposeConnection :: Async Network.Connection -> IO ()
-disposeConnection as = traverse_ tryDisposing =<< pollAsync as
+disposeConnection as = traverse_ tryDisposing =<< poll as
   where
     tryDisposing = traverse_ disposing
     disposing    = Network.connectionClose
@@ -215,7 +216,7 @@ receiving :: ConnectionState
           -> Async Network.Connection
           -> IO (Async ())
 receiving ConnectionState{..} self tcpConnAsync =
-  forever . go =<< waitAsync tcpConnAsync
+  forever . go =<< wait tcpConnAsync
   where
     go conn =
       publish _bus . PackageArrived self =<< receivePackage _bus self conn
@@ -231,7 +232,7 @@ sending :: ConnectionState
         -> Connection
         -> Async Network.Connection
         -> IO ()
-sending ConnectionState{..} self tcpConnAsync = go =<< waitAsync tcpConnAsync
+sending ConnectionState{..} self tcpConnAsync = go =<< wait tcpConnAsync
   where
     go conn =
       let loop     = traverse_ send =<< atomically (readTBMQueue _sendQueue)
@@ -256,22 +257,22 @@ putPackage pkg = do
     putWord8 flag_word8
     putLazyByteString corr_bytes
     for_ cred_m $ \(Credentials login passw) -> do
-        putWord8 $ fromIntegral $ olength login
+        putWord8 $ fromIntegral $ length login
         putByteString login
-        putWord8 $ fromIntegral $ olength passw
+        putWord8 $ fromIntegral $ length passw
         putByteString passw
     putByteString pack_data
   where
     pack_data     = packageData pkg
     cred_len      = maybe 0 credSize cred_m
-    length_prefix = fromIntegral (olength pack_data + mandatorySize + cred_len)
+    length_prefix = fromIntegral (length pack_data + mandatorySize + cred_len)
     cred_m        = packageCred pkg
     flag_word8    = maybe 0x00 (const 0x01) cred_m
     corr_bytes    = toByteString $ packageCorrelation pkg
 
 --------------------------------------------------------------------------------
 credSize :: Credentials -> Int
-credSize (Credentials login passw) = olength login + olength passw + 2
+credSize (Credentials login passw) = length login + length passw + 2
 
 --------------------------------------------------------------------------------
 -- | The minimun size a 'Package' should have. It's basically a command byte,

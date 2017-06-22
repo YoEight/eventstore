@@ -24,14 +24,12 @@ import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadAllEvents
 import Database.EventStore.Internal.Operation.ReadStreamEvents
 import Database.EventStore.Internal.Operation.Volatile
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
@@ -77,7 +75,7 @@ updateState :: CatchupState -> Location -> CatchupState
 updateState (RegularCatchup stream _) (StreamEventNumber n) =
     RegularCatchup stream n
 updateState (AllCatchup _) (StreamPosition p) = AllCatchup p
-updateState x y = error $ "Unexpected input updateState: " ++ show (x,y)
+updateState x y = error $ "Unexpected input updateState: " <> show (x,y)
 
 --------------------------------------------------------------------------------
 sourceStream :: Settings

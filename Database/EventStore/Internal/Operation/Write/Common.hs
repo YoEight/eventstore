@@ -15,10 +15,8 @@ module Database.EventStore.Internal.Operation.Write.Common where
 import Data.Int
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

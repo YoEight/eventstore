@@ -17,11 +17,11 @@ module Database.EventStore.Internal.Operation.WriteEvents.Message where
 import Data.Int
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

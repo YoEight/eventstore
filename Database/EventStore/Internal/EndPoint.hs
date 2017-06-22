@@ -12,7 +12,10 @@
 module Database.EventStore.Internal.EndPoint where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Prelude (String)
+
+--------------------------------------------------------------------------------
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 -- | Gathers both an IPv4 and a port.

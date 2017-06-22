@@ -22,13 +22,13 @@ module Database.EventStore.Internal.Operation.DeleteStream
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.DeleteStream.Message
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 

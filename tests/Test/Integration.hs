@@ -14,7 +14,7 @@
 module Test.Integration (tests) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Database.EventStore.Internal.Prelude
 import Test.Tasty
 import Test.Tasty.Hspec
 

@@ -12,12 +12,12 @@
 module Database.EventStore.Internal.Subscription.Command where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers
 import Data.Serialize
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Subscription.Message
 import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
