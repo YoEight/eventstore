@@ -28,7 +28,6 @@ module Database.EventStore.Internal.Manager.Operation.Registry
     ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.Time
@@ -42,6 +41,7 @@ import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Operation hiding (retry)
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stopwatch
 import Database.EventStore.Internal.Types
 
@@ -59,7 +59,7 @@ data Suspend a
 
 --------------------------------------------------------------------------------
 type SessionId  = Integer
-type SessionMap = Map SessionId Session
+type SessionMap = HashMap SessionId Session
 
 --------------------------------------------------------------------------------
 data Session =
@@ -216,8 +216,7 @@ scheduleAwait Registry{..} aw =
 --------------------------------------------------------------------------------
 execute :: Registry -> Session -> IO ()
 execute self session = do
-  uuid <- nextRandom
-  runExecution operation uuid >>= \case
+  runExecution operation >>= \case
     Succeeded decision ->
       case decision of
         Completed -> destroySession (_sessions self) session

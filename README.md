@@ -55,7 +55,7 @@ import Data.Aeson
 -- features like its Complex Event Processing (CEP) capabality.
 
 import Database.EventStore
--- Note that import also re-exports 'waitAsync'
+-- Note that import also re-exports 'wait'
 -- function for instance. There are also 'NonEmpty' data constructor and 'nonEmpty' function from
 -- 'Data.List.NonEmpty'.
 
@@ -75,7 +75,7 @@ main = do
 
     -- EventStore interactions are fundamentally asynchronous. Nothing requires you to wait
     -- for the completion of an operation, but it's good to know if something went wrong.
-    _ <- waitAsync as
+    _ <- wait as
 
     -- Again, if you decide to `shutdown` an EventStore connection, it means your application is
     -- about to terminate.

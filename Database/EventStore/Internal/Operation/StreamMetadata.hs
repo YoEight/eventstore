@@ -23,7 +23,6 @@ module Database.EventStore.Internal.Operation.StreamMetadata
 import Data.Int
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.Aeson (decode)
 
 --------------------------------------------------------------------------------
@@ -32,6 +31,7 @@ import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadEvent
 import Database.EventStore.Internal.Operation.Write.Common
 import Database.EventStore.Internal.Operation.WriteEvents
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 

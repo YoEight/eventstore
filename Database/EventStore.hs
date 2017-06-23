@@ -188,7 +188,7 @@ module Database.EventStore
     , streamExists
     , msDiffTime
       -- * Re-export
-    , waitAsync
+    , wait
     , (<>)
     , NonEmpty(..)
     , nonEmpty
@@ -197,16 +197,17 @@ module Database.EventStore
     ) where
 
 --------------------------------------------------------------------------------
+import Prelude (String)
 import Data.Int
 import Data.Maybe
 import Data.Time (NominalDiffTime)
 
 --------------------------------------------------------------------------------
-import ClassyPrelude hiding (Builder, group)
 import Data.List.NonEmpty(NonEmpty(..), nonEmpty)
 import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
+import           Database.EventStore.Internal.Callback
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Communication
 import           Database.EventStore.Internal.Connection (connectionBuilder)
@@ -219,13 +220,13 @@ import           Database.EventStore.Internal.Subscription.Persistent
 import           Database.EventStore.Internal.Subscription.Types
 import           Database.EventStore.Internal.Subscription.Regular
 import           Database.EventStore.Internal.Logger
+import           Database.EventStore.Internal.Manager.Operation.Registry
 import           Database.EventStore.Internal.Messaging hiding (subscribe)
 import           Database.EventStore.Internal.Operation (OperationError(..))
 import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
-import           Database.EventStore.Internal.Manager.Operation.Registry
-import           Database.EventStore.Internal.Callback
+import           Database.EventStore.Internal.Prelude
 import           Database.EventStore.Internal.Stream
 import           Database.EventStore.Internal.Types
 

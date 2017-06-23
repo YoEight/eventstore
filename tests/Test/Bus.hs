@@ -13,9 +13,9 @@
 module Test.Bus where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 import Test.Common

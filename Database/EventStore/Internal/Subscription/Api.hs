@@ -15,13 +15,11 @@
 module Database.EventStore.Internal.Subscription.Api where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Types
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Packages
 import Database.EventStore.Internal.Subscription.Types

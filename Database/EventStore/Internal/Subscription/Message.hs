@@ -23,11 +23,11 @@ module Database.EventStore.Internal.Subscription.Message where
 import Data.Int
 
 --------------------------------------------------------------------------------
-import ClassyPrelude hiding (group)
 import Data.DotNet.TimeSpan
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

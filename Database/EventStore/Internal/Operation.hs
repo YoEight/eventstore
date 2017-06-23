@@ -43,8 +43,9 @@ module Database.EventStore.Internal.Operation
   ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-import Control.Monad.Reader (local)
+import Prelude (String)
+
+--------------------------------------------------------------------------------
 import Data.Machine
 import Data.ProtocolBuffers
 import Data.Serialize
@@ -53,6 +54,7 @@ import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
@@ -98,11 +100,11 @@ data Outcome a
   | Failed !OperationError
 
 --------------------------------------------------------------------------------
-newtype Execution a = Execution { runExecution :: UUID -> IO (Outcome a) }
+newtype Execution a = Execution { runExecution :: IO (Outcome a) }
 
 --------------------------------------------------------------------------------
 instance Functor Execution where
-  fmap f (Execution k) = Execution (fmap go . k)
+  fmap f (Execution m) = Execution (fmap go m)
     where
       go (Succeeded a) = Succeeded (f a)
       go Retry         = Retry
@@ -115,23 +117,17 @@ instance Applicative Execution where
 
 --------------------------------------------------------------------------------
 instance Monad Execution where
-  return a = Execution $ \_ -> return (Succeeded a)
+  return a = Execution $ return (Succeeded a)
 
-  Execution k >>= f = Execution $ \uuid ->
-    k uuid >>= \case
+  Execution m >>= f = Execution $
+    m >>= \case
       Retry       -> return Retry
       Failed e    -> return (Failed e)
-      Succeeded a -> runExecution (f a) uuid
-
---------------------------------------------------------------------------------
-instance MonadReader UUID Execution where
-  ask = Execution (return . Succeeded)
-
-  local f m = Execution $ \uuid -> runExecution m (f uuid)
+      Succeeded a -> runExecution (f a)
 
 --------------------------------------------------------------------------------
 instance MonadIO Execution where
-  liftIO m = Execution $ \_ -> Succeeded <$> liftIO m
+  liftIO m = Execution (Succeeded <$> liftIO m)
 
 --------------------------------------------------------------------------------
 type Operation output = MachineT Execution Need output
@@ -153,12 +149,12 @@ freshId = liftIO nextRandom
 --------------------------------------------------------------------------------
 -- | Raises an 'OperationError'.
 failure :: OperationError -> Code o a
-failure e = lift $ Execution $ \_ -> return (Failed e)
+failure e = lift $ Execution $ return (Failed e)
 
 --------------------------------------------------------------------------------
 -- | Asks to resume the interpretation from the beginning.
 retry :: Code o a
-retry = lift $ Execution $ \_ -> return Retry
+retry = lift $ Execution $ return Retry
 
 --------------------------------------------------------------------------------
 -- | Like 'request' except it discards the correlation id of the network

@@ -34,10 +34,10 @@ module Database.EventStore.Internal.Discovery
     ) where
 
 --------------------------------------------------------------------------------
+import Prelude (String)
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Array.IO
@@ -50,6 +50,7 @@ import System.Random
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 data DnsDiscoveryException
@@ -64,7 +65,7 @@ instance Exception DnsDiscoveryException
 httpRequest :: EndPoint -> String -> IO Request
 httpRequest (EndPoint ip p) path = parseUrlThrow url
   where
-    url = "http://" ++ ip ++ ":" ++ show p ++ path
+    url = "http://" <> ip <> ":" <> show p <> path
 
 --------------------------------------------------------------------------------
 -- | Represents a source of cluster gossip.
@@ -228,7 +229,7 @@ instance FromJSON GUUID where
     parseJSON (String txt) =
         case fromText txt of
             Just uuid -> return $ GUUID uuid
-            _         -> fail $ "Wrong UUID format " ++ show txt
+            _         -> fail $ "Wrong UUID format " <> show txt
     parseJSON invalid = typeMismatch "UUID" invalid
 
 --------------------------------------------------------------------------------

@@ -14,9 +14,7 @@
 module Database.EventStore.Internal.Command where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Utils
 
 --------------------------------------------------------------------------------

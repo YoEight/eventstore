@@ -16,7 +16,7 @@
 module Database.EventStore.Internal.Stream where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 -- | A stream can either point to $all or a regular one.

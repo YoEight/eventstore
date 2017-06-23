@@ -20,7 +20,6 @@ module Database.EventStore.Internal.ConnectionManager
 import Data.Typeable
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.Time
 
 --------------------------------------------------------------------------------
@@ -34,6 +33,7 @@ import           Database.EventStore.Internal.Logger
 import           Database.EventStore.Internal.Messaging
 import           Database.EventStore.Internal.Operation
 import qualified Database.EventStore.Internal.OperationManager as Operation
+import           Database.EventStore.Internal.Prelude
 import           Database.EventStore.Internal.Stopwatch
 import           Database.EventStore.Internal.Types
 
@@ -47,8 +47,8 @@ data Stage
 --------------------------------------------------------------------------------
 instance Show Stage where
   show Init             = "Init"
-  show (Connecting a s) = "Connecting: " ++ show (a, s)
-  show (Connected c)    = "Connected on" ++ show c
+  show (Connecting a s) = "Connecting: " <> show (a, s)
+  show (Connected c)    = "Connected on" <> show c
   show Closed           = "Closed"
 
 --------------------------------------------------------------------------------

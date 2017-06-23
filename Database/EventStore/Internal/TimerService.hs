@@ -19,12 +19,10 @@ module Database.EventStore.Internal.TimerService
 import Data.Typeable
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -50,9 +48,9 @@ delayed Internal{..} msg (Duration timespan) oneOff = () <$ fork (go timespan)
   where
     go i = do
       when (i > 0) $ do
-        let wait = min i (fromIntegral (maxBound :: Int))
-        threadDelay $ fromIntegral wait
-        go (timespan - wait)
+        let waiting = min i (fromIntegral (maxBound :: Int))
+        threadDelay $ fromIntegral waiting
+        go (timespan - waiting)
 
       publish _mainBus msg
       stopped <- readIORef _stopped

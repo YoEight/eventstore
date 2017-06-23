@@ -16,13 +16,13 @@ module Database.EventStore.Internal.Subscription.Packages where
 import Data.Int
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Subscription.Message
 import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types

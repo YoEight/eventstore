@@ -14,7 +14,6 @@
 module Test.Bogus.Connection where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.UUID.V4
 
 --------------------------------------------------------------------------------
@@ -22,6 +21,7 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------

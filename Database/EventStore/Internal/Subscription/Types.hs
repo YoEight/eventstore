@@ -13,12 +13,12 @@
 module Database.EventStore.Internal.Subscription.Types where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.UUID
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Subscription.Message
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- | Indicates why a subscription has been dropped.

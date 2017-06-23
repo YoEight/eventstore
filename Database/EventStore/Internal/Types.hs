@@ -18,12 +18,12 @@
 module Database.EventStore.Internal.Types where
 
 --------------------------------------------------------------------------------
+import Prelude (String)
 import Data.Maybe
 import Data.Monoid (Endo(..))
 import Foreign.C.Types (CTime(..))
 
 --------------------------------------------------------------------------------
-import           ClassyPrelude hiding (Builder)
 import qualified Data.Aeson as A
 import           Data.Aeson.Types (Object, ToJSON(..), Pair, Parser, (.=))
 import           Data.DotNet.TimeSpan
@@ -38,6 +38,7 @@ import           Network.Connection (TLSSettings)
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 -- Exceptions
@@ -221,7 +222,7 @@ emptyStreamVersion = EmptyStream
 --   sequence number matching your expected value.
 exactEventVersion :: Int32 -> ExpectedVersion
 exactEventVersion i
-    | i < 0     = error $ "expected version must be >= 0, but is " ++ show i
+    | i < 0     = error $ "expected version must be >= 0, but is " <> show i
     | otherwise = Exact i
 
 --------------------------------------------------------------------------------
@@ -506,10 +507,10 @@ newResolvedEvent :: ResolvedIndexedEvent -> ResolvedEvent
 newResolvedEvent rie = re
   where
     record = getField $ resolvedIndexedRecord rie
-    link   = getField $ resolvedIndexedLink rie
+    lnk    = getField $ resolvedIndexedLink rie
     re     = ResolvedEvent
              { resolvedEventRecord   = fmap newRecordedEvent record
-             , resolvedEventLink     = fmap newRecordedEvent link
+             , resolvedEventLink     = fmap newRecordedEvent lnk
              , resolvedEventPosition = Nothing
              }
 
@@ -519,13 +520,13 @@ newResolvedEventFromBuf :: ResolvedEventBuf -> ResolvedEvent
 newResolvedEventFromBuf reb = re
   where
     record = Just $ newRecordedEvent $ getField $ resolvedEventBufEvent reb
-    link   = getField $ resolvedEventBufLink reb
+    lnk    = getField $ resolvedEventBufLink reb
     com    = getField $ resolvedEventBufCommitPosition reb
     pre    = getField $ resolvedEventBufPreparePosition reb
     pos    = Position com pre
     re     = ResolvedEvent
              { resolvedEventRecord   = record
-             , resolvedEventLink     = fmap newRecordedEvent link
+             , resolvedEventLink     = fmap newRecordedEvent lnk
              , resolvedEventPosition = Just pos
              }
 
@@ -535,8 +536,8 @@ newResolvedEventFromBuf reb = re
 --   If this 'ResolvedEvent' represents a link event, the link will be the
 --   original event, otherwise it will be the event.
 resolvedEventOriginal :: ResolvedEvent -> RecordedEvent
-resolvedEventOriginal (ResolvedEvent record link _) =
-    let Just evt = link <|> record in evt
+resolvedEventOriginal (ResolvedEvent record lnk _) =
+    let Just evt = lnk <|> record in evt
 
 --------------------------------------------------------------------------------
 -- | Tries to desarialize 'resolvedEventOriginal' data as JSON.
@@ -614,9 +615,9 @@ data Package
 --------------------------------------------------------------------------------
 instance Show Package where
   show Package{..} =
-    "Package [" ++ show packageCorrelation
-                ++ "], command: "
-                ++ show packageCmd
+    "Package [" <> show packageCorrelation
+                <> "], command: "
+                <> show packageCmd
 
 --------------------------------------------------------------------------------
 packageDataAsText :: Package -> Maybe Text
@@ -826,7 +827,7 @@ streamMetadataJSON StreamMetadata{..} =
                , p_truncateBefore .= streamMetadataTruncateBefore
                , p_cacheControl   .= fmap toInt64 streamMetadataCacheControl
                , p_acl            .= streamACLJSON streamMetadataACL
-               ] ++ custPairs
+               ] <> custPairs
   where
     custPairs = customMetaToPairs streamMetadataCustom
 

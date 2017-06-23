@@ -28,13 +28,12 @@ module Database.EventStore.Internal.Logger
   ) where
 
 --------------------------------------------------------------------------------
-import Data.Monoid ((<>))
-
---------------------------------------------------------------------------------
-import ClassyPrelude hiding ((<>))
 import Data.Text.Format
 import Data.Text.Format.Params
 import System.Log.FastLogger
+
+--------------------------------------------------------------------------------
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 data LoggerSettings =
@@ -105,11 +104,11 @@ logMsg Logger{..} lvl msg
   | lvl < _loggerLevel = return ()
   | otherwise = liftIO $
     _loggerCallback $ \t ->
-      toLogStr ("["<> t <>"]") <> " eventstore "
-                               <> toLogStr (logLvlTxt lvl)
-                               <> toLogStr ("[" <> loggerName <> "] ")
-                               <> toLogStr msg
-                               <> "\n"
+      toLogStr ("["`mappend` t `mappend`"]") `mappend` " eventstore "
+                               `mappend` toLogStr (logLvlTxt lvl)
+                               `mappend` toLogStr ("[" `mappend` loggerName `mappend` "] ")
+                               `mappend` toLogStr msg
+                               `mappend` "\n"
 
 --------------------------------------------------------------------------------
 logFormat :: (MonadIO m, Params ps)
@@ -122,8 +121,8 @@ logFormat Logger{..} lvl fm ps
   | lvl < _loggerLevel = return ()
   | otherwise = liftIO $
     _loggerCallback $ \t ->
-      toLogStr ("["<> t <>"]") <> " eventstore "
-                               <> toLogStr (logLvlTxt lvl)
-                               <> toLogStr ("[" <> loggerName <> "] ")
-                               <> toLogStr (format fm ps)
-                               <> "\n"
+      toLogStr ("["`mappend` t `mappend`"]") `mappend` " eventstore "
+                               `mappend` toLogStr (logLvlTxt lvl)
+                               `mappend` toLogStr ("[" `mappend` loggerName `mappend` "] ")
+                               `mappend` toLogStr (format fm ps)
+                               `mappend` "\n"

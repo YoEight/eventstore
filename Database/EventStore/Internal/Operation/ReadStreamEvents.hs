@@ -18,7 +18,6 @@ module Database.EventStore.Internal.Operation.ReadStreamEvents
 import Data.Int
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
@@ -26,6 +25,7 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadStreamEvents.Message
+import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
