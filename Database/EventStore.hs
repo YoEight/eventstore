@@ -21,7 +21,6 @@ module Database.EventStore
     , ConnectionType(..)
     , Credentials
     , Settings(..)
-    , LoggerSettings(..)
     , LogLevel(..)
     , LogType(..)
     , Retry
@@ -30,7 +29,6 @@ module Database.EventStore
     , credentials
     , defaultSettings
     , defaultSSLSettings
-    , defaultLoggerSettings
     , connect
     , shutdown
     , waitTillClosed
@@ -264,16 +262,16 @@ data Connection
 --   performance out of the connection it is generally recommended to use it in
 --   this way.
 connect :: Settings -> ConnectionType -> IO Connection
-connect settings tpe = do
+connect settings@Settings{..} tpe = do
     disc <- case tpe of
         Static host port -> return $ staticEndPointDiscovery host port
         Cluster setts    -> clusterDnsEndPointDiscovery setts
         Dns dom srv port -> return $ simpleDnsEndPointDiscovery dom srv port
 
-    logMgr  <- newLogManager (s_loggerSettings settings)
-    mainBus <- newBus logMgr "main-bus"
-    builder <- connectionBuilder settings logMgr (asPub mainBus)
-    exec    <- newExec settings logMgr mainBus builder disc
+    logRef  <- newLoggerRef s_loggerType s_loggerFilter s_loggerDetailed
+    mainBus <- newBus logRef settings
+    builder <- connectionBuilder settings (asPub mainBus)
+    exec    <- newExec settings mainBus builder disc
     return $ Connection exec settings tpe
 
 --------------------------------------------------------------------------------

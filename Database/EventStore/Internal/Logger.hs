@@ -12,117 +12,62 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Logger
-  ( LogManager
-  , Logger
-  , LogLevel(..)
-  , LoggerSettings(..)
-  , LogType(..)
-  , defaultLoggerSettings
-  , Shown(..)
-  , Only(..)
-  , newLogManager
-  , getLogger
-  , logMsg
-  , logFormat
-  , closeLogManager
+  ( LoggerRef
+  , LoggerFilter(..)
+  , newLoggerRef
+  , loggerCallback
+  , module Control.Monad.Logger
+  , module Data.String.Interpolate.IsString
+  , module System.Log.FastLogger
   ) where
 
 --------------------------------------------------------------------------------
-import Data.Text.Format
-import Data.Text.Format.Params
-import System.Log.FastLogger
+import Control.Monad.Logger
+import Data.String.Interpolate.IsString
+import System.Log.FastLogger hiding (check)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
-data LoggerSettings =
-  LoggerSettings { loggerType  :: LogType
-                 , loggerLevel :: LogLevel
-                 }
+data LoggerFilter
+  = LoggerFilter (LogSource -> LogLevel -> Bool)
+  | LoggerLevel LogLevel
 
 --------------------------------------------------------------------------------
-defaultLoggerSettings :: LoggerSettings
-defaultLoggerSettings =
-  LoggerSettings { loggerType  = LogStdout 0
-                 , loggerLevel = Info
-                 }
+toLogPredicate :: LoggerFilter -> (LogSource -> LogLevel -> Bool)
+toLogPredicate (LoggerFilter k)  = k
+toLogPredicate (LoggerLevel lvl) = \_ t -> t >= lvl
 
 --------------------------------------------------------------------------------
-data LogManager =
-  LogManager { logCallback :: TimedFastLogger
-             , logLevel    :: LogLevel
-             , _cleanUp    :: IO ()
-             }
+data LoggerRef
+  = LoggerRef !TimedFastLogger !LoggerFilter !Bool !(IO ())
+  | NoLogger
 
 --------------------------------------------------------------------------------
-data Logger =
-  Logger { loggerName      :: Text
-         , _loggerCallback :: TimedFastLogger
-         , _loggerLevel    :: LogLevel
-         }
+loggerCallback :: LoggerRef -> (Loc -> LogSource -> LogLevel -> LogStr -> IO ())
+loggerCallback NoLogger = \_ _ _ _ -> return ()
+loggerCallback (LoggerRef logger filt detailed _) = \loc src lvl msg ->
+  when (predicate src lvl) $
+    loggerFormat logger (if detailed then loc else defaultLoc) src lvl msg
+  where
+    predicate = toLogPredicate filt
 
 --------------------------------------------------------------------------------
-data LogLevel
-  = Debug
-  | Info
-  | Warn
-  | Error
-  | Fatal
-  deriving (Eq, Ord, Enum, Bounded)
+loggerFormat :: TimedFastLogger
+             -> (Loc -> LogSource -> LogLevel -> LogStr -> IO ())
+loggerFormat logger = \loc src lvl msg ->
+  logger $ \t ->
+    toLogStr ("["`mappend` t `mappend`"]") `mappend` " eventstore "
+                                           `mappend` defaultLogStr loc src lvl msg
 
 --------------------------------------------------------------------------------
-logLvlTxt :: LogLevel -> Text
-logLvlTxt Debug = "[DEBUG]"
-logLvlTxt Info  = "[INFO]"
-logLvlTxt Warn  = "[WARN]"
-logLvlTxt Error = "[ERROR]"
-logLvlTxt Fatal = "[FATAL]"
-
---------------------------------------------------------------------------------
-newLogManager :: LoggerSettings -> IO LogManager
-newLogManager setts = do
-  cache         <- newTimeCache simpleTimeFormat'
-  (callback, cleanup) <- newTimedFastLogger cache (loggerType setts)
-  return (LogManager callback (loggerLevel setts) cleanup)
-
---------------------------------------------------------------------------------
-closeLogManager :: LogManager -> IO ()
-closeLogManager LogManager{..} = _cleanUp
-
---------------------------------------------------------------------------------
-getLogger :: Text -> LogManager -> Logger
-getLogger name mgr =
-  Logger { loggerName      = name
-         , _loggerCallback = logCallback mgr
-         , _loggerLevel    = logLevel mgr
-         }
-
---------------------------------------------------------------------------------
-logMsg :: MonadIO m => Logger -> LogLevel -> Text -> m ()
-logMsg Logger{..} lvl msg
-  | lvl < _loggerLevel = return ()
-  | otherwise = liftIO $
-    _loggerCallback $ \t ->
-      toLogStr ("["`mappend` t `mappend`"]") `mappend` " eventstore "
-                               `mappend` toLogStr (logLvlTxt lvl)
-                               `mappend` toLogStr ("[" `mappend` loggerName `mappend` "] ")
-                               `mappend` toLogStr msg
-                               `mappend` "\n"
-
---------------------------------------------------------------------------------
-logFormat :: (MonadIO m, Params ps)
-          => Logger
-          -> LogLevel
-          -> Format
-          -> ps
-          -> m ()
-logFormat Logger{..} lvl fm ps
-  | lvl < _loggerLevel = return ()
-  | otherwise = liftIO $
-    _loggerCallback $ \t ->
-      toLogStr ("["`mappend` t `mappend`"]") `mappend` " eventstore "
-                               `mappend` toLogStr (logLvlTxt lvl)
-                               `mappend` toLogStr ("[" `mappend` loggerName `mappend` "] ")
-                               `mappend` toLogStr (format fm ps)
-                               `mappend` "\n"
+newLoggerRef :: LogType -> LoggerFilter -> Bool -> IO LoggerRef
+newLoggerRef LogNone _ _ = return NoLogger
+newLoggerRef typ filt detailed =
+  case typ of
+    LogNone -> return NoLogger
+    other   -> do
+      cache             <- newTimeCache simpleTimeFormat
+      (logger, cleanup) <- newTimedFastLogger cache other
+      return $ LoggerRef logger filt detailed cleanup

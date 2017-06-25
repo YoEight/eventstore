@@ -14,9 +14,6 @@
 module Test.Bogus.Connection where
 
 --------------------------------------------------------------------------------
-import Data.UUID.V4
-
---------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
@@ -31,8 +28,8 @@ import Database.EventStore.Internal.Types
 --   connection manager 'ConnectionEstablished' event.
 alwaysFailConnectionBuilder :: IO () -> ConnectionBuilder
 alwaysFailConnectionBuilder onConnect = ConnectionBuilder $ \ept -> do
-  onConnect
-  uuid <- nextRandom
+  liftIO onConnect
+  uuid <- freshUUID
   return Connection { connectionId       = uuid
                     , connectionEndPoint = ept
                     , enqueuePackage     = \_ -> return ()
@@ -55,7 +52,7 @@ respondMWithConnectionBuilder :: Publish
                               -> (EndPoint -> Package -> IO Package)
                               -> ConnectionBuilder
 respondMWithConnectionBuilder pub resp = ConnectionBuilder $ \ept -> do
-  uuid <- nextRandom
+  uuid <- freshUUID
   let conn = Connection
           { connectionId = uuid
           , connectionEndPoint = ept
@@ -65,7 +62,7 @@ respondMWithConnectionBuilder pub resp = ConnectionBuilder $ \ept -> do
                         let rpkg = pkg { packageCmd = getCommand 0x02 }
                         publish pub (PackageArrived conn rpkg)
                     | otherwise -> do
-                      rpkg <- resp ept pkg
+                      rpkg <- liftIO $ resp ept pkg
                       publish pub (PackageArrived conn rpkg)
           , dispose = return ()
           }

@@ -31,10 +31,9 @@ import Test.Common
 --------------------------------------------------------------------------------
 createConnection :: IO Connection
 createConnection = do
-    let setts = defaultSettings
-                { s_credentials = Just $ credentials "admin" "changeit"
+    let setts = testSettings
+                { s_credentials     = Just $ credentials "admin" "changeit"
                 , s_reconnect_delay = 3
-                , s_loggerSettings = testLoggerSettings
                 }
 
     connect setts (Static "127.0.0.1" 1113)

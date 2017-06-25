@@ -32,7 +32,7 @@ source-repository head
 library
   hs-source-dirs:
       ./.
-  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds
   build-depends:
       base >=4.7 && <5
     , aeson >=0.8 && <1.2
@@ -42,7 +42,6 @@ library
     , stm
     , time >=1.4 && <1.7
     , uuid ==1.3.*
-    , async
     , lifted-base
     , text
     , bytestring
@@ -54,6 +53,9 @@ library
     , stm
     , lifted-async
     , safe-exceptions
+    , monad-control
+    , exceptions
+    , transformers-base
     , cereal >=0.4 && <0.6
     , containers ==0.5.*
     , protobuf >=0.2.1.1 && <0.3
@@ -65,11 +67,12 @@ library
     , http-client == 0.5.*
     , mtl
     , fast-logger
+    , monad-logger >= 0.3.20
     , text-format
     , clock
-    , pipes
     , machines >= 0.6
     , bifunctors
+    , interpolate
   exposed-modules:
       Database.EventStore
       Database.EventStore.Internal.Callback
@@ -126,7 +129,7 @@ test-suite eventstore-tests
   main-is: Main.hs
   hs-source-dirs:
       tests
-  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
@@ -137,7 +140,6 @@ test-suite eventstore-tests
     , stm
     , time >=1.4 && <1.7
     , uuid ==1.3.*
-    , async
     , lifted-base
     , text
     , bytestring
@@ -149,6 +151,9 @@ test-suite eventstore-tests
     , stm
     , lifted-async
     , safe-exceptions
+    , monad-control
+    , exceptions
+    , transformers-base
     , eventstore
     , tasty
     , tasty-hunit

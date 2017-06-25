@@ -53,15 +53,12 @@ instance Exception Terminated
 data Exec =
   Exec { execSettings :: Settings
        , _execPub     :: STM Publish
-       , _logMgr      :: LogManager
        , _internal    :: Internal
        }
 
 --------------------------------------------------------------------------------
 data Internal =
-  Internal { _logger    :: Logger
-          ,  __logMgr   :: LogManager
-           , _initRef   :: IORef ServicePendingInit
+  Internal { _initRef   :: IORef ServicePendingInit
            , _finishRef :: IORef ServicePendingInit
            , _stageVar  :: TVar Stage
            , _mainBus   :: Bus
@@ -79,7 +76,7 @@ instance Pub Exec where
 
 --------------------------------------------------------------------------------
 instance Sub Exec where
-  subscribe Exec{..} = subscribe (_mainBus _internal)
+  subscribeEventHandler Exec{..} = subscribeEventHandler (_mainBus _internal)
 
 --------------------------------------------------------------------------------
 execWaitTillClosed :: Exec -> IO ()
@@ -107,26 +104,20 @@ initServicePending :: ServicePendingInit
 initServicePending = foldMap (\svc -> singletonMap svc ()) [minBound..]
 
 --------------------------------------------------------------------------------
-newExec :: Settings
-        -> LogManager
-        -> Bus
-        -> ConnectionBuilder
-        -> Discovery
-        -> IO Exec
-newExec setts logMgr mainBus builder disc = do
-  let logger = getLogger "Exec" logMgr
+newExec :: Settings -> Bus -> ConnectionBuilder -> Discovery -> IO Exec
+newExec setts mainBus builder disc = do
 
-  internal <- Internal logger logMgr <$> newIORef initServicePending
-                                     <*> newIORef initServicePending
-                                     <*> newTVarIO Init
-                                     <*> return mainBus
+  internal <- Internal <$> newIORef initServicePending
+                       <*> newIORef initServicePending
+                       <*> newTVarIO Init
+                       <*> return mainBus
 
   let stagePub = stageSTM $ _stageVar internal
-      exe      = Exec setts stagePub logMgr internal
+      exe      = Exec setts stagePub internal
       hub      = asHub mainBus
 
-  timerService (getLogger "TimerService" logMgr) hub
-  connectionManager logMgr setts builder disc hub
+  timerService hub
+  connectionManager builder disc hub
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onInitFailed internal)
@@ -139,56 +130,55 @@ newExec setts logMgr mainBus builder disc = do
   return exe
 
 --------------------------------------------------------------------------------
-onInit :: Internal -> Initialized -> IO ()
+onInit :: Internal -> Initialized -> EventStore ()
 onInit Internal{..} (Initialized svc) = do
-  logFormat _logger Info "Service {} initialized" (Only $ Shown svc)
+  $(logInfo) [i|Service #{svc} initialized|]
   initialized <- atomicModifyIORef' _initRef $ \m ->
     let m' = deleteMap svc m in
     (m', null m')
 
   when initialized $ do
-    logMsg _logger Info "Entire system initialized properly"
+    $(logInfo) "Entire system initialized properly"
     atomically $ writeTVar _stageVar (Available $ asPub _mainBus)
 
 --------------------------------------------------------------------------------
-onInitFailed :: Internal -> InitFailed -> IO ()
+onInitFailed :: Internal -> InitFailed -> EventStore ()
 onInitFailed Internal{..} (InitFailed svc) = do
   atomically $ errored _stageVar "Driver failed to initialized"
-  logFormat _logger Error "Service {} failed to initialize" (Only $ Shown svc)
+  $(logError) [i|Service #{svc} failed to initialize.|]
   busStop _mainBus
-  logMsg _logger Error "System can't start."
+  $(logError) "System can't start."
 
 --------------------------------------------------------------------------------
-onFatal :: Internal -> FatalException -> IO ()
+onFatal :: Internal -> FatalException -> EventStore ()
 onFatal self@Internal{..} situation = do
   case situation of
     FatalException e ->
-      logFormat _logger Fatal "Fatal exception: {}" (Only $ Shown e)
+      $(logOther "Fatal") [i|Fatal exception: #{e}|]
     FatalCondition msg ->
-      logMsg _logger Fatal ("Driver is in unrecoverable state.: " <> msg)
+      $(logOther "Fatal") [i|Driver is in unrecoverable state: #{msg}.|]
 
   shutdown self
 
 --------------------------------------------------------------------------------
-onTerminated :: Internal -> ServiceTerminated -> IO ()
+onTerminated :: Internal -> ServiceTerminated -> EventStore ()
 onTerminated Internal{..} (ServiceTerminated svc) = do
-  logFormat _logger Info "Service {} terminated." (Only $ Shown svc)
+  $(logInfo) [i|Service #{svc} terminated.|]
   terminated <- atomicModifyIORef' _finishRef $ \m ->
     let m' = deleteMap svc m in
     (m', null m')
 
   when terminated $ do
-    logMsg _logger Info "Entire system shutdown properly"
-    -- closeLogManager __logMgr
+    $(logInfo) "Entire system shutdown properly"
     busStop _mainBus
 
 --------------------------------------------------------------------------------
-onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown :: Internal -> SystemShutdown -> EventStore ()
 onShutdown Internal{..} _ =
   atomically $ writeTVar _stageVar (Errored "Connection closed")
 
 --------------------------------------------------------------------------------
-shutdown :: Internal -> IO ()
+shutdown :: Internal -> EventStore ()
 shutdown Internal{..} = do
   atomically $ writeTVar _stageVar (Errored "Connection closed")
   publish _mainBus SystemShutdown

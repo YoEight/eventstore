@@ -17,7 +17,6 @@ import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
-import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
 data Foo = Foo deriving Typeable
@@ -31,9 +30,7 @@ newCounter = Counter <$> newTVarIO 0
 
 --------------------------------------------------------------------------------
 incrCounter :: Counter -> IO ()
-incrCounter (Counter var) = atomically $ do
-  i <- readTVar var
-  writeTVar var (i+1)
+incrCounter (Counter var) = atomically $ modifyTVar' var (+1)
 
 --------------------------------------------------------------------------------
 readCounterSTM :: Counter -> STM Int
@@ -46,21 +43,26 @@ testDisc = staticEndPointDiscovery "localhost" 1234
 --------------------------------------------------------------------------------
 testSettings :: Settings
 testSettings =
-  defaultSettings { s_loggerSettings = testLoggerSettings }
+  defaultSettings { s_loggerType   = testGlobalLog
+                  , s_loggerFilter = LoggerLevel LevelDebug
+                  }
 
 --------------------------------------------------------------------------------
 secs :: Int
 secs = 1000 * 1000
 
 --------------------------------------------------------------------------------
-testLoggerSettings :: LoggerSettings
-testLoggerSettings = LoggerSettings
-                     { loggerLevel = Debug
-                     , loggerType  = LogNone
-                     }
+testStdout :: LogType
+testStdout = LogStdout 0
 
 --------------------------------------------------------------------------------
-initLogManager :: ActionWith LogManager -> IO ()
-initLogManager action = do
-  logMgr <- newLogManager testLoggerSettings
-  action logMgr
+testFile :: FilePath -> LogType
+testFile path = LogFileNoRotate path 0
+
+--------------------------------------------------------------------------------
+testGlobalLog :: LogType
+testGlobalLog = LogNone
+
+--------------------------------------------------------------------------------
+createLoggerRef :: LogType -> IO LoggerRef
+createLoggerRef tpe = newLoggerRef tpe (LoggerLevel LevelDebug) False

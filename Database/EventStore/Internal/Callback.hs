@@ -37,12 +37,12 @@ data Stage a b where
   Retrieve :: Stage a (Either SomeException a)
 
 --------------------------------------------------------------------------------
-fulfill :: Callback a -> a -> IO ()
-fulfill cb a = runCallback cb (Fulfill a)
+fulfill :: MonadIO m => Callback a -> a -> m ()
+fulfill cb a = liftIO $ runCallback cb (Fulfill a)
 
 --------------------------------------------------------------------------------
-reject :: Exception e => Callback a -> e -> IO ()
-reject cb e = runCallback cb (Reject e)
+reject :: (Exception e, MonadIO m) => Callback a -> e -> m ()
+reject cb e = liftIO $ runCallback cb (Reject e)
 
 --------------------------------------------------------------------------------
 tryRetrieve :: Callback a -> IO (Either SomeException a)
@@ -51,11 +51,9 @@ tryRetrieve cb = runCallback cb Retrieve
 --------------------------------------------------------------------------------
 retrieve :: Callback a -> IO a
 retrieve p = do
-  outcome <- tryRetrieve p
-  case outcome of
-    Left e  -> throwIO e
+  tryRetrieve p >>= \case
+    Left e  -> throw e
     Right a -> return a
-
 
 --------------------------------------------------------------------------------
 fromEither :: Exception e => Callback a -> Either e a -> IO ()

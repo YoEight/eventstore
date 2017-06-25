@@ -41,13 +41,14 @@ update now (Internal before acc) = Internal now acc'
 newtype Stopwatch = Stopwatch (MVar Internal)
 
 --------------------------------------------------------------------------------
-newStopwatch :: IO Stopwatch
-newStopwatch = fmap Stopwatch . newMVar . initInternal =<< getCurrentTime
+newStopwatch :: MonadBase IO m => m Stopwatch
+newStopwatch =
+  fmap Stopwatch . newMVar . initInternal =<< liftBase getCurrentTime
 
 --------------------------------------------------------------------------------
-stopwatchElapsed :: Stopwatch -> IO NominalDiffTime
+stopwatchElapsed :: MonadBaseControl IO m => Stopwatch -> m NominalDiffTime
 stopwatchElapsed (Stopwatch var) =
   modifyMVar var $ \prev -> do
-    now <- getCurrentTime
+    now <- liftBase getCurrentTime
     let next = update now prev
     return (next, _acc next)

@@ -20,6 +20,7 @@ module Database.EventStore.Internal.ConnectionManager
 import Data.Typeable
 
 --------------------------------------------------------------------------------
+import Control.Monad.Reader
 import Data.Time
 
 --------------------------------------------------------------------------------
@@ -65,7 +66,7 @@ data Attempts =
            } deriving Show
 
 --------------------------------------------------------------------------------
-freshAttempt :: Stopwatch -> IO Attempts
+freshAttempt :: Stopwatch -> EventStore Attempts
 freshAttempt = fmap (Attempts 1) . stopwatchElapsed
 
 --------------------------------------------------------------------------------
@@ -98,10 +99,7 @@ timerPeriod = msDuration 200
 
 --------------------------------------------------------------------------------
 data Internal =
-  Internal { _setts     :: Settings
-           , _disc      :: Discovery
-           , _logger    :: Logger
-           , _logMgr    :: LogManager
+  Internal { _disc      :: Discovery
            , _mainBus   :: Hub
            , _builder   :: ConnectionBuilder
            , _stage     :: IORef Stage
@@ -113,23 +111,20 @@ data Internal =
            }
 
 --------------------------------------------------------------------------------
-connectionManager :: LogManager
-                  -> Settings
-                  -> ConnectionBuilder
+connectionManager :: ConnectionBuilder
                   -> Discovery
                   -> Hub
                   -> IO ()
-connectionManager logMgr setts builder disc mainBus = do
+connectionManager builder disc mainBus = do
   stageRef <- newIORef Init
-  let knownConn  = Operation.KnownConnection $ lookingUpConnection stageRef
-      logger     = getLogger "ConnectionManager" logMgr
-      mkInternal = Internal setts disc logger logMgr mainBus builder stageRef
+  let mkInternal = Internal disc mainBus builder stageRef
+      connRef    = ConnectionRef $ lookingUpConnection stageRef
 
   stopwatch    <- newStopwatch
   timeoutCheck <- stopwatchElapsed stopwatch
   internal <- mkInternal <$> newIORef Nothing
                          <*> newTVarIO False
-                         <*> Operation.new logMgr setts knownConn
+                         <*> Operation.new connRef
                          <*> return stopwatch
                          <*> newIORef timeoutCheck
 
@@ -148,23 +143,23 @@ connectionManager logMgr setts builder disc mainBus = do
   publish mainBus (NewTimer Tick timerPeriod False)
 
 --------------------------------------------------------------------------------
-onInit :: Internal -> SystemInit -> IO ()
-onInit i@Internal{..} _ = do
-  startConnect i
+onInit :: Internal -> SystemInit -> EventStore ()
+onInit self@Internal{..} _ = do
+  startConnect self
   publish _mainBus (Initialized ConnectionManager)
 
 --------------------------------------------------------------------------------
-startConnect :: Internal -> IO ()
-startConnect i@Internal{..} =
+startConnect :: Internal -> EventStore ()
+startConnect self@Internal{..} =
   readIORef _stage >>= \case
     Init -> do
       atts <- freshAttempt _stopwatch
       atomicWriteIORef _stage (Connecting atts Reconnecting)
-      discover i
+      discover self
     _ -> return ()
 
 --------------------------------------------------------------------------------
-discover :: Internal -> IO ()
+discover :: Internal -> EventStore ()
 discover Internal{..} =
   readIORef _stage >>= \case
     Connecting att p ->
@@ -173,27 +168,25 @@ discover Internal{..} =
           atomicWriteIORef _stage (Connecting att EndpointDiscovery)
           old <- readIORef _last
           _   <- fork $
-              tryAny (runDiscovery _disc old) >>= \case
-                Left e    -> do
-                  let msg = "Failed to resolve TCP endpoint to which to \
-                            \connect {}."
-                  logFormat _logger Error msg (Only $ Shown e)
+              tryAny (liftIO $ runDiscovery _disc old) >>= \case
+                Left e -> do
+                  $(logError)
+                    [i| Failed to resolve TCP endpoint to which to connect #{e}.|]
                   publish _mainBus (CloseConnection e)
                 Right opt ->
                   case opt of
                     Nothing -> do
-                      let msg = "Failed to resolve TCP endpoint to which to \
-                                \connect."
-                      logMsg _logger Warn msg
+                      $(logWarn)
+                        "Failed to resolve TCP endpoint to which to connect."
                     Just ept -> publish _mainBus (EstablishConnection ept)
           return ()
         _ -> return ()
     _ -> return ()
 
 --------------------------------------------------------------------------------
-establish :: Internal -> EndPoint -> IO ()
+establish :: Internal -> EndPoint -> EventStore ()
 establish Internal{..} ept = do
-  logFormat _logger Debug "Establish tcp connection on [{}]" (Only $ Shown ept)
+  $(logDebug) [i|Establish tcp connection on [#{ept}]|]
   readIORef _stage >>= \case
     Connecting att s ->
       case s of
@@ -204,49 +197,43 @@ establish Internal{..} ept = do
     _ -> return ()
 
 --------------------------------------------------------------------------------
-established :: Internal -> Connection -> IO ()
+established :: Internal -> Connection -> EventStore ()
 established Internal{..} conn =
   readIORef _stage >>= \case
     Connecting _ (ConnectionEstablishing known) -> do
       when (conn == known) $ do
-        let msg = "TCP connection established: {}."
-        logFormat _logger Debug msg (Only $ Shown conn)
+        $(logDebug) [i|TCP connection established: #{conn}.|]
         atomicWriteIORef _stage (Connected conn)
     _ -> return ()
 
 --------------------------------------------------------------------------------
-onEstablished :: Internal -> ConnectionEstablished -> IO ()
-onEstablished i (ConnectionEstablished conn) = established i conn
+onEstablished :: Internal -> ConnectionEstablished -> EventStore ()
+onEstablished self (ConnectionEstablished conn) = established self conn
 
 --------------------------------------------------------------------------------
-closeConnection :: Exception e => Internal -> e -> IO ()
+closeConnection :: Exception e => Internal -> e -> EventStore ()
 closeConnection self@Internal{..} cause = do
-  logFormat _logger Debug "CloseConnection: {}" (Only $ Shown cause)
+  $(logDebug) [i|CloseConnection: #{cause}.|]
   mConn <- lookupConnectionAndSwitchToClosed self
   Operation.cleanup _opMgr
   traverse_ (closeTcpConnection self cause) mConn
-  logFormat _logger Info "CloseConnection: connection cleanup done for [{}]"
-    (Only $ Shown cause)
+  $(logInfo) [i|CloseConnection: connection cleanup done for [#{cause}].|]
   publish _mainBus (FatalException cause)
 
 --------------------------------------------------------------------------------
-lookupConnectionAndSwitchToClosed :: Internal -> IO (Maybe Connection)
+lookupConnectionAndSwitchToClosed :: Internal -> EventStore (Maybe Connection)
 lookupConnectionAndSwitchToClosed self@Internal{..} = do
   outcome <- lookupConnection self
   atomicWriteIORef _stage Closed
   return outcome
 
 --------------------------------------------------------------------------------
-closeTcpConnection :: Exception e => Internal -> e -> Connection -> IO ()
+closeTcpConnection :: Exception e => Internal -> e -> Connection -> EventStore ()
 closeTcpConnection Internal{..} cause conn = do
   let cid = connectionId conn
-  logFormat _logger Debug "CloseTcpConnection: connection [{}]. Cause: {}"
-    (Shown cid, Shown cause)
-
+  $(logDebug) [i|CloseTcpConnection: connection [#{cid}]. Cause: #{cause}.|]
   dispose conn
-
-  logFormat _logger Debug "CloseTcpConnection: connection [{}] disposed."
-    (Only $ Shown cid)
+  $(logDebug) [i|CloseTcpConnection: connection [#{cid}] disposed.|]
 
   readIORef _stage >>= \case
     Closed -> return ()
@@ -264,9 +251,10 @@ data ForceReconnect = ForceReconnect EndPoint deriving (Typeable, Show)
 instance Exception ForceReconnect
 
 --------------------------------------------------------------------------------
-forceReconnect :: Internal -> NodeEndPoints -> IO ()
+forceReconnect :: Internal -> NodeEndPoints -> EventStore ()
 forceReconnect self@Internal{..} node = do
-  let ept = if isJust $ s_ssl _setts
+  setts <- getSettings
+  let ept = if isJust $ s_ssl setts
             then let Just pt = secureEndPoint node in pt
             else tcpEndPoint node
 
@@ -275,42 +263,39 @@ forceReconnect self@Internal{..} node = do
     closeTcpConnection self (ForceReconnect ept) conn
     att <- freshAttempt _stopwatch
     atomicWriteIORef _stage (Connecting att EndpointDiscovery)
-    let msg = "Connection {}: going to reconnect to [{}], current [{}]."
-    logFormat _logger Info msg ( Shown $ connectionId conn
-                               , Shown ept
-                               , Shown $ connectionEndPoint conn
-                               )
+    $(logInfo) [i|#{conn}: going to reconnect to #{ept}.|]
     establish self ept
 
 --------------------------------------------------------------------------------
-onEstablish :: Internal -> EstablishConnection -> IO ()
-onEstablish i (EstablishConnection ept) = establish i ept
+onEstablish :: Internal -> EstablishConnection -> EventStore ()
+onEstablish self (EstablishConnection ept) = establish self ept
 
 --------------------------------------------------------------------------------
-onTick :: Internal -> Tick -> IO ()
-onTick self@Internal{..} _ =
+onTick :: Internal -> Tick -> EventStore ()
+onTick self@Internal{..} _ = do
+  setts <- getSettings
   readIORef _stage >>= \case
     Connecting Attempts{..} s
       | onGoingConnection s -> do
         elapsed <- stopwatchElapsed _stopwatch
-        if elapsed - attemptLastStart >= s_reconnect_delay _setts
+        if elapsed - attemptLastStart >= s_reconnect_delay setts
           then do
             let retries = attemptCount + 1
                 att     = Attempts retries elapsed
             atomicWriteIORef _stage (Connecting att Reconnecting)
-            case s_retry _setts of
+            case s_retry setts of
               AtMost n
                 | attemptCount <= n -> retryConnection attemptCount
                 | otherwise -> maxAttemptReached
               KeepRetrying -> retryConnection attemptCount
           else return ()
       | otherwise -> return ()
-    Connected conn -> do
+    Connected _ -> do
       elapsed           <- stopwatchElapsed _stopwatch
       timeoutCheckStart <- readIORef _lastCheck
 
-      when (elapsed - timeoutCheckStart >= s_operationTimeout _setts) $ do
-        Operation.check _opMgr conn
+      when (elapsed - timeoutCheckStart >= s_operationTimeout setts) $ do
+        Operation.check _opMgr
         atomicWriteIORef _lastCheck elapsed
     _ -> return ()
   where
@@ -322,27 +307,27 @@ onTick self@Internal{..} _ =
       closeConnection self ConnectionMaxAttemptReached
       publish _mainBus (FatalException ConnectionMaxAttemptReached)
 
-    retryConnection i = do
-      logFormat _logger Debug "Checking reconnection... (attempt {})" (Only i)
+    retryConnection cnt = do
+      $(logDebug) [i|Checking reconnection... (attempt #{cnt}).|]
       discover self
 
 --------------------------------------------------------------------------------
-onArrived :: Internal -> PackageArrived -> IO ()
+onArrived :: Internal -> PackageArrived -> EventStore ()
 onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
   withConnection $ \knownConn -> do
     if knownConn == conn
       then do
-        logFormat _logger Debug "Package received:  {}" (Only $ Shown pkg)
+        $(logDebug) [i|Package received:  #{pkg}.|]
         handlePackage
       else do
-        logFormat _logger Debug "Package IGNORED: {}" (Only $ Shown pkg)
+        $(logDebug) [i|Package IGNORED: #{pkg}.|]
   where
-    withConnection :: (Connection -> IO ()) -> IO ()
+    withConnection :: (Connection -> EventStore ()) -> EventStore ()
     withConnection k = do
       readIORef _stage >>= \case
         Connecting _ (ConnectionEstablishing c) -> k c
         Connected c -> k c
-        _ -> logFormat _logger Debug "Package IGNORED: {}" (Only $ Shown pkg)
+        _ -> $(logDebug) [i|Package IGNORED: #{pkg}|]
 
     heartbeatResponse = heartbeatResponsePackage packageCorrelation
 
@@ -351,15 +336,14 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
         enqueuePackage conn heartbeatResponse
       | otherwise =
         Operation.handle _opMgr pkg >>= \case
-          Nothing -> do
-            logFormat _logger Warn "Package not handled: {}" (Only $ Shown pkg)
+          Nothing       -> $(logWarn) [i|Package not handled: #{pkg}|]
           Just decision ->
             case decision of
               Operation.Handled        -> return ()
               Operation.Reconnect node -> forceReconnect self node
 
 --------------------------------------------------------------------------------
-isSameConnection :: Internal -> Connection -> IO Bool
+isSameConnection :: Internal -> Connection -> EventStore Bool
 isSameConnection Internal{..} conn = go <$> readIORef _stage
   where
     go (Connected known)                             = known == conn
@@ -367,46 +351,45 @@ isSameConnection Internal{..} conn = go <$> readIORef _stage
     go _                                             = False
 
 --------------------------------------------------------------------------------
-onConnectionError :: Internal -> ConnectionError -> IO ()
-onConnectionError i@Internal{..} (ConnectionError conn e) =
-  whenM (isSameConnection i conn) $ do
-    let msg = "TCP connection [{}] error. Cause: [{}]"
-    logFormat _logger Error msg (Shown conn, Shown e)
-    closeConnection i e
+onConnectionError :: Internal -> ConnectionError -> EventStore ()
+onConnectionError self@Internal{..} (ConnectionError conn e) =
+  whenM (isSameConnection self conn) $ do
+    $(logError) [i|TCP #{conn} error. Cause: #{e}.|]
+    closeConnection self e
 
 --------------------------------------------------------------------------------
-onConnectionClosed :: Internal -> ConnectionClosed -> IO ()
+onConnectionClosed :: Internal -> ConnectionClosed -> EventStore ()
 onConnectionClosed self@Internal{..} (ConnectionClosed conn cause) =
   whenM (isSameConnection self conn) $
     closeTcpConnection self cause conn
 
 --------------------------------------------------------------------------------
-onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown :: Internal -> SystemShutdown -> EventStore ()
 onShutdown self@Internal{..} _ = do
-  logMsg _logger Debug "Shutting down..."
+  $(logDebug) "Shutting down..."
   mConn <- lookupConnectionAndSwitchToClosed self
   Operation.cleanup _opMgr
   traverse_ dispose mConn
-  logMsg _logger Debug "Shutdown properly."
+  $(logDebug) "Shutdown properly."
   publish _mainBus (ServiceTerminated ConnectionManager)
 
 --------------------------------------------------------------------------------
-onSubmitOperation :: Internal -> SubmitOperation -> IO ()
+onSubmitOperation :: Internal -> SubmitOperation -> EventStore ()
 onSubmitOperation Internal{..} (SubmitOperation callback op) =
   readIORef _stage >>= \case
     Closed -> reject callback Aborted
     _      -> Operation.submit _opMgr op callback
 
 --------------------------------------------------------------------------------
-onCloseConnection :: Internal -> CloseConnection -> IO ()
+onCloseConnection :: Internal -> CloseConnection -> EventStore ()
 onCloseConnection self e = closeConnection self e
 
 --------------------------------------------------------------------------------
-lookupConnection :: Internal -> IO (Maybe Connection)
+lookupConnection :: Internal -> EventStore (Maybe Connection)
 lookupConnection Internal{..} = lookingUpConnection _stage
 
 --------------------------------------------------------------------------------
-lookingUpConnection :: IORef Stage -> IO (Maybe Connection)
+lookingUpConnection :: IORef Stage -> EventStore (Maybe Connection)
 lookingUpConnection ref = go <$> readIORef ref
   where
     go (Connected conn)                             = Just conn
@@ -414,7 +397,7 @@ lookingUpConnection ref = go <$> readIORef ref
     go _                                            = Nothing
 
 --------------------------------------------------------------------------------
-onSendPackage :: Internal -> SendPackage -> IO ()
+onSendPackage :: Internal -> SendPackage -> EventStore ()
 onSendPackage self (SendPackage pkg) =
   traverse_ sending =<< lookupConnection self
   where
