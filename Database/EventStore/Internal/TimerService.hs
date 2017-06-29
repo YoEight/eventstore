@@ -27,28 +27,32 @@ import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data Internal =
-  Internal { _logger  :: Logger
-           , _mainBus :: Hub
+  Internal { _mainBus :: Hub
            , _stopped :: IORef Bool
            }
 
 --------------------------------------------------------------------------------
-timerService :: Logger -> Hub -> IO ()
-timerService logger mainBus = do
+timerService :: Hub -> IO ()
+timerService mainBus = do
 
-  internal <- Internal logger mainBus <$> newIORef False
+  internal <- Internal mainBus <$> newIORef False
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onShutdown internal)
   subscribe mainBus (onNew internal)
 
 --------------------------------------------------------------------------------
-delayed :: Typeable e => Internal -> e -> Duration -> Bool -> IO ()
+delayed :: Typeable e
+        => Internal
+        -> e
+        -> Duration
+        -> Bool
+        -> EventStore ()
 delayed Internal{..} msg (Duration timespan) oneOff = () <$ fork (go timespan)
   where
-    go i = do
-      when (i > 0) $ do
-        let waiting = min i (fromIntegral (maxBound :: Int))
+    go n = do
+      when (n > 0) $ do
+        let waiting = min n (fromIntegral (maxBound :: Int))
         threadDelay $ fromIntegral waiting
         go (timespan - waiting)
 
@@ -57,16 +61,16 @@ delayed Internal{..} msg (Duration timespan) oneOff = () <$ fork (go timespan)
       unless (oneOff || stopped) $ go timespan
 
 --------------------------------------------------------------------------------
-onInit :: Internal -> SystemInit -> IO ()
+onInit ::Internal -> SystemInit -> EventStore ()
 onInit Internal{..} _ = publish _mainBus (Initialized TimerService)
 
 --------------------------------------------------------------------------------
-onShutdown :: Internal -> SystemShutdown -> IO ()
+onShutdown :: Internal -> SystemShutdown -> EventStore ()
 onShutdown Internal{..} _ = do
-  logMsg _logger Info "Shutting down..."
+  $(logInfo) "Shutting down..."
   atomicWriteIORef _stopped True
   publish _mainBus (ServiceTerminated TimerService)
 
 --------------------------------------------------------------------------------
-onNew :: Internal -> NewTimer -> IO ()
-onNew i (NewTimer msg duration oneOff) = delayed i msg duration oneOff
+onNew :: Internal -> NewTimer -> EventStore ()
+onNew self (NewTimer msg duration oneOff) = delayed self msg duration oneOff

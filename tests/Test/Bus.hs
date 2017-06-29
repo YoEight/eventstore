@@ -13,7 +13,6 @@
 module Test.Bus where
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Prelude
 
@@ -22,10 +21,10 @@ import Test.Common
 import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
-spec :: LogManager -> Spec
-spec mgr = do
-  specify "Bus dispatches only one time" $ do
-    bus <- newBus mgr "test"
+spec :: Spec
+spec = beforeAll (createLoggerRef testGlobalLog) $ do
+  specify "Bus dispatches only one time" $ \logRef -> do
+    bus <- newBus logRef testSettings
 
     ref <- newIORef (0 :: Int)
     subscribe bus $ \Foo ->
@@ -39,8 +38,8 @@ spec mgr = do
 
     cnt `shouldBe` 1
 
-  specify "Bus dispatches given and parent message type" $ do
-    bus <- newBus mgr "test"
+  specify "Bus dispatches given and parent message type" $ \logRef -> do
+    bus <- newBus logRef testSettings
 
     ref <- newIORef (0 :: Int)
     subscribe bus $ \Foo ->

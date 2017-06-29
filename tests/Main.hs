@@ -13,14 +13,12 @@
 module Main where
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Prelude
 import Test.Tasty
 import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
 import qualified Test.Bus         as Bus
-import           Test.Common
 import qualified Test.Connection  as Connection
 import qualified Test.Integration as Integration
 import qualified Test.Operation   as Operation
@@ -28,10 +26,9 @@ import qualified Test.Operation   as Operation
 --------------------------------------------------------------------------------
 main :: IO ()
 main = do
-  logMgr <- newLogManager testLoggerSettings
-  internal <- sequence [ testSpec "Bus" (Bus.spec logMgr)
-                       , testSpec "Connection" (Connection.spec logMgr)
-                       , testSpec "Operation" (Operation.spec logMgr)
+  internal <- sequence [ testSpec "Bus" Bus.spec
+                       , testSpec "Connection" Connection.spec
+                       , testSpec "Operation" Operation.spec
                        ]
 
   integration <- Integration.tests

@@ -1,9 +1,11 @@
-{-# LANGUAGE DeriveDataTypeable  #-}
-{-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE UndecidableInstances       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Types
@@ -24,6 +26,7 @@ import Data.Monoid (Endo(..))
 import Foreign.C.Types (CTime(..))
 
 --------------------------------------------------------------------------------
+import           Control.Monad.Reader
 import qualified Data.Aeson as A
 import           Data.Aeson.Types (Object, ToJSON(..), Pair, Parser, (.=))
 import           Data.DotNet.TimeSpan
@@ -32,6 +35,7 @@ import           Data.ProtocolBuffers
 import           Data.Time (NominalDiffTime)
 import           Data.Time.Clock.POSIX
 import           Data.UUID (UUID, fromByteString, toByteString)
+import           Data.UUID.V4
 import           Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
@@ -39,6 +43,66 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Prelude
+
+--------------------------------------------------------------------------------
+data Env =
+  Env { __logRef   :: LoggerRef
+      , __settings :: Settings
+      }
+
+--------------------------------------------------------------------------------
+newtype EventStore a =
+  EventStore { unEventStore :: ReaderT Env IO a }
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadThrow
+           , MonadCatch
+           , MonadIO
+           , MonadFix
+           )
+
+--------------------------------------------------------------------------------
+getEnv :: EventStore Env
+getEnv = EventStore ask
+
+--------------------------------------------------------------------------------
+getSettings :: EventStore Settings
+getSettings = __settings <$> getEnv
+
+--------------------------------------------------------------------------------
+freshUUID :: EventStore UUID
+freshUUID = liftIO nextRandom
+
+--------------------------------------------------------------------------------
+instance MonadBase IO EventStore where
+  liftBase m = EventStore $ liftBase m
+
+--------------------------------------------------------------------------------
+instance MonadBaseControl IO EventStore where
+    type StM EventStore a = a
+    liftBaseWith run = EventStore $ do
+      env <- ask
+      s   <- liftIO $ run (\m -> runReaderT (unEventStore m) env)
+      restoreM s
+    restoreM = return
+
+--------------------------------------------------------------------------------
+instance MonadLogger EventStore where
+  monadLoggerLog loc src lvl msg  = do
+    loggerRef <- __logRef <$> getEnv
+    liftIO $ loggerCallback loggerRef loc src lvl (toLogStr msg)
+
+--------------------------------------------------------------------------------
+instance MonadLoggerIO EventStore where
+  askLoggerIO = do
+    loggerRef <- __logRef <$> getEnv
+    return (loggerCallback loggerRef)
+
+--------------------------------------------------------------------------------
+runEventStore :: LoggerRef -> Settings -> EventStore a -> IO a
+runEventStore ref setts (EventStore action) =
+  runReaderT action (Env ref setts)
 
 --------------------------------------------------------------------------------
 -- Exceptions
@@ -197,7 +261,7 @@ expVersionInt32 :: ExpectedVersion -> Int32
 expVersionInt32 Any         = -2
 expVersionInt32 NoStream    = -1
 expVersionInt32 EmptyStream = -1
-expVersionInt32 (Exact i)   = i
+expVersionInt32 (Exact n)   = n
 expVersionInt32 StreamExists = -4
 
 --------------------------------------------------------------------------------
@@ -221,9 +285,9 @@ emptyStreamVersion = EmptyStream
 -- | States that the last event written to the stream should have a
 --   sequence number matching your expected value.
 exactEventVersion :: Int32 -> ExpectedVersion
-exactEventVersion i
-    | i < 0     = error $ "expected version must be >= 0, but is " <> show i
-    | otherwise = Exact i
+exactEventVersion n
+    | n < 0     = error $ "expected version must be >= 0, but is " <> show n
+    | otherwise = Exact n
 
 --------------------------------------------------------------------------------
 -- | The stream should exist. If it or a metadata stream does not exist treat
@@ -668,21 +732,27 @@ data Settings
       , s_retry             :: Retry
       , s_reconnect_delay   :: NominalDiffTime
       , s_ssl               :: Maybe TLSSettings
-      , s_loggerSettings    :: LoggerSettings
+      , s_loggerType        :: LogType
+      , s_loggerFilter      :: LoggerFilter
+      , s_loggerDetailed    :: Bool
       , s_operationTimeout  :: NominalDiffTime
       , s_operationRetry    :: Retry
       }
 
 --------------------------------------------------------------------------------
 -- | Default global settings.
---   s_heartbeatInterval    = 750 ms
---   s_heartbeatTimeout     = 1500 ms
---   s_requireMaster        = True
---   s_credentials          = Nothing
---   s_retry                = 'atMost' 3
---   s_reconnect_delay      = 3 seconds
---   s_operationTimeout     = 10 seconds
---   s_operationRetry       = 'atMost' 3
+--   s_heartbeatInterval = 750 ms
+--   s_heartbeatTimeout  = 1500 ms
+--   s_requireMaster     = True
+--   s_credentials       = Nothing
+--   s_retry             = 'atMost' 3
+--   s_reconnect_delay   = 3 seconds
+--   s_ssl               = Nothing
+--   s_loggerType        = LogNone
+--   s_loggerFilter      = LoggerLevel LevelInfo
+--   s_loggerDetailed    = False
+--   s_operationTimeout  = 10 seconds
+--   s_operationRetry    = 'atMost' 3
 defaultSettings :: Settings
 defaultSettings  = Settings
                    { s_heartbeatInterval = msDiffTime 750  -- 750ms
@@ -692,7 +762,9 @@ defaultSettings  = Settings
                    , s_retry             = atMost 3
                    , s_reconnect_delay   = 3
                    , s_ssl               = Nothing
-                   , s_loggerSettings    = defaultLoggerSettings
+                   , s_loggerType        = LogNone
+                   , s_loggerFilter      = LoggerLevel LevelInfo
+                   , s_loggerDetailed    = False
                    , s_operationTimeout  = 10 -- secs
                    , s_operationRetry    = atMost 3
                    }
@@ -705,7 +777,7 @@ defaultSSLSettings tls = defaultSettings { s_ssl = Just tls }
 --------------------------------------------------------------------------------
 -- | Millisecond timespan
 msDiffTime :: Float -> NominalDiffTime
-msDiffTime i = fromRational $ toRational (i / 1000)
+msDiffTime n = fromRational $ toRational (n / 1000)
 
 --------------------------------------------------------------------------------
 -- | Represents an access control list for a stream.
@@ -912,7 +984,7 @@ keepUserProperties = filterWithKey go
 parseNominalDiffTime :: Text -> Object -> Parser (Maybe NominalDiffTime)
 parseNominalDiffTime k m = fmap (fmap go) (m A..: k)
   where
-    go i = (realToFrac $ CTime i)
+    go n = (realToFrac $ CTime n)
 
 --------------------------------------------------------------------------------
 -- | Parses 'StreamACL'.
@@ -1026,7 +1098,7 @@ type StreamMetadataBuilder = Builder StreamMetadata
 --------------------------------------------------------------------------------
 -- | Sets the maximum number of events allowed in the stream.
 setMaxCount :: Int32 -> StreamMetadataBuilder
-setMaxCount i = Endo $ \s -> s { streamMetadataMaxCount = Just i }
+setMaxCount n = Endo $ \s -> s { streamMetadataMaxCount = Just n }
 
 --------------------------------------------------------------------------------
 -- | Sets the maximum age of events allowed in the stream.
@@ -1036,7 +1108,7 @@ setMaxAge d = Endo $ \s -> s { streamMetadataMaxAge = Just d }
 --------------------------------------------------------------------------------
 -- | Sets the event number from which previous events can be scavenged.
 setTruncateBefore :: Int32 -> StreamMetadataBuilder
-setTruncateBefore i = Endo $ \s -> s { streamMetadataTruncateBefore = Just i }
+setTruncateBefore n = Endo $ \s -> s { streamMetadataTruncateBefore = Just n }
 
 --------------------------------------------------------------------------------
 -- | Sets the amount of time for which the stream head is cachable.

@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP                       #-}
 {-# LANGUAGE DeriveDataTypeable        #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs                     #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
@@ -27,12 +28,12 @@ module Database.EventStore.Internal.Messaging
   , Bus
   , newBus
   , busStop
-  , busName
   , Message
   , toMsg
   , fromMsg
   , busProcessedEverything
   , publish
+  , subscribe
   ) where
 
 --------------------------------------------------------------------------------
@@ -43,6 +44,7 @@ import Control.Monad.Fix
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data Message = forall a. Typeable a => Message a deriving Typeable
@@ -64,14 +66,21 @@ class Pub p where
   publishSTM :: Typeable a => p -> a -> STM Bool
 
 --------------------------------------------------------------------------------
-publish :: (Pub p, Typeable a) => p -> a -> IO ()
+publish :: (Pub p, Typeable a, MonadIO m) => p -> a -> m ()
 publish p a = atomically $ do
   _ <- publishSTM p a
   return ()
 
 --------------------------------------------------------------------------------
 class Sub s where
-  subscribe :: Typeable a => s -> (a -> IO ()) -> IO ()
+  subscribeEventHandler :: s -> EventHandler -> IO ()
+
+--------------------------------------------------------------------------------
+subscribe :: (Sub s, Typeable a)
+          => s
+          -> (a -> EventStore ())
+          -> IO ()
+subscribe s k = subscribeEventHandler s (EventHandler Proxy k)
 
 --------------------------------------------------------------------------------
 data Publish = forall p. Pub p => Publish p
@@ -85,14 +94,14 @@ data Subscribe = forall p. Sub p => Subscribe p
 
 --------------------------------------------------------------------------------
 instance Sub Subscribe where
-  subscribe (Subscribe p) a = subscribe p a
+  subscribeEventHandler (Subscribe p) a = subscribeEventHandler p a
 
 --------------------------------------------------------------------------------
 data Hub = forall h. (Sub h, Pub h) => Hub h
 
 --------------------------------------------------------------------------------
 instance Sub Hub where
-  subscribe (Hub h) = subscribe h
+  subscribeEventHandler (Hub h) = subscribeEventHandler h
 
 --------------------------------------------------------------------------------
 instance Pub Hub where
@@ -127,7 +136,7 @@ instance Ord Type where
 
 --------------------------------------------------------------------------------
 instance Hashable Type where
-  hashWithSalt i (Type _ (Fingerprint b l)) = hashWithSalt i (b, l)
+  hashWithSalt s (Type _ (Fingerprint b l)) = hashWithSalt s (b, l)
 
 --------------------------------------------------------------------------------
 data GetType
@@ -151,40 +160,40 @@ getType op = Type t (getFingerprint t)
           FromProxy prx  -> typeRep prx
 
 --------------------------------------------------------------------------------
-type Callbacks = HashMap Type (Seq Callback)
+type EventHandlers = HashMap Type (Seq EventHandler)
 
 --------------------------------------------------------------------------------
-propagate :: Typeable a => Logger -> a -> Seq Callback -> IO ()
-propagate logger a = traverse_ $ \(Callback k) -> do
+propagate :: Typeable a => a -> Seq EventHandler -> EventStore ()
+propagate a = traverse_ $ \(EventHandler _ k) -> do
   let Just b = cast a
       tpe    = typeOf b
   outcome <- tryAny $ k b
   case outcome of
-    Right _ ->
-      return ()
-    Left e ->
-      logFormat logger Error "Exception when propagating {}: {}" (Shown tpe, Shown e)
+    Right _ -> return ()
+    Left e  -> $(logError) [i|Exception when propagating #{tpe}: #{e}.|]
 
 --------------------------------------------------------------------------------
-data Callback =
-  forall a. Typeable a => Callback { _callbackKey :: a -> IO () }
+data EventHandler where
+  EventHandler :: Typeable a
+               => Proxy a
+               -> (a -> EventStore ())
+               -> EventHandler
 
 --------------------------------------------------------------------------------
-instance Show Callback where
-  show (Callback (_ :: a -> IO ())) =
-    "Handle " <> show (typeRep (Proxy :: Proxy a))
+instance Show EventHandler where
+  show (EventHandler prx _) = "Handle " <> show (typeRep prx)
 
 --------------------------------------------------------------------------------
 data Bus =
-  Bus { busName        :: Text
-      , _logger        :: Logger
-      , _busCallbacks  :: IORef Callbacks
-      , _busQueue      :: TBMQueue Message
-      , _workerAsync   :: Async ()
+  Bus { _busLoggerRef      :: LoggerRef
+      , _busSettings       :: Settings
+      , _busEventHandlers  :: IORef EventHandlers
+      , _busQueue          :: TBMQueue Message
+      , _workerAsync       :: Async ()
       }
 
 --------------------------------------------------------------------------------
-busStop :: Bus -> IO ()
+busStop :: MonadIO m => Bus -> m ()
 busStop Bus{..} = atomically $ closeTBMQueue _busQueue
 
 --------------------------------------------------------------------------------
@@ -196,37 +205,34 @@ messageType :: Type
 messageType = getType (FromProxy (Proxy :: Proxy Message))
 
 --------------------------------------------------------------------------------
-newBus :: LogManager -> Text -> IO Bus
-newBus logMgr name = do
+newBus :: LoggerRef -> Settings -> IO Bus
+newBus ref setts = do
   bus <- mfix $ \b -> do
-
-    let logger = getLogger name logMgr
-    Bus name logger <$> newIORef mempty
-                    <*> newTBMQueueIO 500
-                    <*> async (worker b)
+    Bus ref setts <$> newIORef mempty
+                  <*> newTBMQueueIO 500
+                  <*> async (worker b)
 
   return bus
 
 --------------------------------------------------------------------------------
 worker :: Bus -> IO ()
-worker Bus{..} = loop
+worker self@Bus{..} = loop
   where
     handleMsg (Message a) = do
-      callbacks <- readIORef _busCallbacks
-      publishing _logger callbacks a
+      callbacks <- readIORef _busEventHandlers
+      publishing self callbacks a
       loop
 
     loop = traverse_ handleMsg =<< atomically (readTBMQueue _busQueue)
 
 --------------------------------------------------------------------------------
 instance Sub Bus where
-  subscribe Bus{..} (k :: a -> IO ()) =
-    atomicModifyIORef' _busCallbacks update
+  subscribeEventHandler Bus{..} hdl@(EventHandler prx _) =
+    atomicModifyIORef' _busEventHandlers update
     where
-      update :: Callbacks -> (Callbacks, ())
+      update :: EventHandlers -> (EventHandlers, ())
       update callbacks =
-        let tpe  = getType (FromProxy (Proxy :: Proxy a))
-            hdl  = Callback k
+        let tpe  = getType (FromProxy prx)
             next = alterMap $ \input ->
               case input of
                 Nothing -> Just (singleton hdl)
@@ -241,12 +247,13 @@ instance Pub Bus where
     return $ not closed
 
 --------------------------------------------------------------------------------
-publishing :: Typeable a => Logger -> Callbacks -> a -> IO ()
-publishing logger callbacks a = do
+publishing :: Typeable a => Bus -> EventHandlers -> a -> IO ()
+publishing Bus{..} callbacks a = do
   let tpe = getType (FromTypeable a)
-  logFormat logger Debug "Publishing message {}." (Only $ Shown tpe)
-  traverse_ (propagate logger a) (lookup tpe callbacks)
-  logFormat logger Debug "Message {} propagated." (Only $ Shown tpe)
-  if tpe == messageType
-    then return ()
-    else traverse_ (propagate logger (toMsg a)) (lookup messageType callbacks)
+  runEventStore _busLoggerRef _busSettings $ do
+    $(logDebug) [i|Publishing message #{tpe}.|]
+    traverse_ (propagate a) (lookup tpe callbacks)
+    $(logDebug) [i|Message #{tpe} propagated.|]
+
+    unless (tpe == messageType) $
+      traverse_ (propagate (toMsg a)) (lookup messageType callbacks)

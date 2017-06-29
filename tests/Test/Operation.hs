@@ -19,7 +19,6 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operations
 import Database.EventStore.Internal.Prelude
@@ -52,10 +51,10 @@ alwaysNotHandled pkg =
            }
 
 --------------------------------------------------------------------------------
-spec :: LogManager -> Spec
-spec logMgr = do
-  specify "Operation manager should behave on not handled [not-master]" $ do
-    bus <- newBus logMgr "operation-not-handled-test"
+spec :: Spec
+spec = beforeAll (createLoggerRef testGlobalLog) $ do
+  specify "Operation manager should behave on not handled [not-master]" $ \logRef -> do
+    bus <- newBus logRef testSettings
     var <- newEmptyMVar
     let builder = respondMWithConnectionBuilder (asPub bus) $ \ept pkg -> do
             emptyVar <- isEmptyMVar var
@@ -64,7 +63,7 @@ spec logMgr = do
 
             return $ alwaysNotHandled pkg
 
-    exec <- newExec testSettings logMgr bus builder testDisc
+    exec <- newExec testSettings bus builder testDisc
 
     p <- newPromise
     let op = readEvent testSettings "foo" 1 True

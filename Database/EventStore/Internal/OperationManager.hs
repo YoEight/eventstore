@@ -14,7 +14,6 @@
 module Database.EventStore.Internal.OperationManager
   ( Manager
   , Decision(..)
-  , KnownConnection(..)
   , new
   , submit
   , handle
@@ -32,35 +31,29 @@ import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-data Manager =
-  Manager { _logger :: Logger
-          , _reg    :: Registry
-          }
+data Manager = Manager { _reg :: Registry }
 
 --------------------------------------------------------------------------------
-new :: LogManager -> Settings -> KnownConnection -> IO Manager
-new mgr setts conn = Manager logger <$> newRegistry setts regLogger conn
-  where
-    logger    = getLogger "OperationManager" mgr
-    regLogger = getLogger "Registry"  mgr
+new :: ConnectionRef -> IO Manager
+new = fmap Manager . newRegistry
 
 --------------------------------------------------------------------------------
-submit :: Manager -> Operation a -> Callback a -> IO ()
+submit :: Manager -> Operation a -> Callback a -> EventStore ()
 submit Manager{..} op cb = register _reg op cb
 
 --------------------------------------------------------------------------------
-handle :: Manager -> Package -> IO (Maybe Decision)
+handle :: Manager -> Package -> EventStore (Maybe Decision)
 handle Manager{..} pkg = handlePackage _reg pkg
 
 --------------------------------------------------------------------------------
-cleanup :: Manager -> IO ()
+cleanup :: Manager -> EventStore ()
 cleanup Manager{..} = do
-  logMsg _logger Info "Cleaning up pending requests..."
+  $(logInfo) "Cleaning up pending requests..."
   abortPendingRequests _reg
-  logMsg _logger Info "cleanup done successfully."
+  $(logInfo) "Cleanup done successfully."
 
 --------------------------------------------------------------------------------
-check :: Manager -> Connection -> IO ()
-check Manager{..} conn = do
-  checkAndRetry _reg conn
-  startAwaitings _reg conn
+check :: Manager -> EventStore ()
+check Manager{..} = do
+  checkAndRetry _reg
+  startAwaitings _reg

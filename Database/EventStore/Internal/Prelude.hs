@@ -23,6 +23,7 @@ module Database.EventStore.Internal.Prelude
   , Text
   , Generic
   , Alternative(..)
+  , MonadBaseControl(..)
   , atomically
   , zip
   , zipWith
@@ -47,6 +48,9 @@ module Database.EventStore.Internal.Prelude
   , module Control.Concurrent.STM.TBMQueue
   , module Control.Exception.Safe
   , module Control.Monad
+  , module Control.Monad.Base
+  , module Control.Monad.Catch
+  , module Control.Monad.Trans.Control
   , module Data.Containers
   , module Data.Functor
   , module Data.IORef.Lifted
@@ -59,6 +63,7 @@ module Database.EventStore.Internal.Prelude
 --------------------------------------------------------------------------------
 import Prelude
   ( IO
+  , FilePath
   , Num(..)
   , Show(..)
   , Eq(..)
@@ -138,7 +143,10 @@ import           Control.Concurrent.MVar.Lifted
 import           Control.Concurrent.STM hiding (atomically, retry, check)
 import qualified Control.Concurrent.STM as STM
 import           Control.Concurrent.STM.TBMQueue
-import           Control.Exception.Safe hiding (handle)
+import           Control.Monad.Catch (MonadCatch(..), MonadThrow(..))
+import           Control.Monad.Trans.Control hiding (embed, embed_)
+import           Control.Exception.Safe hiding (handle, throwM, catch)
+import           Control.Monad.Base
 import           Control.Monad.Trans
 import           Data.ByteString (ByteString)
 import           Data.Containers

@@ -23,7 +23,6 @@ module Database.EventStore.Internal.Operation
   , Need(..)
   , Code
   , Execution(..)
-  , Outcome(..)
   , Expect(..)
   , freshId
   , failure
@@ -31,7 +30,6 @@ module Database.EventStore.Internal.Operation
   , send
   , request
   , waitFor
-  , embed
   , wrongVersion
   , streamDeleted
   , invalidTransaction
@@ -50,7 +48,6 @@ import Data.Machine
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.UUID
-import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
@@ -94,46 +91,36 @@ data OperationError
 instance Exception OperationError
 
 --------------------------------------------------------------------------------
-data Outcome a
-  = Succeeded a
+data Execution a
+  = Proceed a
   | Retry
   | Failed !OperationError
 
 --------------------------------------------------------------------------------
-newtype Execution a = Execution { runExecution :: IO (Outcome a) }
-
---------------------------------------------------------------------------------
 instance Functor Execution where
-  fmap f (Execution m) = Execution (fmap go m)
-    where
-      go (Succeeded a) = Succeeded (f a)
-      go Retry         = Retry
-      go (Failed e)    = Failed e
+  fmap f (Proceed a) = Proceed (f a)
+  fmap _ Retry       = Retry
+  fmap _ (Failed e)  = Failed e
 
 --------------------------------------------------------------------------------
 instance Applicative Execution where
-  pure  = return
+  pure = return
   (<*>) = ap
 
 --------------------------------------------------------------------------------
 instance Monad Execution where
-  return a = Execution $ return (Succeeded a)
+  return = Proceed
 
-  Execution m >>= f = Execution $
-    m >>= \case
-      Retry       -> return Retry
-      Failed e    -> return (Failed e)
-      Succeeded a -> runExecution (f a)
-
---------------------------------------------------------------------------------
-instance MonadIO Execution where
-  liftIO m = Execution (Succeeded <$> liftIO m)
+  Proceed a >>= f = f a
+  Retry     >>= _ = Retry
+  Failed e  >>= _ = Failed e
 
 --------------------------------------------------------------------------------
 type Operation output = MachineT Execution Need output
 
 --------------------------------------------------------------------------------
 data Need a where
+  NeedUUID   :: Need UUID
   NeedRemote :: Command -> ByteString -> Need Package
   WaitRemote :: UUID -> Need (Maybe Package)
 
@@ -144,17 +131,17 @@ type Code o a = PlanT Need o Execution a
 --------------------------------------------------------------------------------
 -- | Asks for a unused 'UUID'.
 freshId :: Code o UUID
-freshId = liftIO nextRandom
+freshId = awaits NeedUUID
 
 --------------------------------------------------------------------------------
 -- | Raises an 'OperationError'.
 failure :: OperationError -> Code o a
-failure e = lift $ Execution $ return (Failed e)
+failure = lift . Failed
 
 --------------------------------------------------------------------------------
 -- | Asks to resume the interpretation from the beginning.
 retry :: Code o a
-retry = lift $ Execution $ return Retry
+retry = lift Retry
 
 --------------------------------------------------------------------------------
 -- | Like 'request' except it discards the correlation id of the network
@@ -213,11 +200,6 @@ waitFor pid exps =
     Nothing  -> stop
     Just pkg ->
       runFirstMatch pkg exps
-
---------------------------------------------------------------------------------
--- | Incorporates an 'Operation'.
-embed :: Operation o -> Code o ()
-embed op = deconstruct (Right <$> op)
 
 --------------------------------------------------------------------------------
 -- | Raises 'WrongExpectedVersion' exception.

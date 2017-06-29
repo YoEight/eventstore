@@ -15,28 +15,23 @@ module Test.Connection (spec) where
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Prelude
-import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 import Test.Bogus.Connection
 import Test.Common
 import Test.Tasty.Hspec
 
-spec :: LogManager -> Spec
-spec logMgr = do
-  specify "Connection should retry on connection failure" $ do
+spec :: Spec
+spec = beforeAll (createLoggerRef testGlobalLog) $ do
+  specify "Connection should retry on connection failure" $ \logRef -> do
     counter <- newCounter
-    bus     <- newBus logMgr "connection-retry-test"
+    bus     <- newBus logRef testSettings
     let builder = alwaysFailConnectionBuilder $ incrCounter counter
         disc    = staticEndPointDiscovery "localhost" 2000
-        setts   = defaultSettings { s_retry           = atMost 3
-                                  , s_reconnect_delay = 0.25 -- seconds
-                                  }
 
-    exec <- newExec setts logMgr bus builder disc
+    exec <- newExec testSettings bus builder disc
 
     atomically $ do
       i <- readCounterSTM counter
