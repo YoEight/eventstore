@@ -99,15 +99,16 @@ timerPeriod = msDuration 200
 
 --------------------------------------------------------------------------------
 data Internal =
-  Internal { _disc      :: Discovery
-           , _mainBus   :: Hub
-           , _builder   :: ConnectionBuilder
-           , _stage     :: IORef Stage
-           , _last      :: IORef (Maybe EndPoint)
-           , _sending   :: TVar Bool
-           , _opMgr     :: Operation.Manager
-           , _stopwatch :: Stopwatch
-           , _lastCheck :: IORef NominalDiffTime
+  Internal { _disc          :: Discovery
+           , _mainBus       :: Hub
+           , _builder       :: ConnectionBuilder
+           , _stage         :: IORef Stage
+           , _last          :: IORef (Maybe EndPoint)
+           , _sending       :: TVar Bool
+           , _opMgr         :: Operation.Manager
+           , _stopwatch     :: Stopwatch
+           , _lastCheck     :: IORef NominalDiffTime
+           , _lastConnected :: IORef Bool
            }
 
 --------------------------------------------------------------------------------
@@ -127,6 +128,7 @@ connectionManager builder disc mainBus = do
                          <*> Operation.new connRef
                          <*> return stopwatch
                          <*> newIORef timeoutCheck
+                         <*> newIORef False
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onEstablish internal)
@@ -144,9 +146,7 @@ connectionManager builder disc mainBus = do
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> SystemInit -> EventStore ()
-onInit self@Internal{..} _ = do
-  startConnect self
-  publish _mainBus (Initialized ConnectionManager)
+onInit self@Internal{..} _ = startConnect self
 
 --------------------------------------------------------------------------------
 startConnect :: Internal -> EventStore ()
@@ -192,6 +192,9 @@ establish Internal{..} ept = do
       case s of
         EndpointDiscovery -> do
           conn <- connect _builder ept
+          connected <- atomicModifyIORef' _lastConnected $ \c -> (True, c)
+          unless connected $
+            publish _mainBus (Initialized ConnectionManager)
           atomicWriteIORef _stage (Connecting att (ConnectionEstablishing conn))
         _ -> return ()
     _ -> return ()
