@@ -32,6 +32,7 @@ import Database.EventStore.Internal.Operation.ReadEvent
 import Database.EventStore.Internal.Operation.Write.Common
 import Database.EventStore.Internal.Operation.WriteEvents
 import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 

@@ -17,9 +17,9 @@ import Data.Serialize
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operations
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
@@ -56,7 +56,7 @@ spec = beforeAll (createLoggerRef testGlobalLog) $ do
   specify "Operation manager should behave on not handled [not-master]" $ \logRef -> do
     bus <- newBus logRef testSettings
     var <- newEmptyMVar
-    let builder = respondMWithConnectionBuilder (asPub bus) $ \ept pkg -> do
+    let builder = respondMWithConnectionBuilder $ \ept pkg -> do
             emptyVar <- isEmptyMVar var
             when (ept == EndPoint "addr" 1 && emptyVar) $
               putMVar var ()
@@ -67,11 +67,11 @@ spec = beforeAll (createLoggerRef testGlobalLog) $ do
 
     p <- newPromise
     let op = readEvent testSettings "foo" 1 True
-    publish exec (SubmitOperation p op)
+    publishWith exec (SubmitOperation p op)
 
     res <- takeMVar var
 
-    publish exec SystemShutdown
+    publishWith exec SystemShutdown
     execWaitTillClosed exec
 
     res `shouldBe` ()

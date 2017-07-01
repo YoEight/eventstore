@@ -13,9 +13,10 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Exec
-  ( Exec(..)
+  ( Exec
   , Terminated(..)
   , newExec
+  , execSettings
   , execWaitTillClosed
   ) where
 
@@ -27,12 +28,11 @@ import Data.Typeable
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.ConnectionManager
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.TimerService
-import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 type ServicePendingInit = HashMap Service ()
@@ -51,9 +51,10 @@ instance Exception Terminated
 
 --------------------------------------------------------------------------------
 data Exec =
-  Exec { execSettings :: Settings
-       , _execPub     :: STM Publish
-       , _internal    :: Internal
+  Exec { execSettings       :: Settings
+       , _execPub           :: STM Publish
+       , _internal          :: Internal
+       , execWaitTillClosed :: IO ()
        }
 
 --------------------------------------------------------------------------------
@@ -61,7 +62,6 @@ data Internal =
   Internal { _initRef   :: IORef ServicePendingInit
            , _finishRef :: IORef ServicePendingInit
            , _stageVar  :: TVar Stage
-           , _mainBus   :: Bus
            }
 
 --------------------------------------------------------------------------------
@@ -73,14 +73,6 @@ instance Pub Exec where
       throwSTM $ Terminated "Connection Closed."
 
     return handled
-
---------------------------------------------------------------------------------
-instance Sub Exec where
-  subscribeEventHandler Exec{..} = subscribeEventHandler (_mainBus _internal)
-
---------------------------------------------------------------------------------
-execWaitTillClosed :: Exec -> IO ()
-execWaitTillClosed Exec{..} = busProcessedEverything (_mainBus _internal)
 
 --------------------------------------------------------------------------------
 stageSTM :: TVar Stage -> STM Publish
@@ -110,10 +102,9 @@ newExec setts mainBus builder disc = do
   internal <- Internal <$> newIORef initServicePending
                        <*> newIORef initServicePending
                        <*> newTVarIO Init
-                       <*> return mainBus
 
   let stagePub = stageSTM $ _stageVar internal
-      exe      = Exec setts stagePub internal
+      exe      = Exec setts stagePub internal (busProcessedEverything mainBus)
       hub      = asHub mainBus
 
   timerService hub
@@ -125,29 +116,30 @@ newExec setts mainBus builder disc = do
   subscribe mainBus (onTerminated internal)
   subscribe mainBus (onShutdown internal)
 
-  publish mainBus SystemInit
+  publishWith mainBus SystemInit
 
   return exe
 
 --------------------------------------------------------------------------------
 onInit :: Internal -> Initialized -> EventStore ()
 onInit Internal{..} (Initialized svc) = do
-  $(logInfo) [i|Service #{svc} initialized|]
+  $logInfo [i|Service #{svc} initialized|]
   initialized <- atomicModifyIORef' _initRef $ \m ->
     let m' = deleteMap svc m in
     (m', null m')
 
   when initialized $ do
-    $(logInfo) "Entire system initialized properly"
-    atomically $ writeTVar _stageVar (Available $ asPub _mainBus)
+    $logInfo "Entire system initialized properly"
+    pub <- publisher
+    atomically $ writeTVar _stageVar (Available pub)
 
 --------------------------------------------------------------------------------
 onInitFailed :: Internal -> InitFailed -> EventStore ()
 onInitFailed Internal{..} (InitFailed svc) = do
   atomically $ errored _stageVar "Driver failed to initialized"
-  $(logError) [i|Service #{svc} failed to initialize.|]
-  busStop _mainBus
-  $(logError) "System can't start."
+  $logError [i|Service #{svc} failed to initialize.|]
+  stopBus
+  $logError "System can't start."
 
 --------------------------------------------------------------------------------
 onFatal :: Internal -> FatalException -> EventStore ()
@@ -163,14 +155,14 @@ onFatal self@Internal{..} situation = do
 --------------------------------------------------------------------------------
 onTerminated :: Internal -> ServiceTerminated -> EventStore ()
 onTerminated Internal{..} (ServiceTerminated svc) = do
-  $(logInfo) [i|Service #{svc} terminated.|]
+  $logInfo [i|Service #{svc} terminated.|]
   terminated <- atomicModifyIORef' _finishRef $ \m ->
     let m' = deleteMap svc m in
     (m', null m')
 
   when terminated $ do
-    $(logInfo) "Entire system shutdown properly"
-    busStop _mainBus
+    $logInfo "Entire system shutdown properly"
+    stopBus
 
 --------------------------------------------------------------------------------
 onShutdown :: Internal -> SystemShutdown -> EventStore ()
@@ -181,4 +173,4 @@ onShutdown Internal{..} _ =
 shutdown :: Internal -> EventStore ()
 shutdown Internal{..} = do
   atomically $ writeTVar _stageVar (Errored "Connection closed")
-  publish _mainBus SystemShutdown
+  publish SystemShutdown

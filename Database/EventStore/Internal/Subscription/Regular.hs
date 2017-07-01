@@ -14,8 +14,8 @@ module Database.EventStore.Internal.Subscription.Regular where
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operation.Volatile
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
@@ -96,5 +96,5 @@ newRegularSubscription exec stream tos = do
               _         -> return ()
 
   cb <- newCallback callback
-  publish exec (SubmitOperation cb (volatile name tos))
+  publishWith exec (SubmitOperation cb (volatile name tos))
   return sub

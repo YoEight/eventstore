@@ -17,8 +17,8 @@ module Database.EventStore.Internal.Subscription.Api where
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Types
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Packages
@@ -101,7 +101,7 @@ subUnsubscribe pub s = do
 
   for_ outcome $ \details -> do
     let pkg = createUnsubscribePackage (subId details)
-    publish pub (SendPackage pkg)
+    publishWith pub (SendPackage pkg)
 
 --------------------------------------------------------------------------------
 -- | If the subscription is on the $all stream.

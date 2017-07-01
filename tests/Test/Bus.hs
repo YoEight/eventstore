@@ -13,7 +13,7 @@
 module Test.Bus where
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Messaging
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ spec = beforeAll (createLoggerRef testGlobalLog) $ do
     subscribe bus $ \Foo ->
       atomicModifyIORef' ref $ \i -> (i+1, ())
 
-    publish bus Foo
+    publishWith bus Foo
     busStop bus
     busProcessedEverything bus
 
@@ -48,7 +48,7 @@ spec = beforeAll (createLoggerRef testGlobalLog) $ do
     subscribe bus $ \(_ :: Message) ->
       atomicModifyIORef' ref $ \i -> (i+1, ())
 
-    publish bus Foo
+    publishWith bus Foo
     busStop bus
     busProcessedEverything bus
 

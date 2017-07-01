@@ -29,6 +29,7 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.DeleteStream.Message
 import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 

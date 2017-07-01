@@ -30,16 +30,16 @@ import Prelude (String)
 import Text.Printf
 
 --------------------------------------------------------------------------------
-import Control.Monad.Reader
-import Data.Serialize
-import Data.UUID
+import           Control.Monad.Reader
+import           Data.Serialize
+import           Data.UUID
 import qualified Network.Connection as Network
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
@@ -88,10 +88,8 @@ instance Eq Connection where
   a == b = connectionId a == connectionId b
 
 --------------------------------------------------------------------------------
-data ConnectionState =
-  ConnectionState { _bus       :: Publish
-                  , _sendQueue :: TBMQueue Package
-                  }
+newtype ConnectionState =
+  ConnectionState { _sendQueue :: TBMQueue Package }
 
 --------------------------------------------------------------------------------
 data PackageArrived = PackageArrived Connection Package deriving Typeable
@@ -139,21 +137,21 @@ instance Show ProtocolError where
 instance Exception ProtocolError
 
 --------------------------------------------------------------------------------
-connectionBuilder :: Settings -> Publish -> IO ConnectionBuilder
-connectionBuilder setts bus = do
+connectionBuilder :: Settings -> IO ConnectionBuilder
+connectionBuilder setts = do
   ctx <- Network.initConnectionContext
   return $ ConnectionBuilder $ \ept -> do
     cid <- freshUUID
-    state <- createState bus
+    state <- createState
 
     mfix $ \self -> do
       tcpConnAsync <- async $
         tryAny (createConnection setts ctx ept) >>= \case
           Left e -> do
-            publish bus (ConnectionClosed self e)
+            publish (ConnectionClosed self e)
             throw e
           Right conn -> do
-            publish bus (ConnectionEstablished self)
+            publish (ConnectionEstablished self)
             return conn
 
       sendAsync <- async (sending state self tcpConnAsync)
@@ -169,8 +167,8 @@ connectionBuilder setts bus = do
                         }
 
 --------------------------------------------------------------------------------
-createState :: Publish -> EventStore ConnectionState
-createState pub = ConnectionState pub <$> liftIO (newTBMQueueIO 500)
+createState :: EventStore ConnectionState
+createState = ConnectionState <$> liftIO (newTBMQueueIO 500)
 
 --------------------------------------------------------------------------------
 closeState :: ConnectionState -> EventStore ()
@@ -195,31 +193,28 @@ disposeConnection as = traverse_ tryDisposing =<< poll as
     disposing    = liftIO . Network.connectionClose
 
 --------------------------------------------------------------------------------
-receivePackage :: Publish
-               -> Connection
-               -> Network.Connection
-               -> EventStore Package
-receivePackage pub self conn =
+receivePackage :: Connection -> Network.Connection -> EventStore Package
+receivePackage self conn =
   tryAny (liftIO $ Network.connectionGetExact conn 4) >>= \case
     Left e -> do
-      publish pub (ConnectionClosed self e)
+      publish (ConnectionClosed self e)
       throw e
     Right frame ->
       case runGet getLengthPrefix frame of
         Left reason -> do
           let cause = WrongFramingError reason
-          publish pub (connectionError self cause)
+          publish (connectionError self cause)
           throw cause
         Right prefix -> do
           tryAny (liftIO $ Network.connectionGetExact conn prefix) >>= \case
             Left e -> do
-              publish pub (ConnectionClosed self e)
+              publish (ConnectionClosed self e)
               throw e
             Right payload ->
               case runGet getPackage payload of
                 Left reason -> do
                   let cause = PackageParsingError reason
-                  publish pub (connectionError self cause)
+                  publish (connectionError self cause)
                   throw cause
                 Right pkg -> return pkg
 
@@ -232,7 +227,7 @@ receiving ConnectionState{..} self tcpConnAsync =
   forever . go =<< wait tcpConnAsync
   where
     go conn =
-      publish _bus . PackageArrived self =<< receivePackage _bus self conn
+      publish . PackageArrived self =<< receivePackage self conn
 
 --------------------------------------------------------------------------------
 enqueue :: ConnectionState -> Package -> EventStore ()
@@ -251,7 +246,7 @@ sending ConnectionState{..} self tcpConnAsync = go =<< wait tcpConnAsync
       let loop     = traverse_ send =<< atomically (readTBMQueue _sendQueue)
           send pkg =
             tryAny (liftIO $ Network.connectionPut conn bytes) >>= \case
-              Left e  -> publish _bus (ConnectionClosed self e)
+              Left e  -> publish (ConnectionClosed self e)
               Right _ -> loop
             where
               bytes = runPut $ putPackage pkg in

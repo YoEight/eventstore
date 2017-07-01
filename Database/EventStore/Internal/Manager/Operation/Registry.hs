@@ -36,6 +36,7 @@ import Data.UUID.V4
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Logger

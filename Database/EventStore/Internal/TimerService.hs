@@ -20,22 +20,20 @@ import Data.Typeable
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Logger
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 data Internal =
-  Internal { _mainBus :: Hub
-           , _stopped :: IORef Bool
-           }
+  Internal { _stopped :: IORef Bool }
 
 --------------------------------------------------------------------------------
 timerService :: Hub -> IO ()
 timerService mainBus = do
 
-  internal <- Internal mainBus <$> newIORef False
+  internal <- Internal <$> newIORef False
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onShutdown internal)
@@ -56,20 +54,20 @@ delayed Internal{..} msg (Duration timespan) oneOff = () <$ fork (go timespan)
         threadDelay $ fromIntegral waiting
         go (timespan - waiting)
 
-      publish _mainBus msg
+      publish msg
       stopped <- readIORef _stopped
       unless (oneOff || stopped) $ go timespan
 
 --------------------------------------------------------------------------------
 onInit ::Internal -> SystemInit -> EventStore ()
-onInit Internal{..} _ = publish _mainBus (Initialized TimerService)
+onInit Internal{..} _ = publish (Initialized TimerService)
 
 --------------------------------------------------------------------------------
 onShutdown :: Internal -> SystemShutdown -> EventStore ()
 onShutdown Internal{..} _ = do
-  $(logInfo) "Shutting down..."
+  $logInfo "Shutting down..."
   atomicWriteIORef _stopped True
-  publish _mainBus (ServiceTerminated TimerService)
+  publish (ServiceTerminated TimerService)
 
 --------------------------------------------------------------------------------
 onNew :: Internal -> NewTimer -> EventStore ()

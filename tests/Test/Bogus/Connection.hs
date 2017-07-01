@@ -15,9 +15,9 @@ module Test.Bogus.Connection where
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Connection
 import Database.EventStore.Internal.EndPoint
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
@@ -39,19 +39,16 @@ alwaysFailConnectionBuilder onConnect = ConnectionBuilder $ \ept -> do
 --------------------------------------------------------------------------------
 -- | Creates a 'ConnectionBuilder' that allows to respond to 'Package' different
 --   from heartbeat request.
-respondWithConnectionBuilder :: Publish
-                             -> (Package -> Package)
-                             -> ConnectionBuilder
-respondWithConnectionBuilder pub resp =
-  respondMWithConnectionBuilder pub (\_ -> return . resp)
+respondWithConnectionBuilder :: (Package -> Package) -> ConnectionBuilder
+respondWithConnectionBuilder resp =
+  respondMWithConnectionBuilder (\_ -> return . resp)
 
 --------------------------------------------------------------------------------
 -- | Creates a 'ConnectionBuilder' that allows to respond to 'Package' different
 --   from heartbeat request.
-respondMWithConnectionBuilder :: Publish
-                              -> (EndPoint -> Package -> IO Package)
+respondMWithConnectionBuilder :: (EndPoint -> Package -> IO Package)
                               -> ConnectionBuilder
-respondMWithConnectionBuilder pub resp = ConnectionBuilder $ \ept -> do
+respondMWithConnectionBuilder resp = ConnectionBuilder $ \ept -> do
   uuid <- freshUUID
   let conn = Connection
           { connectionId = uuid
@@ -60,12 +57,12 @@ respondMWithConnectionBuilder pub resp = ConnectionBuilder $ \ept -> do
               case packageCmd pkg of
                 cmd | cmd == getCommand 0x01 -> do
                         let rpkg = pkg { packageCmd = getCommand 0x02 }
-                        publish pub (PackageArrived conn rpkg)
+                        publish (PackageArrived conn rpkg)
                     | otherwise -> do
                       rpkg <- liftIO $ resp ept pkg
-                      publish pub (PackageArrived conn rpkg)
+                      publish (PackageArrived conn rpkg)
           , dispose = return ()
           }
 
-  publish pub (ConnectionEstablished conn)
+  publish (ConnectionEstablished conn)
   return conn

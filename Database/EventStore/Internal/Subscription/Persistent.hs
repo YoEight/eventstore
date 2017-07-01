@@ -18,8 +18,8 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operation.Persist
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Stream
@@ -103,7 +103,7 @@ newPersistentSubscription exec grp stream bufSize = do
               _         -> return ()
 
   cb <- newCallback callback
-  publish exec (SubmitOperation cb (persist grp name bufSize))
+  publishWith exec (SubmitOperation cb (persist grp name bufSize))
   return sub
 
 --------------------------------------------------------------------------------
@@ -124,7 +124,7 @@ notifyEventsProcessed PersistentSubscription{..} evts = do
       uuid     = subId details
       Just sid = subSubId details
       pkg      = createAckPackage setts uuid sid evts
-  publish _perExec (SendPackage pkg)
+  publishWith _perExec (SendPackage pkg)
 
 --------------------------------------------------------------------------------
 -- | Acknowledges that 'ResolvedEvent' has been successfully processed.
@@ -179,4 +179,4 @@ notifyEventsFailed PersistentSubscription{..} act res evts = do
       uuid     = subId details
       Just sid = subSubId details
       pkg      = createNakPackage setts uuid sid act res evts
-  publish _perExec (SendPackage pkg)
+  publishWith _perExec (SendPackage pkg)

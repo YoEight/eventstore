@@ -24,6 +24,7 @@ module Database.EventStore.Internal.OperationManager
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Connection
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Manager.Operation.Registry
 import Database.EventStore.Internal.Operation

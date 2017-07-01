@@ -209,6 +209,7 @@ import           Database.EventStore.Internal.Callback
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Communication
 import           Database.EventStore.Internal.Connection (connectionBuilder)
+import           Database.EventStore.Internal.Control hiding (subscribe)
 import           Database.EventStore.Internal.Discovery
 import           Database.EventStore.Internal.Exec
 import           Database.EventStore.Internal.Subscription.Api
@@ -219,7 +220,6 @@ import           Database.EventStore.Internal.Subscription.Types
 import           Database.EventStore.Internal.Subscription.Regular
 import           Database.EventStore.Internal.Logger
 import           Database.EventStore.Internal.Manager.Operation.Registry
-import           Database.EventStore.Internal.Messaging hiding (subscribe)
 import           Database.EventStore.Internal.Operation (OperationError(..))
 import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.Read.Common
@@ -270,7 +270,7 @@ connect settings@Settings{..} tpe = do
 
     logRef  <- newLoggerRef s_loggerType s_loggerFilter s_loggerDetailed
     mainBus <- newBus logRef settings
-    builder <- connectionBuilder settings (asPub mainBus)
+    builder <- connectionBuilder settings
     exec    <- newExec settings mainBus builder disc
     return $ Connection exec settings tpe
 
@@ -287,7 +287,7 @@ connectionSettings = _settings
 --------------------------------------------------------------------------------
 -- | Asynchronously closes the 'Connection'.
 shutdown :: Connection -> IO ()
-shutdown Connection{..} = publish _exec SystemShutdown
+shutdown Connection{..} = publishWith _exec SystemShutdown
 
 --------------------------------------------------------------------------------
 -- | Sends a single 'Event' to given stream.
@@ -309,7 +309,7 @@ sendEvents :: Connection
 sendEvents Connection{..} evt_stream exp_ver evts = do
     p <- newPromise
     let op = Op.writeEvents _settings (streamNameRaw evt_stream) exp_ver evts
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
@@ -322,7 +322,7 @@ deleteStream :: Connection
 deleteStream Connection{..} evt_stream exp_ver hard_del = do
     p <- newPromise
     let op = Op.deleteStream _settings (streamNameRaw evt_stream) exp_ver hard_del
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
@@ -355,7 +355,7 @@ startTransaction :: Connection
 startTransaction conn@Connection{..} evt_stream exp_ver = do
     p <- newPromise
     let op = Op.transactionStart _settings (streamNameRaw evt_stream) exp_ver
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async $ do
         tid <- retrieve p
         return Transaction
@@ -373,7 +373,7 @@ transactionWrite Transaction{..} evts = do
     let Connection{..} = _tConn
         raw_id = _unTransId _tTransId
         op     = Op.transactionWrite _settings _tStream _tExpVer raw_id evts
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
@@ -384,7 +384,7 @@ transactionCommit Transaction{..} = do
     let Connection{..} = _tConn
         raw_id = _unTransId _tTransId
         op     = Op.transactionCommit _settings _tStream _tExpVer raw_id
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
@@ -403,7 +403,7 @@ readEvent :: Connection
 readEvent Connection{..} stream_id evt_num res_link_tos = do
     p <- newPromise
     let op = Op.readEvent _settings (streamNameRaw stream_id) evt_num res_link_tos
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
@@ -440,7 +440,7 @@ readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos = do
     p <- newPromise
     let name = streamNameRaw stream_id
         op   = Op.readStreamEvents _settings dir name start cnt res_link_tos
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
@@ -473,7 +473,7 @@ readAllEventsCommon :: Connection
 readAllEventsCommon Connection{..} dir pos max_c res_link_tos = do
     p <- newPromise
     let op = Op.readAllEvents _settings c_pos p_pos max_c res_link_tos dir
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
   where
     Position c_pos p_pos = pos
@@ -543,7 +543,7 @@ setStreamMetadata Connection{..} evt_stream exp_ver metadata = do
     p <- newPromise
     let name = streamNameRaw evt_stream
         op = Op.setMetaStream _settings name exp_ver metadata
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
@@ -552,7 +552,7 @@ getStreamMetadata :: Connection -> StreamName -> IO (Async StreamMetadataResult)
 getStreamMetadata Connection{..} evt_stream = do
     p <- newPromise
     let op = Op.readMetaStream _settings (streamNameRaw evt_stream)
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
@@ -565,7 +565,7 @@ createPersistentSubscription :: Connection
 createPersistentSubscription Connection{..} grp stream sett = do
     p <- newPromise
     let op = Op.createPersist grp (streamNameRaw stream) sett
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (persistAsync p)
 
 --------------------------------------------------------------------------------
@@ -578,7 +578,7 @@ updatePersistentSubscription :: Connection
 updatePersistentSubscription Connection{..} grp stream sett = do
     p <- newPromise
     let op = Op.updatePersist grp (streamNameRaw stream) sett
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (persistAsync p)
 
 --------------------------------------------------------------------------------
@@ -590,7 +590,7 @@ deletePersistentSubscription :: Connection
 deletePersistentSubscription Connection{..} grp stream = do
     p <- newPromise
     let op = Op.deletePersist grp (streamNameRaw stream)
-    publish _exec (SubmitOperation p op)
+    publishWith _exec (SubmitOperation p op)
     async (persistAsync p)
 
 --------------------------------------------------------------------------------

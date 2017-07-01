@@ -16,7 +16,7 @@ module Test.Common where
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Prelude
-import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Settings
 
 --------------------------------------------------------------------------------
 data Foo = Foo deriving Typeable

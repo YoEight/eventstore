@@ -30,6 +30,7 @@ import Database.EventStore.Internal.Operation.ReadAllEvents
 import Database.EventStore.Internal.Operation.ReadStreamEvents
 import Database.EventStore.Internal.Operation.Volatile
 import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types

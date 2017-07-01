@@ -1,14 +1,10 @@
-{-# LANGUAGE CPP                       #-}
-{-# LANGUAGE DeriveDataTypeable        #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE GADTs                     #-}
-{-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE RecordWildCards           #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE CPP                        #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Database.EventStore.Internal.Messaging
--- Copyright : (C) 2017 Yorick Laupa
+-- Module : Database.EventStore.Internal.Control
+-- Copyright : (C) 2014 Yorick Laupa
 -- License : (see the file LICENSE)
 --
 -- Maintainer : Yorick Laupa <yo.eight@gmail.com>
@@ -16,8 +12,15 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Messaging
-  ( Pub(..)
+module Database.EventStore.Internal.Control
+  (
+    -- * Control
+    EventStore
+  , runEventStore
+  , getSettings
+  , freshUUID
+    -- * Messaging
+  , Pub(..)
   , Sub(..)
   , Hub
   , Subscribe
@@ -33,21 +36,103 @@ module Database.EventStore.Internal.Messaging
   , fromMsg
   , busProcessedEverything
   , publish
+  , publishWith
   , subscribe
+  , stopBus
+  , publisher
+    -- * Re-export
+  , module Database.EventStore.Internal.Settings
   ) where
 
 --------------------------------------------------------------------------------
 import Data.Typeable
 import Data.Typeable.Internal
-import Control.Monad.Fix
+
+--------------------------------------------------------------------------------
+import Control.Monad.Reader
+import Data.UUID
+import Data.UUID.V4
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Prelude
-import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Settings
 
 --------------------------------------------------------------------------------
-data Message = forall a. Typeable a => Message a deriving Typeable
+data Env =
+  Env { __logRef   :: LoggerRef
+      , __settings :: Settings
+      , __bus      :: Bus
+      }
+
+--------------------------------------------------------------------------------
+newtype EventStore a =
+  EventStore { unEventStore :: ReaderT Env IO a }
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadThrow
+           , MonadCatch
+           , MonadIO
+           , MonadFix
+           )
+
+--------------------------------------------------------------------------------
+getEnv :: EventStore Env
+getEnv = EventStore ask
+
+--------------------------------------------------------------------------------
+getSettings :: EventStore Settings
+getSettings = __settings <$> getEnv
+
+--------------------------------------------------------------------------------
+freshUUID :: EventStore UUID
+freshUUID = liftIO nextRandom
+
+--------------------------------------------------------------------------------
+publisher :: EventStore Publish
+publisher = fmap (asPub . __bus) getEnv
+
+--------------------------------------------------------------------------------
+stopBus :: EventStore ()
+stopBus = busStop . __bus =<< getEnv
+
+--------------------------------------------------------------------------------
+instance MonadBase IO EventStore where
+  liftBase m = EventStore $ liftBase m
+
+--------------------------------------------------------------------------------
+instance MonadBaseControl IO EventStore where
+    type StM EventStore a = a
+    liftBaseWith run = EventStore $ do
+      env <- ask
+      s   <- liftIO $ run (\m -> runReaderT (unEventStore m) env)
+      restoreM s
+    restoreM = return
+
+--------------------------------------------------------------------------------
+instance MonadLogger EventStore where
+  monadLoggerLog loc src lvl msg  = do
+    loggerRef <- __logRef <$> getEnv
+    liftIO $ loggerCallback loggerRef loc src lvl (toLogStr msg)
+
+--------------------------------------------------------------------------------
+instance MonadLoggerIO EventStore where
+  askLoggerIO = do
+    loggerRef <- __logRef <$> getEnv
+    return (loggerCallback loggerRef)
+
+--------------------------------------------------------------------------------
+runEventStore :: LoggerRef -> Settings -> Bus -> EventStore a -> IO a
+runEventStore ref setts bus (EventStore action) =
+  runReaderT action (Env ref setts bus)
+
+--------------------------------------------------------------------------------
+-- Messaging
+--------------------------------------------------------------------------------
+data Message where
+  Message :: Typeable a => a -> Message
+  deriving Typeable
 
 --------------------------------------------------------------------------------
 instance Show Message where
@@ -66,8 +151,14 @@ class Pub p where
   publishSTM :: Typeable a => p -> a -> STM Bool
 
 --------------------------------------------------------------------------------
-publish :: (Pub p, Typeable a, MonadIO m) => p -> a -> m ()
-publish p a = atomically $ do
+publish :: Typeable a => a -> EventStore ()
+publish a = do
+  bus <- __bus <$> getEnv
+  publishWith bus a
+
+--------------------------------------------------------------------------------
+publishWith :: (Pub p, Typeable a, MonadIO m) => p -> a -> m ()
+publishWith p a = atomically $ do
   _ <- publishSTM p a
   return ()
 
@@ -248,9 +339,9 @@ instance Pub Bus where
 
 --------------------------------------------------------------------------------
 publishing :: Typeable a => Bus -> EventHandlers -> a -> IO ()
-publishing Bus{..} callbacks a = do
+publishing self@Bus{..} callbacks a = do
   let tpe = getType (FromTypeable a)
-  runEventStore _busLoggerRef _busSettings $ do
+  runEventStore _busLoggerRef _busSettings self $ do
     $(logDebug) [i|Publishing message #{tpe}.|]
     traverse_ (propagate a) (lookup tpe callbacks)
     $(logDebug) [i|Message #{tpe} propagated.|]

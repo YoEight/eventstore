@@ -13,9 +13,9 @@ module Test.Connection (spec) where
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Discovery
 import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
@@ -37,5 +37,5 @@ spec = beforeAll (createLoggerRef testGlobalLog) $ do
       i <- readCounterSTM counter
       when (i /= 3) retrySTM
 
-    publish exec SystemShutdown
+    publishWith exec SystemShutdown
     execWaitTillClosed exec

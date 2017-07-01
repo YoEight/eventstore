@@ -20,8 +20,8 @@ import Control.Monad.Fix
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Messaging
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Catchup
 import Database.EventStore.Internal.Operation.Volatile
@@ -114,7 +114,7 @@ newCatchupSubscription exec tos batch state = do
             case opE of
               StreamNotFound{} -> do
                 let op = volatile (streamText stream) tos
-                publish exec (SubmitOperation cb op)
+                publishWith exec (SubmitOperation cb op)
               _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
           _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
       callback _ (Right action) = atomically $
@@ -125,7 +125,7 @@ newCatchupSubscription exec tos batch state = do
 
   cb <- mfix $ \self -> newCallback (callback self)
   let op = catchup (execSettings exec) state tos batch
-  publish exec (SubmitOperation cb op)
+  publishWith exec (SubmitOperation cb op)
   return sub
 
 --------------------------------------------------------------------------------
