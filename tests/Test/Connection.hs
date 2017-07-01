@@ -39,3 +39,18 @@ spec = beforeAll (createLoggerRef testGlobalLog) $ do
 
     publishWith exec SystemShutdown
     execWaitTillClosed exec
+
+  specify "Connection should close on heartbeat timeout" $ \logRef -> do
+    counter <- newCounter
+    bus     <- newBus logRef testSettings
+    let builder = silentConnectionBuilder $ incrCounter counter
+        disc    = staticEndPointDiscovery "localhost" 2000
+
+    exec <- newExec testSettings bus builder disc
+
+    atomically $ do
+      i <- readCounterSTM counter
+      unless (i > 1) retrySTM
+
+    publishWith exec SystemShutdown
+    execWaitTillClosed exec

@@ -14,7 +14,8 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.ConnectionManager
-  ( connectionManager ) where
+  ( ServerHeartbeatTimeout(..)
+  , connectionManager ) where
 
 --------------------------------------------------------------------------------
 import Data.Typeable
@@ -98,6 +99,31 @@ timerPeriod :: Duration
 timerPeriod = msDuration 200
 
 --------------------------------------------------------------------------------
+data HeartbeatStage = Interval | Timeout
+
+--------------------------------------------------------------------------------
+data HeartbeatTracker =
+  HeartbeatTracker { _pkgNum         :: !Integer
+                   , _heartbeatStage :: !HeartbeatStage
+                   , _startedSince   :: !NominalDiffTime
+                   }
+
+--------------------------------------------------------------------------------
+newHeartbeatTracker :: MonadBaseControl IO m
+                    => Stopwatch
+                    -> m (IORef HeartbeatTracker)
+newHeartbeatTracker =
+  newIORef . HeartbeatTracker 0 Interval <=< stopwatchElapsed
+
+--------------------------------------------------------------------------------
+initHeartbeatTracker :: Internal -> EventStore ()
+initHeartbeatTracker Internal{..} = do
+  elapsed <- stopwatchElapsed _stopwatch
+  pkgNum  <- readIORef _lastPkgNum
+  let tracker = HeartbeatTracker pkgNum Interval elapsed
+  atomicWriteIORef _tracker tracker
+
+--------------------------------------------------------------------------------
 data Internal =
   Internal { _disc          :: Discovery
            , _builder       :: ConnectionBuilder
@@ -108,7 +134,14 @@ data Internal =
            , _stopwatch     :: Stopwatch
            , _lastCheck     :: IORef NominalDiffTime
            , _lastConnected :: IORef Bool
+           , _tracker       :: IORef HeartbeatTracker
+           , _lastPkgNum    :: IORef Integer
            }
+
+--------------------------------------------------------------------------------
+incrPackageNumber :: Internal -> EventStore ()
+incrPackageNumber Internal{..} =
+  atomicModifyIORef' _lastPkgNum $ \n -> (n + 1, ())
 
 --------------------------------------------------------------------------------
 connectionManager :: ConnectionBuilder
@@ -128,6 +161,8 @@ connectionManager builder disc mainBus = do
                          <*> return stopwatch
                          <*> newIORef timeoutCheck
                          <*> newIORef False
+                         <*> newHeartbeatTracker stopwatch
+                         <*> newIORef 0
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onEstablish internal)
@@ -200,12 +235,13 @@ establish Internal{..} ept = do
 
 --------------------------------------------------------------------------------
 established :: Internal -> Connection -> EventStore ()
-established Internal{..} conn =
+established self@Internal{..} conn =
   readIORef _stage >>= \case
     Connecting _ (ConnectionEstablishing known) -> do
       when (conn == known) $ do
-        $(logDebug) [i|TCP connection established: #{conn}.|]
+        $logDebug [i|TCP connection established: #{conn}.|]
         atomicWriteIORef _stage (Connected conn)
+        initHeartbeatTracker self
     _ -> return ()
 
 --------------------------------------------------------------------------------
@@ -291,7 +327,7 @@ onTick self@Internal{..} _ = do
                 | otherwise -> maxAttemptReached
               KeepRetrying -> retryConnection attemptCount
           else return ()
-      | otherwise -> return ()
+      | otherwise -> manageHeartbeats self
     Connected _ -> do
       elapsed           <- stopwatchElapsed _stopwatch
       timeoutCheckStart <- readIORef _lastCheck
@@ -299,6 +335,8 @@ onTick self@Internal{..} _ = do
       when (elapsed - timeoutCheckStart >= s_operationTimeout setts) $ do
         Operation.check _opMgr
         atomicWriteIORef _lastCheck elapsed
+
+      manageHeartbeats self
     _ -> return ()
   where
     onGoingConnection Reconnecting             = True
@@ -314,12 +352,63 @@ onTick self@Internal{..} _ = do
       discover self
 
 --------------------------------------------------------------------------------
+data ServerHeartbeatTimeout = ServerHeartbeatTimeout deriving Typeable
+
+--------------------------------------------------------------------------------
+instance Show ServerHeartbeatTimeout where
+  show _ = "Server connection has heartbeat timeout"
+
+--------------------------------------------------------------------------------
+instance Exception ServerHeartbeatTimeout
+
+--------------------------------------------------------------------------------
+manageHeartbeats :: Internal -> EventStore ()
+manageHeartbeats self@Internal{..} = traverse_ go =<< lookupConnection self
+  where
+    go conn = do
+      elapsed <- stopwatchElapsed _stopwatch
+      pkgNum  <- readIORef _lastPkgNum
+      tracker <- readIORef _tracker
+      setts   <- getSettings
+
+      let interval    = s_heartbeatInterval setts
+          timeout     = s_heartbeatInterval setts
+          initTracker = tracker
+                        { _heartbeatStage = Interval
+                        , _startedSince   = elapsed
+                        , _pkgNum         = pkgNum
+                        }
+
+      if _pkgNum tracker /= pkgNum
+        then atomicWriteIORef _tracker initTracker
+        else
+          case _heartbeatStage tracker of
+            Interval
+              | elapsed - _startedSince tracker >= interval -> do
+                uuid <- freshUUID
+                let pkg        = heartbeatRequestPackage uuid
+                    newTracker = tracker
+                                 { _heartbeatStage = Timeout
+                                 , _startedSince   = elapsed
+                                 , _pkgNum         = pkgNum
+                                 }
+                enqueuePackage conn pkg
+                atomicWriteIORef _tracker newTracker
+              | otherwise -> return ()
+            Timeout
+              | elapsed - _startedSince tracker >= timeout -> do
+                $logInfo [i|Closing #{conn} due to HEARTBEAT TIMEOUT at pkgNum #{pkgNum}|]
+                closeTcpConnection self ServerHeartbeatTimeout conn
+              | otherwise -> return ()
+
+--------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> EventStore ()
 onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
   withConnection $ \knownConn -> do
     if knownConn == conn
       then do
         $logDebug [i|Package received:  #{pkg}.|]
+        incrPackageNumber self
         handlePackage
       else do
         $logDebug [i|Package IGNORED: #{pkg}.|]
@@ -334,6 +423,7 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
     heartbeatResponse = heartbeatResponsePackage packageCorrelation
 
     handlePackage
+      | packageCmd == heartbeatResponseCmd = return ()
       | packageCmd == heartbeatRequestCmd =
         enqueuePackage conn heartbeatResponse
       | otherwise =

@@ -596,6 +596,16 @@ packageDataAsText = go . decodeUtf8 . packageData
     go t  = Just t
 
 --------------------------------------------------------------------------------
+heartbeatRequestPackage :: UUID -> Package
+heartbeatRequestPackage uuid =
+  Package
+  { packageCmd         = heartbeatRequestCmd
+  , packageCorrelation = uuid
+  , packageData        = ""
+  , packageCred        = Nothing
+  }
+
+--------------------------------------------------------------------------------
 -- | Constructs a heartbeat response given the 'UUID' of heartbeat request.
 heartbeatResponsePackage :: UUID -> Package
 heartbeatResponsePackage uuid =
