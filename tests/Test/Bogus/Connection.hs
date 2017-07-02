@@ -51,18 +51,34 @@ respondMWithConnectionBuilder :: (EndPoint -> Package -> IO Package)
 respondMWithConnectionBuilder resp = ConnectionBuilder $ \ept -> do
   uuid <- freshUUID
   let conn = Connection
-          { connectionId = uuid
-          , connectionEndPoint = ept
-          , enqueuePackage = \pkg ->
-              case packageCmd pkg of
-                cmd | cmd == getCommand 0x01 -> do
-                        let rpkg = pkg { packageCmd = getCommand 0x02 }
-                        publish (PackageArrived conn rpkg)
-                    | otherwise -> do
-                      rpkg <- liftIO $ resp ept pkg
-                      publish (PackageArrived conn rpkg)
-          , dispose = return ()
-          }
+             { connectionId = uuid
+             , connectionEndPoint = ept
+             , enqueuePackage = \pkg ->
+                 case packageCmd pkg of
+                   cmd | cmd == getCommand 0x01 -> do
+                           let rpkg = pkg { packageCmd = getCommand 0x02 }
+                           publish (PackageArrived conn rpkg)
+                       | otherwise -> do
+                         rpkg <- liftIO $ resp ept pkg
+                         publish (PackageArrived conn rpkg)
+             , dispose = return ()
+             }
+
+  publish (ConnectionEstablished conn)
+  return conn
+
+--------------------------------------------------------------------------------
+-- | Silent 'ConnectionBuilder'. It never publishes new 'Package's.
+silentConnectionBuilder :: IO () -> ConnectionBuilder
+silentConnectionBuilder onConnect = ConnectionBuilder $ \ept -> do
+  uuid <- freshUUID
+  liftIO onConnect
+  let conn = Connection
+             { connectionId = uuid
+             , connectionEndPoint = ept
+             , enqueuePackage = \_ -> return ()
+             , dispose = return ()
+             }
 
   publish (ConnectionEstablished conn)
   return conn
