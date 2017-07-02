@@ -59,13 +59,17 @@ live :: UUID -> Code SubAction ()
 live subscriptionId = loop
   where
     loop =
-      waitFor subscriptionId
+      waitForOr subscriptionId connectionReset
         [ Expect subscriptionDroppedCmd $ \_ d ->
             handleDropped d
         , Expect streamEventAppearedCmd $ \_ e -> do
             eventAppeared e
             loop
         ]
+
+--------------------------------------------------------------------------------
+connectionReset :: Code SubAction ()
+connectionReset = yield ConnectionReset
 
 --------------------------------------------------------------------------------
 handleDropped :: SubscriptionDropped -> Code SubAction ()

@@ -94,6 +94,8 @@ newRegularSubscription exec stream tos = do
             readTVar phaseVar >>= \case
               Running{} -> writeTQueue queue e
               _         -> return ()
+          ConnectionReset -> atomically $
+            writeTVar phaseVar (Closed $ Right SubAborted)
 
   cb <- newCallback callback
   publishWith exec (SubmitOperation cb (volatile name tos))

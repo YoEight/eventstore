@@ -172,6 +172,7 @@ module Database.EventStore
     , resolvedEventDataAsJson
     , resolvedEventOriginalStreamId
     , resolvedEventOriginalId
+    , resolvedEventOriginalEventNumber
     , recordedEventDataAsJson
     , positionStart
     , positionEnd

@@ -562,6 +562,11 @@ resolvedEventOriginalId :: ResolvedEvent -> UUID
 resolvedEventOriginalId = recordedEventId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
+-- | The event number of the original event.
+resolvedEventOriginalEventNumber :: ResolvedEvent -> Int32
+resolvedEventOriginalEventNumber = recordedEventNumber . resolvedEventOriginal
+
+--------------------------------------------------------------------------------
 -- | Represents the direction of read operation (both from $all an usual
 --   streams).
 data ReadDirection

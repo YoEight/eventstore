@@ -38,12 +38,28 @@ data Phase
   | Closed (Either SomeException SubDropReason)
 
 --------------------------------------------------------------------------------
-data Chk = Chk !Int32 !Position
+data CatchupTrack
+  = CatchupRegular !(Maybe Int32)
+  | CatchupAll !(Maybe Position)
 
 --------------------------------------------------------------------------------
-fromCheckPoint :: Checkpoint -> Chk
-fromCheckPoint (CheckpointNumber num)   = Chk num positionStart
-fromCheckPoint (CheckpointPosition pos) = Chk 0 pos
+catchupTrack :: CatchupState -> CatchupTrack
+catchupTrack RegularCatchup{} = CatchupRegular Nothing
+catchupTrack AllCatchup{}     = CatchupAll Nothing
+
+--------------------------------------------------------------------------------
+receivedAlready :: CatchupTrack -> ResolvedEvent -> Bool
+receivedAlready (CatchupRegular old) e =
+  maybe False (resolvedEventOriginalEventNumber e <=) old
+receivedAlready (CatchupAll old) e =
+  fromMaybe False ((<=) <$> resolvedEventPosition e <*> old)
+
+--------------------------------------------------------------------------------
+updateTrack :: ResolvedEvent -> CatchupTrack -> CatchupTrack
+updateTrack e (CatchupRegular _) =
+  CatchupRegular (Just $ resolvedEventOriginalEventNumber e)
+updateTrack e (CatchupAll _) =
+  CatchupAll (resolvedEventPosition e)
 
 --------------------------------------------------------------------------------
 -- | This kind of subscription specifies a starting point, in the form of an
@@ -59,6 +75,7 @@ data CatchupSubscription =
   CatchupSubscription { _catchupExec   :: Exec
                       , _catchupStream :: StreamName
                       , _catchupPhase  :: TVar Phase
+                      , _catchupTrack  :: TVar CatchupTrack
                       , _catchupNext   :: STM (Maybe ResolvedEvent)
                       }
 
@@ -96,9 +113,10 @@ newCatchupSubscription :: Exec
 newCatchupSubscription exec tos batch state = do
   phaseVar <- newTVarIO CatchingUp
   queue    <- newTQueueIO
+  track    <- newTVarIO $ catchupTrack state
 
   let stream = streamName state
-      sub = CatchupSubscription exec (streamName state) phaseVar $ do
+      sub = CatchupSubscription exec stream phaseVar track $ do
         p       <- readTVar phaseVar
         isEmpty <- isEmptyTQueue queue
         if isEmpty
@@ -117,11 +135,33 @@ newCatchupSubscription exec tos batch state = do
                 publishWith exec (SubmitOperation cb op)
               _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
           _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
-      callback _ (Right action) = atomically $
+      callback _ (Right action) =
         case action of
-          Confirmed details -> writeTVar phaseVar (Running details)
-          Dropped r         -> writeTVar phaseVar (Closed $ Right r)
-          Submit e          -> writeTQueue queue e
+          Confirmed details -> atomically $ writeTVar phaseVar (Running details)
+          Dropped r ->
+            atomically $ writeTVar phaseVar (Closed $ Right r)
+          Submit e -> atomically $ do
+            tracker <- readTVar track
+            unless (receivedAlready tracker e) $ do
+              writeTVar track (updateTrack e tracker)
+              writeTQueue queue e
+          ConnectionReset -> do
+            tpe <- readTVarIO track
+            let newState =
+                  case tpe of
+                    CatchupRegular old ->
+                      case old of
+                        Just n -> RegularCatchup (streamText stream) n
+                        _      -> state
+                    CatchupAll old ->
+                      case old of
+                        Just p -> AllCatchup p
+                        _      -> state
+
+                newOp = catchup (execSettings exec) newState tos batch
+
+            newCb <- mfix $ \self -> newCallback (callback self)
+            publishWith exec (SubmitOperation newCb newOp)
 
   cb <- mfix $ \self -> newCallback (callback self)
   let op = catchup (execSettings exec) state tos batch
