@@ -76,6 +76,7 @@ library:
     - machines >= 0.6
     - bifunctors
     - interpolate
+    - ekg-core
 
 tests:
   eventstore-tests:

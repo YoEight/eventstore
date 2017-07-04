@@ -41,6 +41,12 @@ module Database.EventStore.Internal.Control
   , subscribe
   , stopBus
   , publisher
+    -- * Monitoring
+  , monitorIncrPkgCount
+  , monitorIncrConnectionDrop
+  , monitorAddDataTransmitted
+  , monitorIncrForceReconnect
+  , monitorIncrHeartbeatTimeouts
     -- * Re-export
   , module Database.EventStore.Internal.Settings
   ) where
@@ -53,6 +59,9 @@ import Data.Typeable.Internal
 import Control.Monad.Reader
 import Data.UUID
 import Data.UUID.V4
+import System.Metrics
+import System.Metrics.Counter hiding (add)
+import System.Metrics.Distribution
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Logger
@@ -64,6 +73,7 @@ data Env =
   Env { __logRef   :: LoggerRef
       , __settings :: Settings
       , __bus      :: Bus
+      , __monitor  :: Maybe Monitoring
       }
 
 --------------------------------------------------------------------------------
@@ -126,7 +136,7 @@ instance MonadLoggerIO EventStore where
 --------------------------------------------------------------------------------
 runEventStore :: LoggerRef -> Settings -> Bus -> EventStore a -> IO a
 runEventStore ref setts bus (EventStore action) =
-  runReaderT action (Env ref setts bus)
+  runReaderT action (Env ref setts bus (_monitoring bus))
 
 --------------------------------------------------------------------------------
 -- Messaging
@@ -282,6 +292,7 @@ data Bus =
       , _busEventHandlers  :: IORef EventHandlers
       , _busQueue          :: TBMQueue Message
       , _workerAsync       :: Async ()
+      , _monitoring        :: Maybe Monitoring
       }
 
 --------------------------------------------------------------------------------
@@ -303,6 +314,7 @@ newBus ref setts = do
     Bus ref setts <$> newIORef mempty
                   <*> newTBMQueueIO 500
                   <*> async (worker b)
+                  <*> traverse configureMonitoring (s_monitoring setts)
 
   return bus
 
@@ -349,3 +361,59 @@ publishing self@Bus{..} callbacks a = do
 
     unless (tpe == messageType) $
       traverse_ (propagate (toMsg a)) (lookup messageType callbacks)
+
+--------------------------------------------------------------------------------
+-- Monitoring
+--------------------------------------------------------------------------------
+data Monitoring =
+  Monitoring
+  { _pkgCount     :: Counter
+  , _connDrops    :: Counter
+  , _dataTx       :: Distribution
+  , _forceReco    :: Counter
+  , _heartTimeout :: Counter
+  }
+
+--------------------------------------------------------------------------------
+configureMonitoring :: Store -> IO Monitoring
+configureMonitoring store =
+  Monitoring <$> createCounter "eventstore.packages.received" store
+             <*> createCounter "eventstore.connection.drops" store
+             <*> createDistribution "eventstore.data.transmitted" store
+             <*> createCounter "eventstore.force_reconnect" store
+             <*> createCounter "eventstore.heartbeat.timeouts" store
+
+--------------------------------------------------------------------------------
+monitorIncrPkgCount :: EventStore ()
+monitorIncrPkgCount = do
+  Env{..} <- getEnv
+  for_ __monitor  $ \Monitoring{..}->
+    liftIO $ inc _pkgCount
+
+--------------------------------------------------------------------------------
+monitorIncrConnectionDrop :: EventStore ()
+monitorIncrConnectionDrop = do
+  Env{..} <- getEnv
+  for_ __monitor  $ \Monitoring{..}->
+    liftIO $ inc _connDrops
+
+--------------------------------------------------------------------------------
+monitorAddDataTransmitted :: Int -> EventStore ()
+monitorAddDataTransmitted siz = do
+  Env{..} <- getEnv
+  for_ __monitor  $ \Monitoring{..}->
+    liftIO $ add _dataTx (fromIntegral siz)
+
+--------------------------------------------------------------------------------
+monitorIncrForceReconnect :: EventStore ()
+monitorIncrForceReconnect = do
+  Env{..} <- getEnv
+  for_ __monitor  $ \Monitoring{..}->
+    liftIO $ inc _forceReco
+
+--------------------------------------------------------------------------------
+monitorIncrHeartbeatTimeouts :: EventStore ()
+monitorIncrHeartbeatTimeouts = do
+  Env{..} <- getEnv
+  for_ __monitor  $ \Monitoring{..}->
+    liftIO $ inc _heartTimeout
