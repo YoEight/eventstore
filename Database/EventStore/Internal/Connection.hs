@@ -247,7 +247,9 @@ sending ConnectionState{..} self tcpConnAsync = go =<< wait tcpConnAsync
           send pkg =
             tryAny (liftIO $ Network.connectionPut conn bytes) >>= \case
               Left e  -> publish (ConnectionClosed self e)
-              Right _ -> loop
+              Right _ -> do
+                monitorAddDataTransmitted (length bytes)
+                loop
             where
               bytes = runPut $ putPackage pkg in
       loop

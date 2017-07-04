@@ -13,6 +13,7 @@ module Database.EventStore.Internal.Settings where
 
 --------------------------------------------------------------------------------
 import Network.Connection (TLSSettings)
+import System.Metrics (Store)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Logger
@@ -85,6 +86,7 @@ data Settings
       , s_loggerDetailed    :: Bool
       , s_operationTimeout  :: NominalDiffTime
       , s_operationRetry    :: Retry
+      , s_monitoring        :: Maybe Store
       }
 
 --------------------------------------------------------------------------------
@@ -101,6 +103,7 @@ data Settings
 --   s_loggerDetailed    = False
 --   s_operationTimeout  = 10 seconds
 --   s_operationRetry    = 'atMost' 3
+--   s_monitoring        = Nothing
 defaultSettings :: Settings
 defaultSettings  = Settings
                    { s_heartbeatInterval = msDiffTime 750  -- 750ms
@@ -115,6 +118,7 @@ defaultSettings  = Settings
                    , s_loggerDetailed    = False
                    , s_operationTimeout  = 10 -- secs
                    , s_operationRetry    = atMost 3
+                   , s_monitoring        = Nothing
                    }
 
 --------------------------------------------------------------------------------

@@ -139,8 +139,9 @@ data Internal =
 
 --------------------------------------------------------------------------------
 incrPackageNumber :: Internal -> EventStore ()
-incrPackageNumber Internal{..} =
+incrPackageNumber Internal{..} = do
   atomicModifyIORef' _lastPkgNum $ \n -> (n + 1, ())
+  monitorIncrPkgCount
 
 --------------------------------------------------------------------------------
 connectionManager :: ConnectionBuilder
@@ -297,6 +298,7 @@ forceReconnect self@Internal{..} node = do
 
   Connected conn <- readIORef _stage
   when (connectionEndPoint conn /= ept) $ do
+    monitorIncrForceReconnect
     closeTcpConnection self (ForceReconnect ept) conn
     att <- freshAttempt _stopwatch
     atomicWriteIORef _stage (Connecting att EndpointDiscovery)
@@ -396,6 +398,7 @@ manageHeartbeats self@Internal{..} = traverse_ go =<< lookupConnection self
               | otherwise -> return ()
             Timeout
               | elapsed - _startedSince tracker >= timeout -> do
+                monitorIncrHeartbeatTimeouts
                 $logInfo [i|Closing #{conn} due to HEARTBEAT TIMEOUT at pkgNum #{pkgNum}|]
                 closeTcpConnection self ServerHeartbeatTimeout conn
               | otherwise -> return ()
@@ -451,8 +454,9 @@ onConnectionError self@Internal{..} (ConnectionError conn e) =
 --------------------------------------------------------------------------------
 onConnectionClosed :: Internal -> ConnectionClosed -> EventStore ()
 onConnectionClosed self@Internal{..} (ConnectionClosed conn cause) =
-  whenM (isSameConnection self conn) $
+  whenM (isSameConnection self conn) $ do
     closeTcpConnection self cause conn
+    monitorIncrConnectionDrop
 
 --------------------------------------------------------------------------------
 onShutdown :: Internal -> SystemShutdown -> EventStore ()
