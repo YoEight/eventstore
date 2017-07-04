@@ -14,8 +14,7 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.ConnectionManager
-  ( ServerHeartbeatTimeout(..)
-  , connectionManager ) where
+  ( connectionManager ) where
 
 --------------------------------------------------------------------------------
 import Data.Typeable

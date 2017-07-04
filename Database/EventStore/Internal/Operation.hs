@@ -30,6 +30,7 @@ module Database.EventStore.Internal.Operation
   , send
   , request
   , waitFor
+  , waitForOr
   , wrongVersion
   , streamDeleted
   , invalidTransaction
@@ -192,12 +193,18 @@ request reqCmd rq exps = do
   runFirstMatch pkg exps
 
 --------------------------------------------------------------------------------
--- | Waits for a message from the server at the given correlation id. If the
---   the connection has been reset in the meantime, it will emit a 'stop'.
+-- | Like 'waitForOr' but will 'stop' if the connection reset.
 waitFor :: UUID -> [Expect o] -> Code o ()
-waitFor pid exps =
+waitFor pid exps = waitForOr pid stop exps
+
+--------------------------------------------------------------------------------
+-- | @waitForElse uuid alternative expects@ Waits for a message from the server
+--   at the given /uuid/. If the connection has been reset in the meantime, it
+--   will use /alternative/.
+waitForOr :: UUID -> (Code o ()) -> [Expect o] -> Code o ()
+waitForOr pid alt exps =
   awaits (WaitRemote pid) >>= \case
-    Nothing  -> stop
+    Nothing  -> alt
     Just pkg ->
       runFirstMatch pkg exps
 
