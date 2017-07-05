@@ -13,7 +13,7 @@
 module Main where
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Test
 import Test.Tasty
 import Test.Tasty.Hspec
 

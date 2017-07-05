@@ -14,12 +14,7 @@
 module Test.Bogus.Connection where
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Command
-import Database.EventStore.Internal.Control
-import Database.EventStore.Internal.Connection
-import Database.EventStore.Internal.EndPoint
-import Database.EventStore.Internal.Prelude
-import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Test
 
 --------------------------------------------------------------------------------
 -- | Creates a 'ConnectionBuilder' that always fails. The first parameter is an

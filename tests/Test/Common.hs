@@ -13,10 +13,7 @@
 module Test.Common where
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Discovery
-import Database.EventStore.Internal.Logger
-import Database.EventStore.Internal.Prelude
-import Database.EventStore.Internal.Settings
+import Database.EventStore.Internal.Test
 
 --------------------------------------------------------------------------------
 data Foo = Foo deriving Typeable

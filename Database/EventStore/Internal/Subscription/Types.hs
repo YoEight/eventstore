@@ -62,6 +62,8 @@ instance Exception SubscriptionClosed
 newtype SubscriptionId = SubscriptionId UUID deriving (Eq, Ord, Show)
 
 --------------------------------------------------------------------------------
+-- | Subscription runtime details. Not useful for the user but at least it makes
+--   Haddock documentation generation less ugly.
 data SubDetails =
   SubDetails { subId           :: !UUID
              , subCommitPos    :: !Int64

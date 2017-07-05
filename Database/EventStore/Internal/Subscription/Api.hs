@@ -37,16 +37,19 @@ confirmed :: Callback SubAction -> SubDetails -> IO ()
 confirmed s d = fulfill s (Confirmed d)
 
 --------------------------------------------------------------------------------
+-- | Common operations supported by a subscription.
 class Subscription s where
   -- | Asks for the next incoming event like 'nextEventMaybe' while still being
   --   in the the 'STM'.
   nextEventMaybeSTM :: s -> STM (Maybe ResolvedEvent)
 
+  -- | Returns the runtime details of a subscription.
   getSubscriptionDetailsSTM :: s -> STM SubDetails
 
   -- | Get subscription stream.
   subscriptionStream :: s -> StreamName
 
+  -- | Asynchronously unsubscribe from the the stream.
   unsubscribe :: s -> IO ()
 
 --------------------------------------------------------------------------------

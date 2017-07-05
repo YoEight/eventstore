@@ -76,6 +76,8 @@ library
     , ekg-core
   exposed-modules:
       Database.EventStore
+      Database.EventStore.Internal.Test
+  other-modules:
       Database.EventStore.Internal.Callback
       Database.EventStore.Internal.Command
       Database.EventStore.Internal.Communication
@@ -124,6 +126,7 @@ library
       Database.EventStore.Internal.TimerService
       Database.EventStore.Internal.Types
       Database.EventStore.Internal.Utils
+      Paths_eventstore
   default-language: Haskell2010
 
 test-suite eventstore-tests
@@ -166,6 +169,7 @@ test-suite eventstore-tests
     , cereal
     , uuid
     , fast-logger
+    , async
   other-modules:
       Test.Bogus.Connection
       Test.Bus

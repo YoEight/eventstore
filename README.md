@@ -49,14 +49,14 @@ How to use
                                    -- String literal when a Text is needed.
 module Main where
 
+import Control.Concurrent.Async (wait)
 import Data.Aeson
 -- It requires to have `aeson` package installed. Note that EventStore doesn't constraint you to JSON
 -- format but putting common use aside, by doing so you'll be able to use some interesting EventStore
 -- features like its Complex Event Processing (CEP) capabality.
 
 import Database.EventStore
--- Note that import also re-exports 'wait'
--- function for instance. There are also 'NonEmpty' data constructor and 'nonEmpty' function from
+-- Note that imports 'NonEmpty' data constructor and 'nonEmpty' function from
 -- 'Data.List.NonEmpty'.
 
 main :: IO ()

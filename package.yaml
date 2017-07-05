@@ -56,8 +56,10 @@ default-extensions:
   - ConstraintKinds
 
 library:
-  source-dirs:
-    - '.'
+  source-dirs:  '.'
+  exposed-modules:
+    - Database.EventStore
+    - Database.EventStore.Internal.Test
   dependencies:
     - cereal >=0.4 && <0.6
     - containers ==0.5.*
@@ -94,3 +96,4 @@ tests:
       - cereal
       - uuid
       - fast-logger
+      - async

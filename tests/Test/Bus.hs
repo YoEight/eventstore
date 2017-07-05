@@ -13,8 +13,7 @@
 module Test.Bus where
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Control
-import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Test hiding (i)
 
 --------------------------------------------------------------------------------
 import Test.Common
