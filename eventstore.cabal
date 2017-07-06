@@ -22,6 +22,7 @@ extra-source-files:
     .gitignore
     .travis.yml
     CHANGELOG.markdown
+    eventstore-test-setup-osx.sh
     eventstore-test-setup.sh
     README.md
 
