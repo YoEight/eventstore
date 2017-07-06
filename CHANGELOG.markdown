@@ -1,3 +1,14 @@
+0.15.0.0
+--------
+* Overall internal components refactoring.
+* Decrease memory pressure by 10 folds.
+* Improve general performance.
+* Provide proper logging support using `fast-logger` library.
+* Support operation timeout detection.
+* Detects if the server is overwhelmed and act accordingly.
+* Improve connection management code.
+* Expose EKG monitoring metrics.
+
 0.14.0.1
 ----------
 * Fix subscription deadlock on connection drop.
