@@ -14,15 +14,7 @@ module Test.Operation (spec) where
 --------------------------------------------------------------------------------
 import Data.ProtocolBuffers
 import Data.Serialize
-import Database.EventStore.Internal.Callback
-import Database.EventStore.Internal.Command
-import Database.EventStore.Internal.Communication
-import Database.EventStore.Internal.Control
-import Database.EventStore.Internal.EndPoint
-import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Operations
-import Database.EventStore.Internal.Prelude
-import Database.EventStore.Internal.Types
+import Database.EventStore.Internal.Test hiding (i)
 
 --------------------------------------------------------------------------------
 import Test.Bogus.Connection

@@ -12,11 +12,7 @@
 module Test.Connection (spec) where
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Communication
-import Database.EventStore.Internal.Control
-import Database.EventStore.Internal.Discovery
-import Database.EventStore.Internal.Exec
-import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Test hiding (i)
 
 --------------------------------------------------------------------------------
 import Test.Bogus.Connection

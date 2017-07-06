@@ -16,6 +16,7 @@
 module Test.Integration.Tests (spec) where
 
 --------------------------------------------------------------------------------
+import Control.Concurrent.Async (wait)
 import Data.Aeson
 import Data.DotNet.TimeSpan
 import Data.UUID hiding (null)
@@ -25,7 +26,53 @@ import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
 import Database.EventStore
-import Database.EventStore.Internal.Prelude
+    ( SubscriptionClosed(..)
+    , ReadResult(..)
+    , StreamName(..)
+    , Slice(..)
+    , ConnectionType(..)
+    , Connection
+    , getStreamMetadata
+    , sendEvent
+    , sendEvents
+    , setStreamMetadata
+    , nextEvent
+    , notifyEventsProcessed
+    , waitConfirmation
+    , connectToPersistentSubscription
+    , unsubscribe
+    , createPersistentSubscription
+    , deletePersistentSubscription
+    , updatePersistentSubscription
+    , nextEventMaybe
+    , waitUnsubscribeConfirmed
+    , subscribeFrom
+    , waitTillCatchup
+    , readAllEventsBackward
+    , readAllEventsForward
+    , readStreamEventsBackward
+    , readStreamEventsForward
+    , subscribe
+    , connect
+    , waitTillClosed
+    , shutdown
+    , readEvent
+    , startTransaction
+    , transactionWrite
+    , deleteStream
+    , transactionCommit
+    )
+import Database.EventStore.Internal.Test hiding
+    ( Connection(..)
+    , subscribe
+    , wait
+    , connect
+    , readEvent
+    , transactionWrite
+    , deleteStream
+    , transactionCommit
+    , i
+    )
 import Test.Common
 
 --------------------------------------------------------------------------------

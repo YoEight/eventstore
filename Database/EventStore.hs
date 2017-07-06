@@ -21,8 +21,6 @@ module Database.EventStore
     , ConnectionType(..)
     , Credentials
     , Settings(..)
-    , LogLevel(..)
-    , LogType(..)
     , Retry
     , atMost
     , keepRetrying
@@ -114,18 +112,21 @@ module Database.EventStore
     , SubscriptionId
     , Subscription
     , SubDropReason(..)
+    , SubDetails
     , waitConfirmation
     , unsubscribeConfirmed
     , unsubscribeConfirmedSTM
     , waitUnsubscribeConfirmed
+    , nextEventMaybeSTM
+    , getSubscriptionDetailsSTM
+    , unsubscribe
+    , subscriptionStream
       -- * Volatile Subscription
     , RegularSubscription
     , subscribe
     , subscribeToAll
     , getSubscriptionId
-    , subscriptionStream
     , isSubscribedToAll
-    , unsubscribe
     , nextEvent
     , nextEventMaybe
       -- * Catch-up Subscription
@@ -176,6 +177,10 @@ module Database.EventStore
     , recordedEventDataAsJson
     , positionStart
     , positionEnd
+      -- * Logging
+    , LogLevel(..)
+    , LogType(..)
+    , LoggerFilter(..)
       -- * Misc
     , Command
     , DropReason(..)
@@ -187,7 +192,6 @@ module Database.EventStore
     , streamExists
     , msDiffTime
       -- * Re-export
-    , wait
     , (<>)
     , NonEmpty(..)
     , nonEmpty
@@ -281,7 +285,7 @@ waitTillClosed :: Connection -> IO ()
 waitTillClosed Connection{..} = execWaitTillClosed _exec
 
 --------------------------------------------------------------------------------
--- | Returns a 'Connection''s 'Settings'.
+-- | Returns a 'Connection' 's 'Settings'.
 connectionSettings :: Connection -> Settings
 connectionSettings = _settings
 
