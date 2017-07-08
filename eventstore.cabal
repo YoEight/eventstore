@@ -3,7 +3,7 @@
 -- see: https://github.com/sol/hpack
 
 name:           eventstore
-version:        0.15.0.0
+version:        0.15.0.1
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <http://geteventstore.com>
 category:       Database
