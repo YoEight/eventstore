@@ -24,7 +24,7 @@ dependencies:
   - text
   - bytestring
   - semigroups
-  - hashable ==1.2.6.0
+  - hashable
   - containers
   - unordered-containers
   - stm-chans

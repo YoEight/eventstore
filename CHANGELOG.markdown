@@ -1,3 +1,7 @@
+0.15.0.1
+--------
+* Discard version restriction on `hashable` library.
+
 0.15.0.0
 --------
 * Overall internal components refactoring.

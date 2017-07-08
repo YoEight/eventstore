@@ -47,7 +47,7 @@ library
     , text
     , bytestring
     , semigroups
-    , hashable ==1.2.6.0
+    , hashable
     , containers
     , unordered-containers
     , stm-chans
@@ -150,7 +150,7 @@ test-suite eventstore-tests
     , text
     , bytestring
     , semigroups
-    , hashable ==1.2.6.0
+    , hashable
     , containers
     , unordered-containers
     , stm-chans
