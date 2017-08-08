@@ -61,8 +61,8 @@ matrix:
     compiler: ": #stack default"
     addons: {apt: {packages: [libgmp-dev]}}
 
-  - env: BUILD=stack ARGS="--resolver lts-8"
-    compiler: ": #stack 8.0.2"
+  - env: BUILD=stack ARGS="--compiler ghc-8.0.2 --resolver lts-9"
+    compiler: ": #stack 8.0.2 lts-9"
     addons: {apt: {packages: [libgmp-dev]}}
 
   # Nightly builds are allowed to fail
@@ -77,8 +77,8 @@ matrix:
 
   # Travis includes an OS X which is incompatible with GHC 7.8.4
 
-  - env: BUILD=stack ARGS="--resolver lts-8"
-    compiler: ": #stack 8.0.2 osx"
+  - env: BUILD=stack ARGS="--resolver lts-9 --compiler ghc-8.0.2"
+    compiler: ": #stack 8.0.2 osx lts-9"
     os: osx
 
   - env: BUILD=stack ARGS="--resolver nightly"

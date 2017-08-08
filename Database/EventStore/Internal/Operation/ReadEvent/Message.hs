@@ -4,7 +4,7 @@
 #if __GLASGOW_HASKELL__ < 800
 {-# OPTIONS_GHC -fcontext-stack=26 #-}
 #else
-{-# OPTIONS_GHC -freduction-depth=26 #-}
+{-# OPTIONS_GHC -freduction-depth=0 #-}
 #endif
 --------------------------------------------------------------------------------
 -- |
