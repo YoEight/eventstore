@@ -1,3 +1,8 @@
+0.15.0.2
+--------
+* Support GHC 8.2.1.
+* Support Stackage LTS 9.
+
 0.15.0.1
 --------
 * Discard version restriction on `hashable` library.
