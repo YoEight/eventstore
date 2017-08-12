@@ -2,14 +2,17 @@
 # For more information, see: http://docs.haskellstack.org/en/stable/yaml_configuration/
 
 # Specifies the GHC version and set of packages available (e.g., lts-3.5, nightly-2015-09-21, ghc-7.10.2)
-resolver: lts-8.16
-compiler: ghc-8.0.2
+resolver: nightly-2017-08-08
+compiler: ghc-8.2.1
 
 # Local packages, usually specified by relative directory name
 packages:
 - '.'
 # Packages to be pulled from upstream that are not in the resolver (e.g., acme-missiles-0.3)
-extra-deps: [ hashable-1.2.6.0 ]
+extra-deps: [ dns-2.0.12
+            , ekg-core-0.1.1.2
+            , protobuf-0.2.1.1
+            ]
 
 # Override default flag values for local packages and extra-deps
 flags: {}
