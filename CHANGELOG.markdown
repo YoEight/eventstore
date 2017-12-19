@@ -1,3 +1,7 @@
+1.0.0
+-----
+* Support SemVer versioning.
+
 0.15.0.2
 --------
 * Support GHC 8.2.1.
