@@ -1,3 +1,9 @@
+1.1.0
+-----
+* Supports GetEventStore >= 4.0.0 protocol changes.
+* No longer support GetEventStore < 4.0.0.
+* Stream versions are `Int64`.
+
 1.0.0
 -----
 * Support SemVer versioning.

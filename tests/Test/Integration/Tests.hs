@@ -79,8 +79,8 @@ import Test.Common
 createConnection :: IO Connection
 createConnection = do
     let setts = testSettings
-                { s_credentials     = Just $ credentials "admin" "changeit"
-                , s_reconnect_delay = 3
+                { s_defaultUserCredentials = Just $ credentials "admin" "changeit"
+                , s_reconnect_delay        = 3
                 }
 
     connect setts (Static "127.0.0.1" 1113)
@@ -124,7 +124,7 @@ writeEventTest conn = do
         evt = createEvent "foo" Nothing $ withJson js
 
     stream <- freshStreamId
-    as <- sendEvent conn stream anyVersion evt
+    as <- sendEvent conn stream anyVersion evt Nothing
     _  <- wait as
     return ()
 
@@ -135,9 +135,9 @@ readEventTest conn = do
 
     let js  = object [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
-    as <- sendEvent conn stream anyVersion evt
+    as <- sendEvent conn stream anyVersion evt Nothing
     _  <- wait as
-    bs <- readEvent conn stream 0 False
+    bs <- readEvent conn stream 0 False Nothing
     rs <- wait bs
     case rs of
         ReadSuccess re ->
@@ -156,8 +156,8 @@ deleteStreamTest conn = do
     stream <- freshStreamId
     let js  = object [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
-    _ <- sendEvent conn stream anyVersion evt >>= wait
-    _ <- deleteStream conn stream anyVersion Nothing
+    _ <- sendEvent conn stream anyVersion evt Nothing >>= wait
+    _ <- deleteStream conn stream anyVersion Nothing Nothing
     return ()
 
 --------------------------------------------------------------------------------
@@ -166,15 +166,15 @@ transactionTest conn = do
     stream <- freshStreamId
     let js  = object [ "baz" .= True ]
         evt = createEvent "foo" Nothing $ withJson js
-    t  <- startTransaction conn stream anyVersion >>= wait
-    _  <- transactionWrite t [evt] >>= wait
-    rs <- readEvent conn stream 0 False >>= wait
+    t  <- startTransaction conn stream anyVersion Nothing >>= wait
+    _  <- transactionWrite t [evt] Nothing >>= wait
+    rs <- readEvent conn stream 0 False Nothing >>= wait
     case rs of
         ReadNoStream -> return ()
         e -> fail $ "transaction-test stream is supposed to not exist "
                   <> show e
-    _   <- transactionCommit t >>= wait
-    rs2 <- readEvent conn stream 0 False >>= wait
+    _   <- transactionCommit t Nothing >>= wait
+    rs2 <- readEvent conn stream 0 False Nothing >>= wait
     case rs2 of
         ReadSuccess re ->
             case re of
@@ -195,8 +195,8 @@ readStreamEventForwardTest conn = do
               , object [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-    _  <- sendEvents conn stream anyVersion evts >>= wait
-    rs <- readStreamEventsForward conn stream 0 10 False >>= wait
+    _  <- sendEvents conn stream anyVersion evts Nothing >>= wait
+    rs <- readStreamEventsForward conn stream 0 10 False Nothing >>= wait
     case rs of
         ReadSuccess sl -> do
             let jss_evts = catMaybes $ fmap resolvedEventDataAsJson
@@ -212,8 +212,8 @@ readStreamEventBackwardTest conn = do
               , object [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-    _  <- sendEvents conn "read-backward-test" anyVersion evts >>= wait
-    rs <- readStreamEventsBackward conn "read-backward-test" 2 10 False >>= wait
+    _  <- sendEvents conn "read-backward-test" anyVersion evts Nothing >>= wait
+    rs <- readStreamEventsBackward conn "read-backward-test" 2 10 False Nothing >>= wait
     case rs of
         ReadSuccess sl -> do
             let jss_evts = catMaybes $ fmap resolvedEventDataAsJson
@@ -224,13 +224,13 @@ readStreamEventBackwardTest conn = do
 --------------------------------------------------------------------------------
 readAllEventsForwardTest :: Connection -> IO ()
 readAllEventsForwardTest conn = do
-    sl <- readAllEventsForward conn positionStart 3 False >>= wait
+    sl <- readAllEventsForward conn positionStart 3 False Nothing >>= wait
     assertEqual "Events is not empty" False (null $ sliceEvents sl)
 
 --------------------------------------------------------------------------------
 readAllEventsBackwardTest :: Connection -> IO ()
 readAllEventsBackwardTest conn = do
-    sl <- readAllEventsBackward conn positionEnd 3 False >>= wait
+    sl <- readAllEventsBackward conn positionEnd 3 False Nothing >>= wait
     assertEqual "Events is not empty" False (null $ sliceEvents sl)
 
 --------------------------------------------------------------------------------
@@ -243,9 +243,9 @@ subscribeTest conn = do
               , object [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-    sub  <- subscribe conn stream False
+    sub  <- subscribe conn stream False Nothing
     _    <- waitConfirmation sub
-    _    <- sendEvents conn stream anyVersion evts >>= wait
+    _    <- sendEvents conn stream anyVersion evts Nothing >>= wait
     let loop 3 = return []
         loop i = do
             e <- nextEvent sub
@@ -276,10 +276,10 @@ subscribeFromTest conn = do
         alljss = jss <> jss2
         evts   = fmap (createEvent "foo" Nothing . withJson) jss
         evts2  = fmap (createEvent "foo" Nothing . withJson) jss2
-    _   <- sendEvents conn stream anyVersion evts >>= wait
-    sub <- subscribeFrom conn stream False Nothing (Just 1)
+    _   <- sendEvents conn stream anyVersion evts Nothing >>= wait
+    sub <- subscribeFrom conn stream False Nothing (Just 1) Nothing
     _   <- waitConfirmation sub
-    _   <- sendEvents conn stream anyVersion evts2 >>= wait
+    _   <- sendEvents conn stream anyVersion evts2 Nothing >>= wait
 
     let loop [] = do
             m <- nextEventMaybe sub
@@ -312,7 +312,7 @@ data SubNoStreamTest
 subscribeFromNoStreamTest :: Connection -> IO ()
 subscribeFromNoStreamTest conn = do
   stream <- freshStreamId
-  sub <- subscribeFrom conn stream False Nothing Nothing
+  sub <- subscribeFrom conn stream False Nothing Nothing Nothing
   let loop [] = do
           m <- nextEventMaybe sub
           case m of
@@ -334,7 +334,7 @@ subscribeFromNoStreamTest conn = do
 
               evts = fmap (createEvent "foo" Nothing . withJson) jss
 
-          _ <- sendEvents conn stream anyVersion evts >>= wait
+          _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
           loop jss
           return SubNoStreamTestSuccess
       timeout = do
@@ -351,7 +351,7 @@ setStreamMetadataTest :: Connection -> IO ()
 setStreamMetadataTest conn = do
     stream <- freshStreamId
     let metadata = buildStreamMetadata $ setCustomProperty "foo" (1 :: Int)
-    _ <- setStreamMetadata conn stream anyVersion metadata >>= wait
+    _ <- setStreamMetadata conn stream anyVersion metadata Nothing >>= wait
     return ()
 
 --------------------------------------------------------------------------------
@@ -359,8 +359,8 @@ getStreamMetadataTest :: Connection -> IO ()
 getStreamMetadataTest conn = do
     stream <- freshStreamId
     let metadata = buildStreamMetadata $ setCustomProperty "foo" (1 :: Int)
-    _ <- setStreamMetadata conn stream anyVersion metadata >>= wait
-    r <- getStreamMetadata conn stream >>= wait
+    _ <- setStreamMetadata conn stream anyVersion metadata Nothing >>= wait
+    r <- getStreamMetadata conn stream Nothing >>= wait
     case r of
         StreamMetadataResult _ _ m ->
             case getCustomProperty m "foo" of
@@ -373,7 +373,7 @@ createPersistentTest :: Connection -> IO ()
 createPersistentTest conn = do
     let def = defaultPersistentSubscriptionSettings
     stream <- freshStreamId
-    r <- createPersistentSubscription conn "group" stream def >>= wait
+    r <- createPersistentSubscription conn "group" stream def Nothing >>= wait
     case r of
         Nothing -> return ()
         Just e  -> fail $ "Exception arised: " <> show e
@@ -383,8 +383,8 @@ updatePersistentTest :: Connection -> IO ()
 updatePersistentTest conn = do
     let def = defaultPersistentSubscriptionSettings
     stream <- freshStreamId
-    _ <- createPersistentSubscription conn "group" stream def >>= wait
-    r <- updatePersistentSubscription conn "group" stream def >>= wait
+    _ <- createPersistentSubscription conn "group" stream def Nothing >>= wait
+    r <- updatePersistentSubscription conn "group" stream def Nothing >>= wait
     case r of
         Nothing -> return ()
         Just e  -> fail $ "Exception arised: " <> show e
@@ -394,8 +394,8 @@ deletePersistentTest :: Connection -> IO ()
 deletePersistentTest conn = do
     let def = defaultPersistentSubscriptionSettings
     stream <- freshStreamId
-    _ <- createPersistentSubscription conn "group" stream def >>= wait
-    r <- deletePersistentSubscription conn "group" stream >>= wait
+    _ <- createPersistentSubscription conn "group" stream def Nothing >>= wait
+    r <- deletePersistentSubscription conn "group" stream Nothing >>= wait
     case r of
         Nothing -> return ()
         Just e  -> fail $ "Exception arised: " <> show e
@@ -411,9 +411,9 @@ connectToPersistentTest conn = do
                ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     stream <- freshStreamId
-    _   <- createPersistentSubscription conn "group" stream def >>= wait
-    _   <- sendEvents conn stream anyVersion evts >>= wait
-    sub <- connectToPersistentSubscription conn "group" stream 1
+    _   <- createPersistentSubscription conn "group" stream def Nothing >>= wait
+    _   <- sendEvents conn stream anyVersion evts Nothing >>= wait
+    sub <- connectToPersistentSubscription conn "group" stream 1 Nothing
     _   <- waitConfirmation sub
     r   <- nextEvent sub
     case resolvedEventDataAsJson r of
@@ -444,9 +444,9 @@ maxAgeTest conn = do
         evt = createEvent "foo" Nothing
               $ withJson (object ["type" .= (3 :: Int)])
     stream <- freshStreamId
-    _ <- sendEvent conn stream anyVersion evt >>= wait
-    _ <- setStreamMetadata conn stream anyVersion metadata >>= wait
-    r <- getStreamMetadata conn stream >>= wait
+    _ <- sendEvent conn stream anyVersion evt Nothing >>= wait
+    _ <- setStreamMetadata conn stream anyVersion metadata Nothing >>= wait
+    r <- getStreamMetadata conn stream Nothing >>= wait
     case r of
         StreamMetadataResult _ _ m ->
             assertEqual "Should have equal timespan" (Just timespan)

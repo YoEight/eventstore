@@ -29,7 +29,7 @@ import Database.EventStore.Internal.Types
 data Start =
     Start
     { _streamId        :: Required 1 (Value Text)
-    , _expectedVersion :: Required 2 (Value Int32)
+    , _expectedVersion :: Required 2 (Value Int64)
     , _requireMaster   :: Required 3 (Value Bool)
     }
     deriving (Generic, Show)
@@ -39,7 +39,7 @@ instance Encode Start
 
 --------------------------------------------------------------------------------
 -- | 'Start' smart constructor.
-newStart :: Text -> Int32 -> Bool -> Start
+newStart :: Text -> Int64 -> Bool -> Start
 newStart stream_id exp_ver req_master =
     Start
     { _streamId        = putField stream_id
@@ -124,8 +124,8 @@ data Committed =
     { _ccTransId       :: Required 1 (Value Int64)
     , _ccResult        :: Required 2 (Enumeration OpResult)
     , _ccMessage       :: Optional 3 (Value Text)
-    , _firstNumber     :: Required 4 (Value Int32)
-    , _lastNumber      :: Required 5 (Value Int32)
+    , _firstNumber     :: Required 4 (Value Int64)
+    , _lastNumber      :: Required 5 (Value Int64)
     , _preparePosition :: Optional 6 (Value Int64)
     , _commitPosition  :: Optional 7 (Value Int64)
     }

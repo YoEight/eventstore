@@ -39,10 +39,14 @@ import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- | Start transaction operation.
-transactionStart :: Settings -> Text -> ExpectedVersion -> Operation Int64
-transactionStart Settings{..} stream exp_v = construct $ do
-    let msg = newStart stream (expVersionInt32 exp_v) s_requireMaster
-    resp <- send transactionStartCmd transactionStartCompletedCmd msg
+transactionStart :: Settings
+                 -> Text
+                 -> ExpectedVersion
+                 -> Maybe Credentials
+                 -> Operation Int64
+transactionStart Settings{..} stream exp_v cred = construct $ do
+    let msg = newStart stream (expVersionInt64 exp_v) s_requireMaster
+    resp <- send transactionStartCmd transactionStartCompletedCmd cred msg
     let tid = getField $ _transId resp
         r   = getField $ _result resp
     case r of
@@ -62,11 +66,12 @@ transactionWrite :: Settings
                  -> ExpectedVersion
                  -> Int64
                  -> [Event]
+                 -> Maybe Credentials
                  -> Operation ()
-transactionWrite Settings{..} stream exp_v trans_id evts = construct $ do
+transactionWrite Settings{..} stream exp_v trans_id evts cred = construct $ do
     nevts <- traverse eventToNewEvent evts
     let msg = newWrite trans_id nevts s_requireMaster
-    resp <- send transactionWriteCmd transactionWriteCompletedCmd msg
+    resp <- send transactionWriteCmd transactionWriteCompletedCmd cred msg
     let r = getField $ _wwResult resp
     case r of
         OP_PREPARE_TIMEOUT        -> retry
@@ -84,10 +89,11 @@ transactionCommit :: Settings
                   -> Text
                   -> ExpectedVersion
                   -> Int64
+                  -> Maybe Credentials
                   -> Operation WriteResult
-transactionCommit Settings{..} stream exp_v trans_id = construct $ do
+transactionCommit Settings{..} stream exp_v trans_id cred = construct $ do
     let msg = newCommit trans_id s_requireMaster
-    resp <- send transactionCommitCmd transactionCommitCompletedCmd msg
+    resp <- send transactionCommitCmd transactionCommitCompletedCmd cred msg
     let r = getField $ _ccResult resp
         com_pos = getField $ _commitPosition resp
         pre_pos = getField $ _preparePosition resp

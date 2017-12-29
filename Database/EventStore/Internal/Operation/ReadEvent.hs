@@ -51,10 +51,11 @@ readEvent :: Settings
           -> Text
           -> Int32
           -> Bool
+          -> Maybe Credentials
           -> Operation (ReadResult 'RegularStream ReadEvent)
-readEvent Settings{..} s evtn tos = construct $ do
+readEvent Settings{..} s evtn tos cred = construct $ do
     let msg = newRequest s evtn tos s_requireMaster
-    resp <- send readEventCmd readEventCompletedCmd msg
+    resp <- send readEventCmd readEventCompletedCmd cred msg
     let r         = getField $ _result resp
         evt       = newResolvedEvent $ getField $ _indexedEvent resp
         err       = getField $ _error resp

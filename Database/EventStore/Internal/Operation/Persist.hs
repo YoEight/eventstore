@@ -19,19 +19,21 @@ import Data.UUID
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Subscription.Message
 import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-persist :: Text -> Text -> Int32 -> Operation SubAction
-persist grp stream bufSize = construct (issueRequest grp stream bufSize)
+persist :: Text -> Text -> Int32 -> Maybe Credentials -> Operation SubAction
+persist grp stream bufSize cred =
+  construct (issueRequest grp stream bufSize cred)
 
 --------------------------------------------------------------------------------
-issueRequest :: Text -> Text -> Int32 -> Code SubAction ()
-issueRequest grp stream bufSize = do
+issueRequest :: Text -> Text -> Int32 -> Maybe Credentials -> Code SubAction ()
+issueRequest grp stream bufSize cred = do
   let req = _connectToPersistentSubscription grp stream bufSize
-  request connectToPersistentSubscriptionCmd req
+  request connectToPersistentSubscriptionCmd cred req
     [ Expect subscriptionDroppedCmd $ \_ d ->
         handleDropped d
     , Expect persistentSubscriptionConfirmationCmd $ \sid c -> do

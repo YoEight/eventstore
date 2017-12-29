@@ -189,18 +189,18 @@ data ExpectedVersion
     = Any
     | NoStream
     | EmptyStream
-    | Exact Int32
+    | Exact Int64
     | StreamExists
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- | Maps a 'ExpectedVersion' to an 'Int32' understandable by the server.
-expVersionInt32 :: ExpectedVersion -> Int32
-expVersionInt32 Any         = -2
-expVersionInt32 NoStream    = -1
-expVersionInt32 EmptyStream = -1
-expVersionInt32 (Exact n)   = n
-expVersionInt32 StreamExists = -4
+expVersionInt64 :: ExpectedVersion -> Int64
+expVersionInt64 Any         = -2
+expVersionInt64 NoStream    = -1
+expVersionInt64 EmptyStream = -1
+expVersionInt64 (Exact n)   = n
+expVersionInt64 StreamExists = -4
 
 --------------------------------------------------------------------------------
 -- | This write should not conflict with anything and should always succeed.
@@ -222,7 +222,7 @@ emptyStreamVersion = EmptyStream
 --------------------------------------------------------------------------------
 -- | States that the last event written to the stream should have a
 --   sequence number matching your expected value.
-exactEventVersion :: Int32 -> ExpectedVersion
+exactEventVersion :: Int64 -> ExpectedVersion
 exactEventVersion n
     | n < 0     = error $ "expected version must be >= 0, but is " <> show n
     | otherwise = Exact n
@@ -277,7 +277,7 @@ newEvent evt_type evt_id data_type meta_type evt_data evt_meta =
 data EventRecord
     = EventRecord
       { eventRecordStreamId     :: Required 1  (Value Text)
-      , eventRecordNumber       :: Required 2  (Value Int32)
+      , eventRecordNumber       :: Required 2  (Value Int64)
       , eventRecordId           :: Required 3  (Value ByteString)
       , eventRecordType         :: Required 4  (Value Text)
       , eventRecordDataType     :: Required 5  (Value Int32)
@@ -440,7 +440,7 @@ data RecordedEvent
         -- ^ The event stream that this event  belongs to.
       , recordedEventId :: !UUID
         -- ^ Unique identifier representing this event.
-      , recordedEventNumber :: !Int32
+      , recordedEventNumber :: !Int64
         -- ^ Number of this event in the stream.
       , recordedEventType :: !Text
         -- ^ Type of this event.
@@ -563,7 +563,7 @@ resolvedEventOriginalId = recordedEventId . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
 -- | The event number of the original event.
-resolvedEventOriginalEventNumber :: ResolvedEvent -> Int32
+resolvedEventOriginalEventNumber :: ResolvedEvent -> Int64
 resolvedEventOriginalEventNumber = recordedEventNumber . resolvedEventOriginal
 
 --------------------------------------------------------------------------------
@@ -1038,7 +1038,7 @@ data PersistentSubscriptionSettings =
     { psSettingsResolveLinkTos :: !Bool
       -- ^ Whether or not the persistent subscription should resolve linkTo
       --   events to their linked events.
-    , psSettingsStartFrom :: !Int32
+    , psSettingsStartFrom :: !Int64
       -- ^ Where the subscription should start from (position).
     , psSettingsExtraStats :: !Bool
       -- ^ Whether or not in depth latency statistics should be tracked on this

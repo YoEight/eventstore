@@ -45,6 +45,7 @@ respondMWithConnectionBuilder :: (EndPoint -> Package -> IO Package)
                               -> ConnectionBuilder
 respondMWithConnectionBuilder resp = ConnectionBuilder $ \ept -> do
   uuid <- freshUUID
+  var  <- newEmptyMVar
   let conn = Connection
              { connectionId = uuid
              , connectionEndPoint = ept
@@ -53,6 +54,9 @@ respondMWithConnectionBuilder resp = ConnectionBuilder $ \ept -> do
                    cmd | cmd == getCommand 0x01 -> do
                            let rpkg = pkg { packageCmd = getCommand 0x02 }
                            publish (PackageArrived conn rpkg)
+                       | cmd == identifyClientCmd -> do
+                         putMVar var (packageCorrelation pkg)
+                         $logDebug "[bogus] Set Identify correlation"
                        | otherwise -> do
                          rpkg <- liftIO $ resp ept pkg
                          publish (PackageArrived conn rpkg)
@@ -60,6 +64,18 @@ respondMWithConnectionBuilder resp = ConnectionBuilder $ \ept -> do
              }
 
   publish (ConnectionEstablished conn)
+  $logDebug "[bogus] Publish ConnectionEstablished"
+  _ <- fork $ do
+    corrId <- readMVar var
+    let idPkg = Package { packageCmd         = clientIdentifiedCmd
+                        , packageCorrelation = corrId
+                        , packageData        = ""
+                        , packageCred        = Nothing
+                        }
+
+    -- Sends Identification response package.
+    publish (PackageArrived conn idPkg)
+    $logDebug "[bogus] Publish Identification response"
   return conn
 
 --------------------------------------------------------------------------------
@@ -67,13 +83,29 @@ respondMWithConnectionBuilder resp = ConnectionBuilder $ \ept -> do
 silentConnectionBuilder :: IO () -> ConnectionBuilder
 silentConnectionBuilder onConnect = ConnectionBuilder $ \ept -> do
   uuid <- freshUUID
+  var  <- newEmptyMVar
   liftIO onConnect
   let conn = Connection
              { connectionId = uuid
              , connectionEndPoint = ept
-             , enqueuePackage = \_ -> return ()
+             , enqueuePackage = \pkg ->
+                 when (packageCmd pkg == identifyClientCmd) $ do
+                   putMVar var (packageCorrelation pkg)
+                   $logDebug "[bogus] Set Identify correlation"
              , dispose = return ()
              }
 
   publish (ConnectionEstablished conn)
+  $logDebug "[bogus] Publish ConnectionEstablished"
+  _ <- fork $ do
+    corrId <- readMVar var
+    let idPkg = Package { packageCmd         = clientIdentifiedCmd
+                        , packageCorrelation = corrId
+                        , packageData        = ""
+                        , packageCred        = Nothing
+                        }
+
+    -- Sends Identification response package.
+    publish (PackageArrived conn idPkg)
+    $logDebug "[bogus] Publish Identification response"
   return conn

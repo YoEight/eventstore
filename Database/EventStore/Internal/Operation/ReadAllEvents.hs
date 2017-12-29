@@ -38,8 +38,9 @@ readAllEvents :: Settings
               -> Int32
               -> Bool
               -> ReadDirection
+              -> Maybe Credentials
               -> Operation AllSlice
-readAllEvents Settings{..} c_pos p_pos max_c tos dir = construct $ do
+readAllEvents Settings{..} c_pos p_pos max_c tos dir cred = construct $ do
     let msg = newRequest c_pos p_pos max_c tos s_requireMaster
         cmd = case dir of
             Forward  -> readAllEventsForwardCmd
@@ -48,7 +49,7 @@ readAllEvents Settings{..} c_pos p_pos max_c tos dir = construct $ do
         resp_cmd = case dir of
             Forward  -> readAllEventsForwardCompletedCmd
             Backward -> readAllEventsBackwardCompletedCmd
-    resp <- send cmd resp_cmd msg
+    resp <- send cmd resp_cmd cred msg
     let r      = getField $ _Result resp
         err    = getField $ _Error resp
         nc_pos = getField $ _NextCommitPosition resp

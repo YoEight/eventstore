@@ -49,6 +49,7 @@ import Database.EventStore.Internal.Types
 data Request =
   Request { _requestCmd     :: !Command
           , _requestPayload :: !ByteString
+          , _requestCred    :: !(Maybe Credentials)
           }
 
 --------------------------------------------------------------------------------
@@ -140,12 +141,12 @@ newSessions =
            <*> newIORef mempty
 
 --------------------------------------------------------------------------------
-packageOf :: Settings -> Request -> UUID -> Package
-packageOf setts Request{..} uuid =
+packageOf :: Request -> UUID -> Package
+packageOf Request{..} uuid =
   Package { packageCmd         = _requestCmd
           , packageCorrelation = uuid
           , packageData        = _requestPayload
-          , packageCred        = s_credentials setts
+          , packageCred        = _requestCred
           }
 
 --------------------------------------------------------------------------------
@@ -232,9 +233,10 @@ execute self@Registry{..} session@Session{..} =
             Await k tpe _ ->
               case tpe of
                 NeedUUID  -> loop . k =<< freshUUID
-                NeedRemote cmd payload -> do
+                NeedRemote cmd payload cred -> do
                   let req = Request { _requestCmd     = cmd
                                     , _requestPayload = payload
+                                    , _requestCred    = cred
                                     }
                   atomicWriteIORef sessionStack (Required k)
                   maybeConnection _regConnRef >>= \case
@@ -261,8 +263,7 @@ issueRequest reg@Registry{..} session conn req = do
   pending <- createPending session _stopwatch (connectionId conn) (Just req)
 
   insertPending reg uuid pending
-  setts <- getSettings
-  enqueuePackage conn (packageOf setts req uuid)
+  enqueuePackage conn (packageOf req uuid)
 
 --------------------------------------------------------------------------------
 createPending :: MonadBaseControl IO m
@@ -383,7 +384,7 @@ checkAndRetry self@Registry{..} = do
             then do
               let retry = do
                     uuid <- liftBase nextRandom
-                    let pkg     = packageOf setts req uuid
+                    let pkg     = packageOf req uuid
                         pending =
                           p { _pendingLastTry = elapsed
                             , _pendingRetries = _pendingRetries p + 1

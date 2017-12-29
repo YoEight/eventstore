@@ -43,6 +43,7 @@ data Phase
 data PersistentSubscription =
   PersistentSubscription { _perExec   :: Exec
                          , _perStream :: StreamName
+                         , _perCred   :: Maybe Credentials
                          , _perPhase  :: TVar Phase
                          , _perNext   :: STM (Maybe ResolvedEvent)
                          }
@@ -70,13 +71,14 @@ newPersistentSubscription :: Exec
                           -> Text
                           -> StreamName
                           -> Int32
+                          -> Maybe Credentials
                           -> IO PersistentSubscription
-newPersistentSubscription exec grp stream bufSize = do
+newPersistentSubscription exec grp stream bufSize cred = do
   phaseVar <- newTVarIO Pending
   queue    <- newTQueueIO
 
   let name = streamNameRaw stream
-      sub  = PersistentSubscription exec stream phaseVar $ do
+      sub  = PersistentSubscription exec stream cred phaseVar $ do
         p       <- readTVar phaseVar
         isEmpty <- isEmptyTQueue queue
         if isEmpty
@@ -105,7 +107,7 @@ newPersistentSubscription exec grp stream bufSize = do
             writeTVar phaseVar (Closed $ Right SubAborted)
 
   cb <- newCallback callback
-  publishWith exec (SubmitOperation cb (persist grp name bufSize))
+  publishWith exec (SubmitOperation cb (persist grp name bufSize cred))
   return sub
 
 --------------------------------------------------------------------------------
@@ -122,10 +124,9 @@ notifyEventsProcessed PersistentSubscription{..} evts = do
       Pending   -> retrySTM
       Running d -> return d
 
-  let setts    = execSettings _perExec
-      uuid     = subId details
+  let uuid     = subId details
       Just sid = subSubId details
-      pkg      = createAckPackage setts uuid sid evts
+      pkg      = createAckPackage _perCred uuid sid evts
   publishWith _perExec (SendPackage pkg)
 
 --------------------------------------------------------------------------------
@@ -177,8 +178,7 @@ notifyEventsFailed PersistentSubscription{..} act res evts = do
       Pending   -> retrySTM
       Running d -> return d
 
-  let setts    = execSettings _perExec
-      uuid     = subId details
+  let uuid     = subId details
       Just sid = subSubId details
-      pkg      = createNakPackage setts uuid sid act res evts
+      pkg      = createNakPackage _perCred uuid sid act res evts
   publishWith _perExec (SendPackage pkg)

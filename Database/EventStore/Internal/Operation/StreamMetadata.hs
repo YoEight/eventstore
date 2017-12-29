@@ -42,9 +42,12 @@ metaStream s = "$$" <> s
 
 --------------------------------------------------------------------------------
 -- | Read stream metadata operation.
-readMetaStream :: Settings -> Text -> Operation StreamMetadataResult
-readMetaStream setts s = construct $ do
-    let op = readEvent setts (metaStream s) (-1) False
+readMetaStream :: Settings
+               -> Text
+               -> Maybe Credentials
+               -> Operation StreamMetadataResult
+readMetaStream setts s cred = construct $ do
+    let op = readEvent setts (metaStream s) (-1) False cred
     tmp <- deconstruct (fmap Left op)
     onReadResult tmp $ \n e_num evt -> do
         let bytes = recordedEventData $ resolvedEventOriginal evt
@@ -57,13 +60,14 @@ readMetaStream setts s = construct $ do
 setMetaStream :: Settings
               -> Text
               -> ExpectedVersion
+              -> Maybe Credentials
               -> StreamMetadata
               -> Operation WriteResult
-setMetaStream setts s v meta =
+setMetaStream setts s v cred meta =
     let stream = metaStream s
         json   = streamMetadataJSON meta
         evt    = createEvent StreamMetadataType Nothing (withJson json) in
-     writeEvents setts stream v [evt]
+     writeEvents setts stream v cred [evt]
 
 --------------------------------------------------------------------------------
 invalidFormat :: OperationError

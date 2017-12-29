@@ -52,7 +52,7 @@ streamNotFound stream = StreamNotFound stream
 --------------------------------------------------------------------------------
 -- | Catchup operation state.
 data CatchupState
-    = RegularCatchup Text Int32
+    = RegularCatchup Text Int64
       -- ^ Indicates the stream name and the next event number to start from.
     | AllCatchup Position
       -- ^ Indicates the commit and prepare position. Used when catching up from
@@ -60,16 +60,21 @@ data CatchupState
     deriving Show
 
 --------------------------------------------------------------------------------
-fetch :: Settings -> Int32 -> Bool -> CatchupState -> Code o SomeSlice
-fetch setts batch tos state =
+fetch :: Settings
+      -> Int32
+      -> Bool
+      -> CatchupState
+      -> Maybe Credentials
+      -> Code o SomeSlice
+fetch setts batch tos state cred =
     case state of
         RegularCatchup stream n -> do
             outcome <- deconstruct $ fmap Left $
-                           readStreamEvents setts Forward stream n batch tos
+                           readStreamEvents setts Forward stream n batch tos cred
             fromReadResult stream outcome (return . toSlice)
         AllCatchup (Position com pre) ->
             deconstruct $ fmap (Left . toSlice) $
-                readAllEvents setts com pre batch tos Forward
+                readAllEvents setts com pre batch tos Forward cred
 
 --------------------------------------------------------------------------------
 updateState :: CatchupState -> Location -> CatchupState
@@ -83,11 +88,12 @@ sourceStream :: Settings
              -> Int32
              -> Bool
              -> CatchupState
+             -> Maybe Credentials
              -> Operation SubAction
-sourceStream setts batch tos start = unfoldPlan start go
+sourceStream setts batch tos start cred = unfoldPlan start go
   where
     go state = do
-        s <- fetch setts batch tos state
+        s <- fetch setts batch tos state cred
         traverse_ (yield . Submit) (sliceEvents s)
 
         when (sliceEOS s)
@@ -113,9 +119,10 @@ catchup :: Settings
         -> CatchupState
         -> Bool
         -> Maybe Int32
+        -> Maybe Credentials
         -> Operation SubAction
-catchup setts state tos batchSiz =
-    sourceStream setts batch tos state <> volatile stream tos
+catchup setts state tos batchSiz cred =
+    sourceStream setts batch tos state cred <> volatile stream tos cred
   where
     batch  = fromMaybe defaultBatchSize batchSiz
     stream = catchupStreamName state

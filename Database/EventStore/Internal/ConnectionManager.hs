@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE ViewPatterns       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.ConnectionManager
@@ -33,6 +34,8 @@ import           Database.EventStore.Internal.Discovery
 import           Database.EventStore.Internal.EndPoint
 import           Database.EventStore.Internal.Logger
 import           Database.EventStore.Internal.Operation
+import           Database.EventStore.Internal.Operation.Authenticate (newAuthenticatePkg)
+import           Database.EventStore.Internal.Operation.Identify (newIdentifyPkg)
 import qualified Database.EventStore.Internal.OperationManager as Operation
 import           Database.EventStore.Internal.Prelude
 import           Database.EventStore.Internal.Stopwatch
@@ -57,6 +60,8 @@ data ConnectingState
   = Reconnecting
   | EndpointDiscovery
   | ConnectionEstablishing Connection
+  | Authentication UUID NominalDiffTime Connection
+  | Identification UUID NominalDiffTime Connection
   deriving Show
 
 --------------------------------------------------------------------------------
@@ -79,6 +84,16 @@ instance Show ConnectionMaxAttemptReached where
 
 --------------------------------------------------------------------------------
 instance Exception ConnectionMaxAttemptReached
+
+--------------------------------------------------------------------------------
+data IdentificationTimeout = IdentificationTimeout
+
+--------------------------------------------------------------------------------
+instance Show IdentificationTimeout where
+  show _ = "Timed out waiting for client to be identified."
+
+--------------------------------------------------------------------------------
+instance Exception IdentificationTimeout
 
 --------------------------------------------------------------------------------
 data EstablishConnection = EstablishConnection EndPoint deriving Typeable
@@ -237,12 +252,55 @@ establish Internal{..} ept = do
 established :: Internal -> Connection -> EventStore ()
 established self@Internal{..} conn =
   readIORef _stage >>= \case
-    Connecting _ (ConnectionEstablishing known) -> do
+    Connecting att (ConnectionEstablishing known) -> do
       when (conn == known) $ do
         $logDebug [i|TCP connection established: #{conn}.|]
-        atomicWriteIORef _stage (Connected conn)
-        initHeartbeatTracker self
+        setts <- getSettings
+        case s_defaultUserCredentials setts of
+          Just cred -> authenticate self att conn cred
+          Nothing   -> identifyClient self att known
     _ -> return ()
+
+--------------------------------------------------------------------------------
+authenticate :: Internal
+             -> Attempts
+             -> Connection
+             -> Credentials
+             -> EventStore ()
+authenticate Internal{..} att conn cred = do
+  pkg     <- newAuthenticatePkg cred
+  elapsed <- stopwatchElapsed _stopwatch
+  let authCorr = packageCorrelation pkg
+
+  atomicWriteIORef _stage (Connecting att (Authentication authCorr elapsed conn))
+  enqueuePackage conn pkg
+
+--------------------------------------------------------------------------------
+identifyClient :: Internal -> Attempts -> Connection -> EventStore ()
+identifyClient Internal{..} att conn = do
+  setts <- getSettings
+  uuid  <- newUUID
+  let defName  = [i|ES-#{uuid}|]
+      connName = fromMaybe defName (s_defaultConnectionName setts)
+
+  pkg     <- newIdentifyPkg clientVersion connName
+  elapsed <- stopwatchElapsed _stopwatch
+  let idCorr = packageCorrelation pkg
+
+  atomicWriteIORef _stage (Connecting att (Identification idCorr elapsed conn))
+  enqueuePackage conn pkg
+  where
+    clientVersion = 1
+
+--------------------------------------------------------------------------------
+clientIdentified :: Internal -> EventStore ()
+clientIdentified self@Internal{..} =
+  readIORef _stage >>= \case
+    Connecting _ (Identification _ _ conn) -> do
+      $logDebug [i|TCP connection identified: #{conn}.|]
+      atomicWriteIORef _stage (Connected conn)
+      initHeartbeatTracker self
+    _ -> pure ()
 
 --------------------------------------------------------------------------------
 onEstablished :: Internal -> ConnectionEstablished -> EventStore ()
@@ -314,21 +372,31 @@ onTick :: Internal -> Tick -> EventStore ()
 onTick self@Internal{..} _ = do
   setts <- getSettings
   readIORef _stage >>= \case
-    Connecting Attempts{..} s
-      | onGoingConnection s -> do
-        elapsed <- stopwatchElapsed _stopwatch
-        if elapsed - attemptLastStart >= s_reconnect_delay setts
-          then do
-            let retries = attemptCount + 1
-                att     = Attempts retries elapsed
-            atomicWriteIORef _stage (Connecting att Reconnecting)
-            case s_retry setts of
-              AtMost n
-                | attemptCount <= n -> retryConnection attemptCount
-                | otherwise -> maxAttemptReached
-              KeepRetrying -> retryConnection attemptCount
-          else return ()
-      | otherwise -> manageHeartbeats self
+    (onGoingConnection -> Just Attempts{..}) -> do
+      elapsed <- stopwatchElapsed _stopwatch
+      when (elapsed - attemptLastStart >= s_reconnect_delay setts) $ do
+        let retries = attemptCount + 1
+            att     = Attempts retries elapsed
+        atomicWriteIORef _stage (Connecting att Reconnecting)
+        case s_retry setts of
+          AtMost n
+            | attemptCount <= n -> retryConnection attemptCount
+            | otherwise -> maxAttemptReached
+          KeepRetrying -> retryConnection attemptCount
+
+    (pendingAuthenticate -> Just (started, att, conn)) -> do
+      elapsed <- stopwatchElapsed _stopwatch
+      when (elapsed - started >= s_operationTimeout setts) $ do
+        $logWarn "Authentication timed out."
+        identifyClient self att conn
+
+    (pendingIdentification -> Just started) -> do
+      elapsed <- stopwatchElapsed _stopwatch
+      when (elapsed - started >= s_operationTimeout setts) $
+        closeConnection self IdentificationTimeout
+
+    (defaultConnecting -> True) -> manageHeartbeats self
+
     Connected _ -> do
       elapsed           <- stopwatchElapsed _stopwatch
       timeoutCheckStart <- readIORef _lastCheck
@@ -338,11 +406,21 @@ onTick self@Internal{..} _ = do
         atomicWriteIORef _lastCheck elapsed
 
       manageHeartbeats self
+
     _ -> return ()
   where
-    onGoingConnection Reconnecting             = True
-    onGoingConnection ConnectionEstablishing{} = True
-    onGoingConnection _                        = False
+    onGoingConnection (Connecting att Reconnecting)             = Just att
+    onGoingConnection (Connecting att ConnectionEstablishing{}) = Just att
+    onGoingConnection _                                         = Nothing
+
+    pendingIdentification (Connecting _ (Identification _ started _)) = Just started
+    pendingIdentification _                                           = Nothing
+
+    pendingAuthenticate (Connecting a (Authentication _ started c)) = Just (started, a, c)
+    pendingAuthenticate _                                           = Nothing
+
+    defaultConnecting Connecting{} = True
+    defaultConnecting _            = False
 
     maxAttemptReached = do
       closeConnection self ConnectionMaxAttemptReached
@@ -405,22 +483,38 @@ manageHeartbeats self@Internal{..} = traverse_ go =<< lookupConnection self
 
 --------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> EventStore ()
-onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
-  withConnection $ \knownConn -> do
-    if knownConn == conn
-      then do
-        $logDebug [i|Package received:  #{pkg}.|]
-        incrPackageNumber self
-        handlePackage
-      else do
-        $logDebug [i|Package IGNORED: #{pkg}.|]
+onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) =
+  readIORef _stage >>= \case
+    (onAuthentication -> Just att) -> do
+      when (packageCmd == notAuthenticatedCmd) $
+        $logWarn "Not authenticated."
+
+      identifyClient self att conn
+
+    (onIdentification -> True) ->
+      clientIdentified self
+
+    (runningConnection -> True) -> do
+      $logDebug [i|Package received:  #{pkg}.|]
+      incrPackageNumber self
+      handlePackage
+
+    _ -> $logDebug [i|Package IGNORED: #{pkg}.|]
+
   where
-    withConnection :: (Connection -> EventStore ()) -> EventStore ()
-    withConnection k = do
-      readIORef _stage >>= \case
-        Connecting _ (ConnectionEstablishing c) -> k c
-        Connected c -> k c
-        _ -> $logDebug [i|Package IGNORED: #{pkg}|]
+    onIdentification (Connecting _ (Identification u _ _)) =
+      packageCorrelation == u && packageCmd == clientIdentifiedCmd
+    onIdentification _ = False
+
+    onAuthentication (Connecting a (Authentication u _ _)) =
+      if packageCorrelation == u && packageCmd == authenticatedCmd
+      then Just a
+      else Nothing
+    onAuthentication _ = Nothing
+
+    runningConnection (Connecting _ (ConnectionEstablishing c)) = conn == c
+    runningConnection (Connected c) = conn == c
+    runningConnection _ = False
 
     heartbeatResponse = heartbeatResponsePackage packageCorrelation
 

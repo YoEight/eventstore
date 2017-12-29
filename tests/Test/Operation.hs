@@ -58,7 +58,7 @@ spec = beforeAll (createLoggerRef testGlobalLog) $ do
     exec <- newExec testSettings bus builder testDisc
 
     p <- newPromise
-    let op = readEvent testSettings "foo" 1 True
+    let op = readEvent testSettings "foo" 1 True Nothing
     publishWith exec (SubmitOperation p op)
 
     res <- takeMVar var

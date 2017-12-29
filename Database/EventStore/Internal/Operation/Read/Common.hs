@@ -105,17 +105,17 @@ class Slice a where
 data StreamSlice =
     StreamSlice
     { sliceStream :: !Text
-    , sliceLast   :: !Int32
+    , sliceLast   :: !Int64
     , _ssDir      :: !ReadDirection
-    , _ssFrom     :: !Int32
-    , _ssNext     :: !Int32
+    , _ssFrom     :: !Int64
+    , _ssNext     :: !Int64
     , _ssEvents   :: ![ResolvedEvent]
     , _ssEOS      :: !Bool
     } deriving Show
 
 --------------------------------------------------------------------------------
 instance Slice StreamSlice where
-    type Loc StreamSlice = Int32
+    type Loc StreamSlice = Int64
 
     sliceEvents    = _ssEvents
     sliceDirection = _ssDir
@@ -164,7 +164,7 @@ instance Slice AllSlice where
 
 --------------------------------------------------------------------------------
 data Location
-    = StreamEventNumber !Int32
+    = StreamEventNumber !Int64
     | StreamPosition !Position
     deriving Show
 

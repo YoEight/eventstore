@@ -28,7 +28,7 @@ import Database.EventStore.Internal.Types
 data Request
     = Request
       { _streamId       :: Required 1 (Value Text)
-      , _eventNumber    :: Required 2 (Value Int32)
+      , _eventNumber    :: Required 2 (Value Int64)
       , _maxCount       :: Required 3 (Value Int32)
       , _resolveLinkTos :: Required 4 (Value Bool)
       , _requireMaster  :: Required 5 (Value Bool)
@@ -37,7 +37,7 @@ data Request
 
 --------------------------------------------------------------------------------
 -- | 'Request' smart constructor.
-newRequest :: Text -> Int32 -> Int32 -> Bool -> Bool -> Request
+newRequest :: Text -> Int64 -> Int32 -> Bool -> Bool -> Request
 newRequest stream_id evt_num max_c res_link_tos req_master =
     Request
     { _streamId       = putField stream_id
@@ -67,8 +67,8 @@ data Response
     = Response
       { _events             :: Repeated 1 (Message ResolvedIndexedEvent)
       , _result             :: Required 2 (Enumeration Result)
-      , _nextNumber         :: Required 3 (Value Int32)
-      , _lastNumber         :: Required 4 (Value Int32)
+      , _nextNumber         :: Required 3 (Value Int64)
+      , _lastNumber         :: Required 4 (Value Int64)
       , _endOfStream        :: Required 5 (Value Bool)
       , _lastCommitPosition :: Required 6 (Value Int64)
       , _error              :: Optional 7 (Value Text)

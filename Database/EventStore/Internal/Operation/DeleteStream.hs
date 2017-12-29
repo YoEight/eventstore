@@ -43,10 +43,11 @@ deleteStream :: Settings
              -> Text
              -> ExpectedVersion
              -> Maybe Bool
+             -> Maybe Credentials
              -> Operation DeleteResult
-deleteStream Settings{..} s v hard = construct $ do
-    let msg = newRequest s (expVersionInt32 v) s_requireMaster hard
-    resp <- send deleteStreamCmd deleteStreamCompletedCmd msg
+deleteStream Settings{..} s v hard cred = construct $ do
+    let msg = newRequest s (expVersionInt64 v) s_requireMaster hard
+    resp <- send deleteStreamCmd deleteStreamCompletedCmd cred msg
     let r            = getField $ _result resp
         com_pos      = getField $ _commitPosition resp
         prep_pos     = getField $ _preparePosition resp

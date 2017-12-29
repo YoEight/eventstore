@@ -2,10 +2,10 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: b65398bb75c62cbf998e64b1daf5d3f9a3b8c7088fccc6c36ac00c3c26570edd
+-- hash: 70e5d73a40b1438ce61869b5ee57386242e9ecc0f0f6f0ae9a9180d37015a8ee
 
 name:           eventstore
-version:        1.0.0
+version:        1.1.0
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <http://geteventstore.com>
 category:       Database
@@ -89,9 +89,11 @@ library
       Database.EventStore.Internal.Logger
       Database.EventStore.Internal.Manager.Operation.Registry
       Database.EventStore.Internal.Operation
+      Database.EventStore.Internal.Operation.Authenticate
       Database.EventStore.Internal.Operation.Catchup
       Database.EventStore.Internal.Operation.DeleteStream
       Database.EventStore.Internal.Operation.DeleteStream.Message
+      Database.EventStore.Internal.Operation.Identify
       Database.EventStore.Internal.Operation.Persist
       Database.EventStore.Internal.Operation.PersistOperations
       Database.EventStore.Internal.Operation.Read.Common
