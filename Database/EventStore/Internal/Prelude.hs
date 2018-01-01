@@ -21,6 +21,7 @@ module Database.EventStore.Internal.Prelude
   , Set
   , ByteString
   , Text
+  , UUID
   , Generic
   , Alternative(..)
   , MonadBaseControl(..)
@@ -36,6 +37,7 @@ module Database.EventStore.Internal.Prelude
   , whenM
   , isJust
   , null
+  , newUUID
   , module Prelude
   , module Control.Applicative
   , module Data.Int
@@ -160,6 +162,8 @@ import           Data.Sequence (Seq)
 import           Data.Set (Set)
 import           Data.Text (Text)
 import           Data.Time
+import           Data.UUID (UUID)
+import           Data.UUID.V4 (nextRandom)
 
 --------------------------------------------------------------------------------
 -- | Generalized version of 'STM.atomically'.
@@ -183,3 +187,7 @@ whenM mbool action = mbool >>= flip when action
 -- | Only perform the action if the predicate returns 'False'.
 unlessM :: Monad m => m Bool -> m () -> m ()
 unlessM mbool action = mbool >>= flip unless action
+
+--------------------------------------------------------------------------------
+newUUID :: MonadBase IO m => m UUID
+newUUID = liftBase nextRandom

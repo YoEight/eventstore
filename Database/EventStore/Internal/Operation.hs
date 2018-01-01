@@ -53,6 +53,7 @@ import Data.UUID
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
@@ -122,7 +123,7 @@ type Operation output = MachineT Execution Need output
 --------------------------------------------------------------------------------
 data Need a where
   NeedUUID   :: Need UUID
-  NeedRemote :: Command -> ByteString -> Need Package
+  NeedRemote :: Command -> ByteString -> Maybe Credentials -> Need Package
   WaitRemote :: UUID -> Need (Maybe Package)
 
 --------------------------------------------------------------------------------
@@ -150,11 +151,12 @@ retry = lift Retry
 send :: (Encode req, Decode resp)
      => Command
      -> Command
+     -> Maybe Credentials
      -> req
      -> Code o resp
-send reqCmd expCmd req = do
+send reqCmd expCmd cred req = do
   let payload = runPut $ encodeMessage req
-  pkg <- awaits $ NeedRemote reqCmd payload
+  pkg <- awaits $ NeedRemote reqCmd payload cred
   let gotCmd = packageCmd pkg
 
   when (gotCmd /= expCmd)
@@ -184,12 +186,13 @@ runFirstMatch pkg (Expect cmd k:rest)
 --   message along with the correlation id of the network exchange.
 request :: Encode req
         => Command
+        -> Maybe Credentials
         -> req
         -> [Expect o]
         -> Code o ()
-request reqCmd rq exps = do
+request reqCmd cred rq exps = do
   let payload = runPut $ encodeMessage rq
-  pkg <- awaits $ NeedRemote reqCmd payload
+  pkg <- awaits $ NeedRemote reqCmd payload cred
   runFirstMatch pkg exps
 
 --------------------------------------------------------------------------------

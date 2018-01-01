@@ -67,7 +67,7 @@ newtype SubscriptionId = SubscriptionId UUID deriving (Eq, Ord, Show)
 data SubDetails =
   SubDetails { subId           :: !UUID
              , subCommitPos    :: !Int64
-             , subLastEventNum :: !(Maybe Int32)
+             , subLastEventNum :: !(Maybe Int64)
              , subSubId        :: !(Maybe Text)
              }
 

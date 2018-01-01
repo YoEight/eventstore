@@ -29,7 +29,7 @@ import Database.EventStore.Internal.Types
 data Request
     = Request
       { _streamId        :: Required 1 (Value Text)
-      , _expectedVersion :: Required 2 (Value Int32)
+      , _expectedVersion :: Required 2 (Value Int64)
       , _events          :: Repeated 3 (Message NewEvent)
       , _requireMaster   :: Required 4 (Value Bool)
       }
@@ -41,7 +41,7 @@ instance Encode Request
 --------------------------------------------------------------------------------
 -- | 'Request' smart constructor.
 newRequest :: Text        -- ^ Stream
-           -> Int32       -- ^ Expected version
+           -> Int64       -- ^ Expected version
            -> [NewEvent]  -- ^ Events
            -> Bool        -- ^ Require master
            -> Request
@@ -59,8 +59,8 @@ data Response
     = Response
       { _result          :: Required 1 (Enumeration OpResult)
       , _message         :: Optional 2 (Value Text)
-      , _firstNumber     :: Required 3 (Value Int32)
-      , _lastNumber      :: Required 4 (Value Int32)
+      , _firstNumber     :: Required 3 (Value Int64)
+      , _lastNumber      :: Required 4 (Value Int64)
       , _preparePosition :: Optional 5 (Value Int64)
       , _commitPosition  :: Optional 6 (Value Int64)
       }

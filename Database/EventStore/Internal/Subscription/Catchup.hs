@@ -39,7 +39,7 @@ data Phase
 
 --------------------------------------------------------------------------------
 data CatchupTrack
-  = CatchupRegular !(Maybe Int32)
+  = CatchupRegular !(Maybe Int64)
   | CatchupAll !(Maybe Position)
 
 --------------------------------------------------------------------------------
@@ -108,9 +108,10 @@ streamText _              = ""
 newCatchupSubscription :: Exec
                        -> Bool
                        -> Maybe Int32
+                       -> Maybe Credentials
                        -> CatchupState
                        -> IO CatchupSubscription
-newCatchupSubscription exec tos batch state = do
+newCatchupSubscription exec tos batch cred state = do
   phaseVar <- newTVarIO CatchingUp
   queue    <- newTQueueIO
   track    <- newTVarIO $ catchupTrack state
@@ -131,7 +132,7 @@ newCatchupSubscription exec tos batch state = do
           Just opE ->
             case opE of
               StreamNotFound{} -> do
-                let op = volatile (streamText stream) tos
+                let op = volatile (streamText stream) tos cred
                 publishWith exec (SubmitOperation cb op)
               _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
           _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
@@ -158,13 +159,13 @@ newCatchupSubscription exec tos batch state = do
                         Just p -> AllCatchup p
                         _      -> state
 
-                newOp = catchup (execSettings exec) newState tos batch
+                newOp = catchup (execSettings exec) newState tos batch cred
 
             newCb <- mfix $ \self -> newCallback (callback self)
             publishWith exec (SubmitOperation newCb newOp)
 
   cb <- mfix $ \self -> newCallback (callback self)
-  let op = catchup (execSettings exec) state tos batch
+  let op = catchup (execSettings exec) state tos batch cred
   publishWith exec (SubmitOperation cb op)
   return sub
 

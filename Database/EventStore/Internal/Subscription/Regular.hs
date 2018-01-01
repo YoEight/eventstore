@@ -63,8 +63,9 @@ instance Subscription RegularSubscription where
 newRegularSubscription :: Exec
                        -> StreamName
                        -> Bool
+                       -> Maybe Credentials
                        -> IO RegularSubscription
-newRegularSubscription exec stream tos = do
+newRegularSubscription exec stream tos cred = do
   phaseVar <- newTVarIO Pending
   queue    <- newTQueueIO
 
@@ -98,5 +99,5 @@ newRegularSubscription exec stream tos = do
             writeTVar phaseVar (Closed $ Right SubAborted)
 
   cb <- newCallback callback
-  publishWith exec (SubmitOperation cb (volatile name tos))
+  publishWith exec (SubmitOperation cb (volatile name tos cred))
   return sub

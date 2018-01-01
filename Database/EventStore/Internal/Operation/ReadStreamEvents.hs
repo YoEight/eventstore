@@ -35,11 +35,12 @@ import Database.EventStore.Internal.Types
 readStreamEvents :: Settings
                  -> ReadDirection
                  -> Text
-                 -> Int32
+                 -> Int64
                  -> Int32
                  -> Bool
+                 -> Maybe Credentials
                  -> Operation (ReadResult 'RegularStream StreamSlice)
-readStreamEvents Settings{..} dir s st cnt tos = construct $ do
+readStreamEvents Settings{..} dir s st cnt tos cred = construct $ do
     let req_cmd =
             case dir of
                 Forward  -> readStreamEventsForwardCmd
@@ -50,7 +51,7 @@ readStreamEvents Settings{..} dir s st cnt tos = construct $ do
                 Backward -> readStreamEventsBackwardCompletedCmd
 
         msg = newRequest s st cnt tos s_requireMaster
-    resp <- send req_cmd resp_cmd msg
+    resp <- send req_cmd resp_cmd cred msg
     let r     = getField $ _result resp
         es    = getField $ _events resp
         evts  = fmap newResolvedEvent es

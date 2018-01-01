@@ -34,12 +34,13 @@ import Database.EventStore.Internal.Types
 writeEvents :: Settings
             -> Text
             -> ExpectedVersion
+            -> Maybe Credentials
             -> [Event]
             -> Operation WriteResult
-writeEvents Settings{..} s v evts = construct $ do
+writeEvents Settings{..} s v cred evts = construct $ do
     nevts <- traverse eventToNewEvent evts
-    let msg = newRequest s (expVersionInt32 v) nevts s_requireMaster
-    resp <- send writeEventsCmd writeEventsCompletedCmd msg
+    let msg = newRequest s (expVersionInt64 v) nevts s_requireMaster
+    resp <- send writeEventsCmd writeEventsCompletedCmd cred msg
     let r            = getField $ _result resp
         com_pos      = getField $ _commitPosition resp
         prep_pos     = getField $ _preparePosition resp

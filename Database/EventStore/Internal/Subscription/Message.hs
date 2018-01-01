@@ -56,7 +56,7 @@ subscribeToStream stream_id res_link_tos =
 data SubscriptionConfirmation
     = SubscriptionConfirmation
       { subscribeLastCommitPos   :: Required 1 (Value Int64)
-      , subscribeLastEventNumber :: Optional 2 (Value Int32)
+      , subscribeLastEventNumber :: Optional 2 (Value Int64)
       }
     deriving (Generic, Show)
 
@@ -109,7 +109,7 @@ data CreatePersistentSubscription =
     { cpsGroupName         :: Required 1  (Value Text)
     , cpsStreamId          :: Required 2  (Value Text)
     , cpsResolveLinkTos    :: Required 3  (Value Bool)
-    , cpsStartFrom         :: Required 4  (Value Int32)
+    , cpsStartFrom         :: Required 4  (Value Int64)
     , cpsMsgTimeout        :: Required 5  (Value Int32)
     , cpsRecordStats       :: Required 6  (Value Bool)
     , cpsLiveBufSize       :: Required 7  (Value Int32)
@@ -230,7 +230,7 @@ data UpdatePersistentSubscription =
     { upsGroupName         :: Required 1  (Value Text)
     , upsStreamId          :: Required 2  (Value Text)
     , upsResolveLinkTos    :: Required 3  (Value Bool)
-    , upsStartFrom         :: Required 4  (Value Int32)
+    , upsStartFrom         :: Required 4  (Value Int64)
     , upsMsgTimeout        :: Required 5  (Value Int32)
     , upsRecordStats       :: Required 6  (Value Bool)
     , upsLiveBufSize       :: Required 7  (Value Int32)
@@ -395,7 +395,7 @@ data PersistentSubscriptionConfirmation =
     PersistentSubscriptionConfirmation
     { pscLastCommitPos :: Required 1 (Value Int64)
     , pscId            :: Required 2 (Value Text)
-    , pscLastEvtNumber :: Optional 3 (Value Int32)
+    , pscLastEvtNumber :: Optional 3 (Value Int64)
     } deriving (Generic, Show)
 
 --------------------------------------------------------------------------------

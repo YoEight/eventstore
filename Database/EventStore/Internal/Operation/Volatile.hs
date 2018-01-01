@@ -19,19 +19,20 @@ import Data.UUID
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Subscription.Message
 import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-volatile :: Text -> Bool -> Operation SubAction
-volatile stream tos = construct (issueRequest stream tos)
+volatile :: Text -> Bool -> Maybe Credentials -> Operation SubAction
+volatile stream tos cred = construct (issueRequest stream tos cred)
 
 --------------------------------------------------------------------------------
-issueRequest :: Text -> Bool -> Code SubAction ()
-issueRequest stream tos = do
+issueRequest :: Text -> Bool -> Maybe Credentials -> Code SubAction ()
+issueRequest stream tos cred = do
   let req = subscribeToStream stream tos
-  request subscribeToStreamCmd req
+  request subscribeToStreamCmd cred req
     [ Expect subscriptionDroppedCmd $ \_ d ->
         handleDropped d
     , Expect subscriptionConfirmationCmd $ \sid c -> do

@@ -12,7 +12,9 @@ Requirements
   * 64bits system
   * GHC        >= 7.8.3
   * Cabal      >= 1.18
-  * EventStore >= 3.0.0 (>= 3.1.0 if you want competing consumers)
+  * EventStore >= 3.0.0 (>= 3.1.0 if you want competing consumers).
+
+*Note: If you use this client version >= to `1.1`, it will only supports EventStore >= 4.0.0.*
 
 Install
 =======
@@ -44,6 +46,8 @@ $ cabal test
 How to use
 ==========
 
+This code snippet showcases client version >= `1.1`.
+
 ```haskell
 {-# LANGUAGE OverloadedStrings #-} -- That library uses `Text` pervasively. This pragma permits to use
                                    -- String literal when a Text is needed.
@@ -71,7 +75,7 @@ main = do
         evt = createEvent "programming" Nothing (withJson js)
 
     -- Appends an event to a stream named `languages`.
-    as <- sendEvent conn "languages" anyVersion evt
+    as <- sendEvent conn "languages" anyVersion evt Nothing
 
     -- EventStore interactions are fundamentally asynchronous. Nothing requires you to wait
     -- for the completion of an operation, but it's good to know if something went wrong.
@@ -88,7 +92,7 @@ main = do
 ```
 Notes
 =====
-That library was tested on Linux and OSX Yosemite.
+That library was tested on Linux and OSX.
 
 Contributions and bug reports are welcome!
 

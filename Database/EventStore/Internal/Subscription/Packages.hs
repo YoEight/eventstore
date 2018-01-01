@@ -13,9 +13,6 @@
 module Database.EventStore.Internal.Subscription.Packages where
 
 --------------------------------------------------------------------------------
-import Data.Int
-
---------------------------------------------------------------------------------
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.UUID
@@ -25,79 +22,17 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Subscription.Message
-import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
--- | Creates a regular subscription connection 'Package'.
-createConnectRegularPackage :: Settings -> UUID -> Text -> Bool -> Package
-createConnectRegularPackage Settings{..} uuid stream tos =
-    Package
-    { packageCmd         = subscribeToStreamCmd
-    , packageCorrelation = uuid
-    , packageData        = runPut $ encodeMessage msg
-    , packageCred        = s_credentials
-    }
-  where
-    msg = subscribeToStream stream tos
-
---------------------------------------------------------------------------------
--- | Creates a persistent subscription connection 'Package'.
-createConnectPersistPackage :: Settings
-                            -> UUID
-                            -> Text
-                            -> Text
-                            -> Int32
-                            -> Package
-createConnectPersistPackage Settings{..} uuid grp stream bufSize =
-    Package
-    { packageCmd         = connectToPersistentSubscriptionCmd
-    , packageCorrelation = uuid
-    , packageData        = runPut $ encodeMessage msg
-    , packageCred        = s_credentials
-    }
-  where
-    msg = _connectToPersistentSubscription grp stream bufSize
-
---------------------------------------------------------------------------------
--- | Creates a persistent subscription 'Package'.
-createPersistActionPackage :: Settings
-                           -> UUID
-                           -> Text
-                           -> Text
-                           -> PersistAction
-                           -> Package
-createPersistActionPackage Settings{..} u grp strm tpe =
-    Package
-    { packageCmd         = cmd
-    , packageCorrelation = u
-    , packageData        = runPut msg
-    , packageCred        = s_credentials
-    }
-  where
-    msg =
-        case tpe of
-            PersistCreate sett ->
-                encodeMessage $ _createPersistentSubscription grp strm sett
-            PersistUpdate sett ->
-                encodeMessage $ _updatePersistentSubscription grp strm sett
-            PersistDelete ->
-                encodeMessage $ _deletePersistentSubscription grp strm
-    cmd =
-        case tpe of
-            PersistCreate _  -> createPersistentSubscriptionCmd
-            PersistUpdate _  -> updatePersistentSubscriptionCmd
-            PersistDelete    -> deletePersistentSubscriptionCmd
-
---------------------------------------------------------------------------------
 -- | Creates Ack 'Package'.
-createAckPackage :: Settings -> UUID -> Text -> [UUID] -> Package
-createAckPackage Settings{..} corr sid eids =
+createAckPackage :: Maybe Credentials -> UUID -> Text -> [UUID] -> Package
+createAckPackage cred corr sid eids =
     Package
     { packageCmd         = persistentSubscriptionAckEventsCmd
     , packageCorrelation = corr
     , packageData        = runPut $ encodeMessage msg
-    , packageCred        = s_credentials
+    , packageCred        = cred
     }
   where
     bytes = fmap (toStrict . toByteString) eids
@@ -105,19 +40,19 @@ createAckPackage Settings{..} corr sid eids =
 
 --------------------------------------------------------------------------------
 -- | Create Nak 'Package'.
-createNakPackage :: Settings
+createNakPackage :: Maybe Credentials
                  -> UUID
                  -> Text
                  -> NakAction
                  -> Maybe Text
                  -> [UUID]
                  -> Package
-createNakPackage Settings{..} corr sid act txt eids =
+createNakPackage cred corr sid act txt eids =
     Package
     { packageCmd         = persistentSubscriptionNakEventsCmd
     , packageCorrelation = corr
     , packageData        = runPut $ encodeMessage msg
-    , packageCred        = s_credentials
+    , packageCred        = cred
     }
   where
     bytes = fmap (toStrict . toByteString) eids
@@ -133,3 +68,13 @@ createUnsubscribePackage uuid =
     , packageData        = runPut $ encodeMessage UnsubscribeFromStream
     , packageCred        = Nothing
     }
+
+--------------------------------------------------------------------------------
+createAuthPackage :: Credentials -> UUID -> Package
+createAuthPackage cred uuid =
+  Package
+  { packageCmd         = authenticateCmd
+  , packageCorrelation = uuid
+  , packageData        = ""
+  , packageCred        = Just cred
+  }

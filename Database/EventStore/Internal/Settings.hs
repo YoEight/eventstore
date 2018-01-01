@@ -82,8 +82,6 @@ data Settings
       , s_requireMaster :: Bool
         -- ^ On a cluster settings. Requires the master node when performing a
         --   write operation.
-      , s_credentials :: Maybe Credentials
-        -- ^ 'Credentials' used for an authenticated communication.
       , s_retry :: Retry
         -- ^ Retry strategy when failing to connect.
       , s_reconnect_delay :: NominalDiffTime
@@ -103,39 +101,46 @@ data Settings
         -- ^ Retry strategy when an operation timeout.
       , s_monitoring :: Maybe Store
         -- ^ EKG metric store.
+      , s_defaultConnectionName :: Maybe Text
+        -- ^ Default connection name.
+      , s_defaultUserCredentials :: Maybe Credentials
+        -- ^ 'Credentials' to use for operations where other 'Credentials' are
+        --   not explicitly supplied.
       }
 
 --------------------------------------------------------------------------------
 -- | Default global settings.
 --
---   * 's_heartbeatInterval' = 750 ms
---   * 's_heartbeatTimeout'  = 1500 ms
---   * 's_requireMaster'     = 'True'
---   * 's_credentials'       = 'Nothing'
---   * 's_retry'             = 'atMost' 3
---   * 's_reconnect_delay'   = 3 seconds
---   * 's_ssl'               = 'Nothing'
---   * 's_loggerType'        = 'LogNone'
---   * 's_loggerFilter'      = 'LoggerLevel' 'LevelInfo'
---   * 's_loggerDetailed'    = 'False'
---   * 's_operationTimeout'  = 10 seconds
---   * 's_operationRetry'    = 'atMost' 3
---   * 's_monitoring'        = 'Nothing'
+--   * 's_heartbeatInterval'      = 750 ms
+--   * 's_heartbeatTimeout'       = 1500 ms
+--   * 's_requireMaster'          = 'True'
+--   * 's_retry'                  = 'atMost' 3
+--   * 's_reconnect_delay'        = 3 seconds
+--   * 's_ssl'                    = 'Nothing'
+--   * 's_loggerType'             = 'LogNone'
+--   * 's_loggerFilter'           = 'LoggerLevel' 'LevelInfo'
+--   * 's_loggerDetailed'         = 'False'
+--   * 's_operationTimeout'       = 10 seconds
+--   * 's_operationRetry'         = 'atMost' 3
+--   * 's_monitoring'             = 'Nothing'
+--   * 's_defaultConnectionName'  = 'Nothing'
+--   * 's_defaultUserCredentials' = 'Nothing'
 defaultSettings :: Settings
 defaultSettings  = Settings
-                   { s_heartbeatInterval = msDiffTime 750  -- 750ms
-                   , s_heartbeatTimeout  = msDiffTime 1500 -- 1500ms
-                   , s_requireMaster     = True
-                   , s_credentials       = Nothing
-                   , s_retry             = atMost 3
-                   , s_reconnect_delay   = 3
-                   , s_ssl               = Nothing
-                   , s_loggerType        = LogNone
-                   , s_loggerFilter      = LoggerLevel LevelInfo
-                   , s_loggerDetailed    = False
-                   , s_operationTimeout  = 10 -- secs
-                   , s_operationRetry    = atMost 3
-                   , s_monitoring        = Nothing
+                   { s_heartbeatInterval      = msDiffTime 750  -- 750ms
+                   , s_heartbeatTimeout       = msDiffTime 1500 -- 1500ms
+                   , s_requireMaster          = True
+                   , s_retry                  = atMost 3
+                   , s_reconnect_delay        = 3
+                   , s_ssl                    = Nothing
+                   , s_loggerType             = LogNone
+                   , s_loggerFilter           = LoggerLevel LevelInfo
+                   , s_loggerDetailed         = False
+                   , s_operationTimeout       = 10 -- secs
+                   , s_operationRetry         = atMost 3
+                   , s_monitoring             = Nothing
+                   , s_defaultConnectionName  = Nothing
+                   , s_defaultUserCredentials = Nothing
                    }
 
 --------------------------------------------------------------------------------

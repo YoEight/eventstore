@@ -24,33 +24,35 @@ import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Subscription.Message
 import Database.EventStore.Internal.Subscription.Types
+import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 persistOperation :: Text
                  -> Text
+                 -> Maybe Credentials
                  -> PersistAction
                  -> Operation (Maybe PersistActionException)
-persistOperation grp stream tpe = construct go
+persistOperation grp stream cred tpe = construct go
   where
     go =
       case tpe of
         PersistCreate ss -> do
           let req = _createPersistentSubscription grp stream ss
           resp <- send createPersistentSubscriptionCmd
-                       createPersistentSubscriptionCompletedCmd req
+                       createPersistentSubscriptionCompletedCmd cred req
           let result = createRException $ getField $ cpscResult resp
           yield result
         PersistUpdate ss -> do
           let req = _updatePersistentSubscription grp stream ss
           resp <- send updatePersistentSubscriptionCmd
-                       updatePersistentSubscriptionCompletedCmd req
+                       updatePersistentSubscriptionCompletedCmd cred req
           let result = updateRException $ getField $ upscResult resp
           yield result
         PersistDelete -> do
           let req = _deletePersistentSubscription grp stream
           resp <- send deletePersistentSubscriptionCmd
-                       deletePersistentSubscriptionCompletedCmd req
+                       deletePersistentSubscriptionCompletedCmd cred req
           let result = deleteRException $ getField $ dpscResult resp
           yield result
 
@@ -58,18 +60,23 @@ persistOperation grp stream tpe = construct go
 createPersist :: Text
               -> Text
               -> PersistentSubscriptionSettings
+              -> Maybe Credentials
               -> Operation (Maybe PersistActionException)
-createPersist grp stream ss = persistOperation grp stream (PersistCreate ss)
+createPersist grp stream ss cred =
+  persistOperation grp stream cred (PersistCreate ss)
 
 --------------------------------------------------------------------------------
 updatePersist :: Text
               -> Text
               -> PersistentSubscriptionSettings
+              -> Maybe Credentials
               -> Operation (Maybe PersistActionException)
-updatePersist grp stream ss = persistOperation grp stream (PersistUpdate ss)
+updatePersist grp stream ss cred =
+  persistOperation grp stream cred (PersistUpdate ss)
 
 --------------------------------------------------------------------------------
 deletePersist :: Text
               -> Text
+              -> Maybe Credentials
               -> Operation (Maybe PersistActionException)
-deletePersist grp stream = persistOperation grp stream PersistDelete
+deletePersist grp stream cred = persistOperation grp stream cred PersistDelete

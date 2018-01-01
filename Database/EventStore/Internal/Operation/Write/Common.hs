@@ -23,7 +23,7 @@ import Database.EventStore.Internal.Types
 -- | Returned after writing to a stream.
 data WriteResult
     = WriteResult
-      { writeNextExpectedVersion :: !Int32
+      { writeNextExpectedVersion :: !Int64
         -- ^ Next expected version of the stream.
       , writePosition :: !Position
         -- ^ 'Position' of the write.

@@ -36,8 +36,8 @@ data LiveMsg
 
 --------------------------------------------------------------------------------
 data ConfirmationMsg
-    = RegularConfirmationMsg !Int64 !(Maybe Int32)
-    | PersistentConfirmationMsg !Text !Int64 !(Maybe Int32)
+    = RegularConfirmationMsg !Int64 !(Maybe Int64)
+    | PersistentConfirmationMsg !Text !Int64 !(Maybe Int64)
 
 --------------------------------------------------------------------------------
 confirmationCommitPos :: ConfirmationMsg -> Int64
@@ -45,7 +45,7 @@ confirmationCommitPos (RegularConfirmationMsg pos _)       = pos
 confirmationCommitPos  (PersistentConfirmationMsg _ pos _) = pos
 
 --------------------------------------------------------------------------------
-confirmationLastEventNum :: ConfirmationMsg -> Maybe Int32
+confirmationLastEventNum :: ConfirmationMsg -> Maybe Int64
 confirmationLastEventNum (RegularConfirmationMsg _ num)      = num
 confirmationLastEventNum (PersistentConfirmationMsg _ _ num) = num
 
