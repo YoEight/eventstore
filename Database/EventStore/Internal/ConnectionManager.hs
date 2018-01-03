@@ -507,7 +507,7 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) =
     onIdentification _ = False
 
     onAuthentication (Connecting a (Authentication u _ _)) =
-      if packageCorrelation == u && packageCmd == authenticatedCmd
+      if packageCorrelation == u && (packageCmd == authenticatedCmd || packageCmd == notAuthenticatedCmd)
       then Just a
       else Nothing
     onAuthentication _ = Nothing
