@@ -1,3 +1,4 @@
+{-# OPTIONS_HADDOCK hide #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Test
