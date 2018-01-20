@@ -2,12 +2,12 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 70e5d73a40b1438ce61869b5ee57386242e9ecc0f0f6f0ae9a9180d37015a8ee
+-- hash: 2ed084679d9e098425d7db22199d6861787d320b60b2af03cda86815f0a509c2
 
 name:           eventstore
 version:        1.1.0
 synopsis:       EventStore TCP Client
-description:    EventStore TCP Client <http://geteventstore.com>
+description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
 homepage:       https://github.com/YoEight/eventstore#readme
 bug-reports:    https://github.com/YoEight/eventstore/issues
