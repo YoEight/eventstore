@@ -68,7 +68,7 @@ library:
     - random ==1.*
     - unordered-containers
     - semigroups >=0.5
-    - dns
+    - dns >= 3.0.1
     - array
     - http-client == 0.5.*
     - mtl

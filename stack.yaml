@@ -9,7 +9,7 @@ compiler: ghc-8.2.1
 packages:
 - '.'
 # Packages to be pulled from upstream that are not in the resolver (e.g., acme-missiles-0.3)
-extra-deps: [ dns-2.0.12
+extra-deps: [ dns-3.0.1
             , ekg-core-0.1.1.2
             , protobuf-0.2.1.1
             ]
