@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 2ed084679d9e098425d7db22199d6861787d320b60b2af03cda86815f0a509c2
+-- hash: f7731a948fca5ada841e8f480a09c7531cb68bf07f2ad770c111de652f5c846c
 
 name:           eventstore
 version:        1.1.0
@@ -46,7 +46,7 @@ library
     , clock
     , connection ==0.2.*
     , containers ==0.5.*
-    , dns
+    , dns >=3.0.1
     , dotnet-timespan
     , ekg-core
     , exceptions
@@ -64,6 +64,7 @@ library
     , protobuf >=0.2.1.1 && <0.3
     , random ==1.*
     , safe-exceptions
+    , semigroupoids >=5.2 && <5.2.2
     , semigroups >=0.5
     , stm
     , stm-chans
