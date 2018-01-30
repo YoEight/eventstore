@@ -92,31 +92,29 @@ jobs:
 
           key: eventstore-7.10-{{ checksum "package.yaml" }}
 
-  # This build is disable till 'monad-logger' package got fixed.
-  #
-  # ghc-7.8:
-  #   docker:
-  #     - image: haskell:7.8
+  ghc-7.8:
+    docker:
+      - image: yoeight/7.8-ci:latest
 
-  #   steps:
-  #     - checkout
+    steps:
+      - checkout
 
-  #     - restore_cache:
-  #         key: eventstore-7.8-{{ checksum "package.yaml" }}
+      - restore_cache:
+          key: eventstore-7.8-1-{{ checksum "package.yaml" }}
 
-  #     - run:
-  #         name: GHC 7.8
-  #         command: |
-  #           cabal update
-  #           cabal install --only-dependencies
-  #           cabal configure
-  #           cabal install
+      - run:
+          name: GHC 7.8
+          command: |
+            cabal update
+            cabal install --only-dependencies
+            cabal configure
+            cabal install
 
-  #     - save_cache:
-  #         paths:
-  #           - /root/.cabal
+      - save_cache:
+          paths:
+            - /root/.cabal
 
-  #         key: eventstore-7.8-{{ checksum "package.yaml" }}
+          key: eventstore-7.8-1-{{ checksum "package.yaml" }}
 
   tests:
     docker:
@@ -147,7 +145,7 @@ workflows:
       - ghc-8.2
       - ghc-8.0
       - ghc-7.10
-      # - ghc-7.8
+      - ghc-7.8
 
       - tests:
           requires:

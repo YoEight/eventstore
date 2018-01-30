@@ -86,7 +86,7 @@ instance Show ConnectionMaxAttemptReached where
 instance Exception ConnectionMaxAttemptReached
 
 --------------------------------------------------------------------------------
-data IdentificationTimeout = IdentificationTimeout
+data IdentificationTimeout = IdentificationTimeout deriving Typeable
 
 --------------------------------------------------------------------------------
 instance Show IdentificationTimeout where
