@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: f7731a948fca5ada841e8f480a09c7531cb68bf07f2ad770c111de652f5c846c
+-- hash: 2eff24825c09f9fa9aef22bf2cef45c593f960ff02cdda29cc313cbcb5e4cbd9
 
 name:           eventstore
 version:        1.1.0
@@ -21,11 +21,7 @@ build-type:     Simple
 cabal-version:  >= 1.10
 
 extra-source-files:
-    .gitignore
-    .travis.yml
     CHANGELOG.markdown
-    eventstore-test-setup-osx.sh
-    eventstore-test-setup.sh
     README.md
 
 source-repository head
@@ -64,7 +60,6 @@ library
     , protobuf >=0.2.1.1 && <0.3
     , random ==1.*
     , safe-exceptions
-    , semigroupoids >=5.2 && <5.2.2
     , semigroups >=0.5
     , stm
     , stm-chans

@@ -38,10 +38,6 @@ dependencies:
 extra-source-files:
   - README.md
   - CHANGELOG.markdown
-  - .gitignore
-  - .travis.yml
-  - eventstore-test-setup.sh
-  - eventstore-test-setup-osx.sh
 
 default-extensions:
   - NoImplicitPrelude
