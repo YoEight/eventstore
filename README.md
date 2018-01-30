@@ -2,7 +2,7 @@ EventStore Haskell TCP client
 =============================
 
 [![Join the chat at https://gitter.im/YoEight/eventstore](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/YoEight/eventstore?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-[![Build Status](https://travis-ci.org/YoEight/eventstore.svg?branch=dev%2F0.15)](https://travis-ci.org/YoEight/eventstore)
+[![CircleCI](https://circleci.com/gh/YoEight/eventstore/tree/dev%2F1.0.svg?style=svg)](https://circleci.com/gh/YoEight/eventstore/tree/dev%2F1.0)
 
 That driver supports 100% of EventStore features !
 More information about the GetEventStore database can be found there: https://geteventstore.com/
