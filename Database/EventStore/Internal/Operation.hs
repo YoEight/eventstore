@@ -173,7 +173,7 @@ data Expect o where
 --------------------------------------------------------------------------------
 -- | Runs the first expection that matches.
 runFirstMatch :: Package -> [Expect o] -> Code o ()
-runFirstMatch _ [] = invalidOperation "No expection was fulfilled"
+runFirstMatch _ [] = invalidOperation "No expectation was fulfilled"
 runFirstMatch pkg (Expect cmd k:rest)
   | packageCmd pkg /= cmd = runFirstMatch pkg rest
   | otherwise =
