@@ -166,7 +166,7 @@ connectionManager :: ConnectionBuilder
 connectionManager builder disc mainBus = do
   stageRef <- newIORef Init
   let mkInternal = Internal disc builder stageRef
-      connRef    = ConnectionRef $ lookingUpConnection stageRef
+      connRef    = ConnectionRef $ lookingUpConnectionWhenConnected stageRef
 
   stopwatch    <- newStopwatch
   timeoutCheck <- stopwatchElapsed stopwatch
@@ -584,6 +584,13 @@ lookingUpConnection ref = go <$> readIORef ref
     go (Connected conn)                             = Just conn
     go (Connecting _ (ConnectionEstablishing conn)) = Just conn
     go _                                            = Nothing
+
+--------------------------------------------------------------------------------
+lookingUpConnectionWhenConnected :: IORef Stage -> EventStore (Maybe Connection)
+lookingUpConnectionWhenConnected = fmap go . readIORef
+  where
+    go (Connected conn) = Just conn
+    go _                = Nothing
 
 --------------------------------------------------------------------------------
 onSendPackage :: Internal -> SendPackage -> EventStore ()
