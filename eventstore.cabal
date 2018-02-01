@@ -2,10 +2,10 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 2eff24825c09f9fa9aef22bf2cef45c593f960ff02cdda29cc313cbcb5e4cbd9
+-- hash: 7f014bd643150258c2c5068435379d027a0ed2682dcbff8583bc645363cfd674
 
 name:           eventstore
-version:        1.1.0
+version:        1.1.1
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
@@ -16,7 +16,7 @@ maintainer:     yo.eight@gmail.com
 copyright:      Yorick Laupa
 license:        BSD3
 license-file:   LICENSE
-tested-with:    GHC >= 7.8.3 && < 8.4
+tested-with:    GHC >= 7.8 && < 8.4
 build-type:     Simple
 cabal-version:  >= 1.10
 

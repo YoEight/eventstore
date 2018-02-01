@@ -1,3 +1,8 @@
+1.1.1
+-----
+* Fix connection-manager connection reference. The issue was the client was starting
+  to send requests to server even if the confirmation hasn't been confirmed yet.
+
 1.1.0
 -----
 * Supports GetEventStore >= 4.0.0 protocol changes.
