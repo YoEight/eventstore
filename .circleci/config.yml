@@ -82,7 +82,7 @@ jobs:
           name: GHC 7.10
           command: |
             cabal update
-            cabal install --only-dependencies
+            cabal install --only-dependencies --reorder-goals
             cabal configure
             cabal install
 
@@ -106,7 +106,7 @@ jobs:
           name: GHC 7.8
           command: |
             cabal update
-            cabal install --only-dependencies
+            cabal install --only-dependencies --reorder-goals
             cabal configure
             cabal install
 
