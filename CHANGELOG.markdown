@@ -1,3 +1,7 @@
+1.1.2
+-----
+* Aeson bump version.
+
 1.1.1
 -----
 * Fix connection-manager connection reference. The issue was the client was starting

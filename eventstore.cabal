@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 7f014bd643150258c2c5068435379d027a0ed2682dcbff8583bc645363cfd674
+-- hash: c35e7544f02f62920fd85eff41f5ad113c892e33823b81232dc2e43bb5e88b80
 
 name:           eventstore
 version:        1.1.1
@@ -33,7 +33,7 @@ library
       ./.
   default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds
   build-depends:
-      aeson >=0.8 && <1.3
+      aeson >=0.8 && <1.4
     , array
     , base >=4.7 && <5
     , bifunctors
