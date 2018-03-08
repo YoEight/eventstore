@@ -5,7 +5,7 @@
 -- hash: c35e7544f02f62920fd85eff41f5ad113c892e33823b81232dc2e43bb5e88b80
 
 name:           eventstore
-version:        1.1.1
+version:        1.1.2
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
