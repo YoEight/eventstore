@@ -1,11 +1,11 @@
--- This file has been generated from package.yaml by hpack version 0.20.0.
+-- This file has been generated from package.yaml by hpack version 0.28.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: c35e7544f02f62920fd85eff41f5ad113c892e33823b81232dc2e43bb5e88b80
+-- hash: ffb75e0ab4772be3921ac8ea98ac1ded9960cd8692b62a4902d977950604c1b2
 
 name:           eventstore
-version:        1.1.2
+version:        1.1.3
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
@@ -19,7 +19,6 @@ license-file:   LICENSE
 tested-with:    GHC >= 7.8 && < 8.4
 build-type:     Simple
 cabal-version:  >= 1.10
-
 extra-source-files:
     CHANGELOG.markdown
     README.md
@@ -29,46 +28,6 @@ source-repository head
   location: https://github.com/YoEight/eventstore
 
 library
-  hs-source-dirs:
-      ./.
-  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds
-  build-depends:
-      aeson >=0.8 && <1.4
-    , array
-    , base >=4.7 && <5
-    , bifunctors
-    , bytestring
-    , cereal >=0.4 && <0.6
-    , clock
-    , connection ==0.2.*
-    , containers ==0.5.*
-    , dns >=3.0.1
-    , dotnet-timespan
-    , ekg-core
-    , exceptions
-    , fast-logger
-    , hashable
-    , http-client ==0.5.*
-    , interpolate
-    , lifted-async
-    , lifted-base
-    , machines >=0.6
-    , monad-control
-    , monad-logger >=0.3.20
-    , mono-traversable ==1.*
-    , mtl
-    , protobuf >=0.2.1.1 && <0.3
-    , random ==1.*
-    , safe-exceptions
-    , semigroups >=0.5
-    , stm
-    , stm-chans
-    , text
-    , text-format
-    , time >=1.4 && <1.9
-    , transformers-base
-    , unordered-containers
-    , uuid ==1.3.*
   exposed-modules:
       Database.EventStore
       Database.EventStore.Internal.Test
@@ -124,11 +83,59 @@ library
       Database.EventStore.Internal.Types
       Database.EventStore.Internal.Utils
       Paths_eventstore
+  hs-source-dirs:
+      ./.
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds
+  build-depends:
+      aeson >=0.8 && <1.4
+    , array
+    , base >=4.7 && <5
+    , bifunctors
+    , bytestring
+    , cereal >=0.4 && <0.6
+    , clock
+    , connection ==0.2.*
+    , containers ==0.5.*
+    , dns >=3.0.1
+    , dotnet-timespan
+    , ekg-core
+    , exceptions
+    , fast-logger
+    , hashable
+    , http-client ==0.5.*
+    , interpolate
+    , lifted-async
+    , lifted-base
+    , machines >=0.6
+    , monad-control
+    , monad-logger >=0.3.20
+    , mono-traversable ==1.*
+    , mtl
+    , protobuf >=0.2.1.1 && <0.3
+    , random ==1.*
+    , safe-exceptions
+    , semigroups >=0.5
+    , stm
+    , stm-chans
+    , text
+    , time >=1.4 && <1.9
+    , transformers-base
+    , unordered-containers
+    , uuid ==1.3.*
   default-language: Haskell2010
 
 test-suite eventstore-tests
   type: exitcode-stdio-1.0
   main-is: Main.hs
+  other-modules:
+      Test.Bogus.Connection
+      Test.Bus
+      Test.Common
+      Test.Connection
+      Test.Integration
+      Test.Integration.Tests
+      Test.Operation
+      Paths_eventstore
   hs-source-dirs:
       tests
   default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds
@@ -163,13 +170,4 @@ test-suite eventstore-tests
     , transformers-base
     , unordered-containers
     , uuid
-  other-modules:
-      Test.Bogus.Connection
-      Test.Bus
-      Test.Common
-      Test.Connection
-      Test.Integration
-      Test.Integration.Tests
-      Test.Operation
-      Paths_eventstore
   default-language: Haskell2010
