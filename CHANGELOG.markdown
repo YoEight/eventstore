@@ -1,3 +1,7 @@
+1.1.3
+-----
+* Remove `text-format` dependency.
+
 1.1.2
 -----
 * Aeson bump version.
