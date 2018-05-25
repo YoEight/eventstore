@@ -53,7 +53,7 @@ module Database.EventStore.Internal.Control
 
 --------------------------------------------------------------------------------
 import Data.Typeable
-#if __GLASGOW_HASKELL__ != 802
+#if __GLASGOW_HASKELL__ < 802
 import Data.Typeable.Internal
 #else
 import GHC.Fingerprint

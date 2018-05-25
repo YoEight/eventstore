@@ -11,7 +11,7 @@ jobs:
           key: eventstore-stack{{ checksum "package.yaml" }}
 
       - run:
-          name: Stack with GHC 8.2
+          name: Stack
           command: stack build --fast --pedantic
 
       - save_cache:
@@ -19,6 +19,33 @@ jobs:
             - /root/.stack
 
           key: eventstore-stack{{ checksum "package.yaml" }}
+
+# Haskell 8.4 image isn't currently available. Hopefully, it will be soon.
+# https://github.com/freebroccolo/docker-haskell/pull/73
+#
+# ghc-8.4:
+#   docker:
+#     - image: haskell:8.4
+#
+#   steps:
+#     - checkout
+#
+#     - restore_cache:
+#         key: eventstore-8.4{{ checksum "package.yaml" }}
+#
+#     - run:
+#         name: GHC 8.4
+#         command: |
+#           cabal update
+#           cabal install --only-dependencies
+#           cabal configure
+#           cabal install
+#
+#     - save_cache:
+#         paths:
+#           - /root/.cabal
+#
+#         key: eventstore-8.4{{ checksum "package.yaml" }}
 
   ghc-8.2:
     docker:
@@ -31,7 +58,7 @@ jobs:
           key: eventstore-8.2-3{{ checksum "package.yaml" }}
 
       - run:
-          name: GHC 8.2.1
+          name: GHC 8.2
           command: |
             cabal update
             cabal install --only-dependencies
@@ -142,6 +169,7 @@ workflows:
   build-test:
     jobs:
       - stack
+#     - ghc-8.4
       - ghc-8.2
       - ghc-8.0
       - ghc-7.10
