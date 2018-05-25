@@ -1,3 +1,7 @@
+1.1.4
+-----
+* Fix compilation on GHC 8.4
+
 1.1.3
 -----
 * Remove `text-format` dependency.
