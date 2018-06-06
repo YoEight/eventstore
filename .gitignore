@@ -12,3 +12,4 @@ cabal.config
 *~
 *.swp
 .stack-work/
+tags
