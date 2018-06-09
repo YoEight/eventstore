@@ -1,0 +1,39 @@
+.job_template: &cabal_build
+  stage: build
+  script:
+    - cabal update
+    - cabal install --only-dependencies
+    - cabal configure
+    - cabal build
+
+stages:
+  - build
+  - test
+    #  - deploy
+
+GHC 7.10:
+  <<: *cabal_build
+  image: haskell:7.10
+
+GHC 8.0:
+  <<: *cabal_build
+  image: haskell:8.0
+
+GHC 8.2:
+  <<: *cabal_build
+  before_script:
+    - cabal update
+    - cabal install alex happy
+  image: haskell:8.2
+
+Integration tests:
+  image: fpco/stack-build:lts-11
+  services:
+    - name: eventstore/eventstore:release-4.1.0
+      alias: eventstore
+  script:
+    - stack test --fast
+
+# push on hackage:
+#   stage: deploy
+#   when: manual

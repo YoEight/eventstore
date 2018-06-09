@@ -83,7 +83,7 @@ createConnection = do
                 , s_reconnect_delay        = 3
                 }
 
-    connect setts (Static "127.0.0.1" 1113)
+    connect setts (Static "eventstore" 1113)
 
 --------------------------------------------------------------------------------
 shuttingDown :: Connection -> IO ()
