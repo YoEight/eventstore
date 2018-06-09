@@ -2,9 +2,13 @@
   stage: build
   script:
     - cabal update
-    - cabal install --only-dependencies
-    - cabal configure
+    - cabal install --prefix $CI_PROJECT_DIR/.cabal --only-dependencies
+    - cabal configure --prefix $CI_PROJECT_DIR/.cabal
     - cabal build
+
+.job_template: &cabal_cache
+  paths:
+    - .cabal
 
 stages:
   - build
@@ -14,10 +18,16 @@ stages:
 GHC 7.10:
   <<: *cabal_build
   image: haskell:7.10
+  cache:
+    <<: *cabal_cache
+    key: ghc-7.10
 
 GHC 8.0:
   <<: *cabal_build
   image: haskell:8.0
+  cache:
+    <<: *cabal_cache
+    key: ghc-8.0
 
 GHC 8.2:
   <<: *cabal_build
@@ -25,6 +35,9 @@ GHC 8.2:
     - cabal update
     - cabal install alex happy
   image: haskell:8.2
+  cache:
+    <<: *cabal_cache
+    key: ghc-8.2
 
 Integration tests:
   image: fpco/stack-build:lts-11
@@ -32,7 +45,11 @@ Integration tests:
     - name: eventstore/eventstore:release-4.1.0
       alias: eventstore
   script:
-    - stack test --fast
+    - stack --stack-root $CI_PROJECT_DIR/stack_root test --fast
+  cache:
+    key: stack
+    paths:
+      - stack_root
 
 # push on hackage:
 #   stage: deploy
