@@ -2,13 +2,15 @@
   stage: build
   script:
     - cabal update
-    - cabal install --prefix $CI_PROJECT_DIR/.cabal --only-dependencies
-    - cabal configure --prefix $CI_PROJECT_DIR/.cabal
+    - ghc-pkg init $CI_PROJECT_DIR/pkg-db || true
+    - cabal install --package-db $CI_PROJECT_DIR/pkg-db --prefix $CI_PROJECT_DIR/ci-cabal --only-dependencies
+    - cabal configure --package-db $CI_PROJECT_DIR/pkg-db --prefix $CI_PROJECT_DIR/ci-cabal
     - cabal build
 
 .job_template: &cabal_cache
   paths:
-    - .cabal
+    - pkg-db
+    - ci-cabal
 
 stages:
   - build
