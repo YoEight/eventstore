@@ -19,8 +19,10 @@ module Test.Integration.Tests (spec) where
 import Control.Concurrent.Async (wait)
 import Data.Aeson
 import Data.DotNet.TimeSpan
+import Data.Maybe (fromMaybe)
 import Data.UUID hiding (null)
 import Data.UUID.V4
+import System.Environment (lookupEnv)
 import Test.Tasty.HUnit
 import Test.Tasty.Hspec
 
@@ -78,12 +80,14 @@ import Test.Common
 --------------------------------------------------------------------------------
 createConnection :: IO Connection
 createConnection = do
+    hostm <- lookupEnv "EVENTSTORE_HOST"
+    let host  = fromMaybe "127.0.0.1" hostm
     let setts = testSettings
                 { s_defaultUserCredentials = Just $ credentials "admin" "changeit"
                 , s_reconnect_delay        = 3
                 }
 
-    connect setts (Static "eventstore" 1113)
+    connect setts (Static host 1113)
 
 --------------------------------------------------------------------------------
 shuttingDown :: Connection -> IO ()
