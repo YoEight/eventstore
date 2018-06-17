@@ -43,6 +43,8 @@ GHC 8.2:
 
 Integration tests:
   image: fpco/stack-build:lts-11
+  variables:
+    EVENTSTORE_HOST: "eventstore"
   services:
     - name: eventstore/eventstore:release-4.1.0
       alias: eventstore
