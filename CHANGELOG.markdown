@@ -1,3 +1,7 @@
+1.1.5
+-----
+* Bump `aeson` version.
+
 1.1.4
 -----
 * Fix compilation on GHC 8.4

@@ -6,6 +6,7 @@
     - cabal install --package-db $CI_PROJECT_DIR/pkg-db --prefix $CI_PROJECT_DIR/ci-cabal --only-dependencies
     - cabal configure --package-db $CI_PROJECT_DIR/pkg-db --prefix $CI_PROJECT_DIR/ci-cabal
     - cabal build
+    - cabal sdist
 
 .job_template: &cabal_cache
   paths:
@@ -15,7 +16,8 @@
 stages:
   - build
   - test
-    #  - deploy
+  - deploy
+  - publish
 
 GHC 7.10:
   <<: *cabal_build
@@ -41,6 +43,19 @@ GHC 8.2:
     <<: *cabal_cache
     key: ghc-8.2
 
+GHC 8.4:
+  <<: *cabal_build
+  before_script:
+    - cabal update
+    - cabal install alex happy
+  image: haskell:8.4
+  cache:
+    <<: *cabal_cache
+    key: ghc-8.4
+  artifacts:
+    paths:
+      - dist/
+
 Integration tests:
   image: fpco/stack-build:lts-11
   variables:
@@ -55,6 +70,25 @@ Integration tests:
     paths:
       - stack_root
 
-# push on hackage:
-#   stage: deploy
-#   when: manual
+Upload on hackage:
+  stage: deploy
+  script:
+    - apt update
+    - apt install -y curl
+    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD $(ls dist/eventstore*)
+  image: haskell:8.4
+  dependencies:
+    - GHC 8.4
+  when: manual
+
+Publish on hackage:
+  stage: publish
+  script:
+    - apt update
+    - apt install -y curl
+    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD --publish $(ls dist/eventstore*)
+  image: haskell:8.4
+  when: manual
+  dependencies:
+    - GHC 8.4
+
