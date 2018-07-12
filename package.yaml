@@ -1,7 +1,7 @@
 name: eventstore
-version: 1.1.4
-github: YoEight/eventstore
-tested-with: GHC >= 7.8 && < 8.4
+version: 1.1.5
+homepage: https://code.coppermine.io/eventsourcing/haskell-ges
+tested-with: GHC >= 7.8 && < 8.6
 synopsis: EventStore TCP Client
 description: EventStore TCP Client <https://eventstore.org>
 license: BSD3
@@ -10,15 +10,16 @@ author: Yorick Laupa
 maintainer: yo.eight@gmail.com
 copyright: Yorick Laupa
 category: Database
+git: https://code.coppermine.io/eventsourcing/haskell-ges
 
 dependencies:
   - base >=4.7 && <5
-  - aeson >=0.8 && <1.4
+  - aeson >=0.8
   - mono-traversable ==1.*
   - connection ==0.2.*
   - dotnet-timespan
   - stm
-  - time >=1.4 && <1.9
+  - time >=1.4
   - uuid ==1.3.*
   - lifted-base
   - text

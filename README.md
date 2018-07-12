@@ -1,12 +1,10 @@
 EventStore Haskell TCP client
 =============================
 
-[![CircleCI](https://circleci.com/gh/YoEight/eventstore/tree/dev%2F1.0.svg?style=svg)](https://circleci.com/gh/YoEight/eventstore/tree/dev%2F1.0)
-
-[![Talk and exchange ideas in our dedicated Discord Server!]()](https://discord.gg/x7q37jJ)
+[Talk and exchange ideas in our dedicated Discord Server]
 
 That driver supports 100% of EventStore features !
-More information about the GetEventStore database can be found there: https://geteventstore.com/
+More information about the GetEventStore database can be found there: https://eventstore.org/
 
 Requirements
 ============
@@ -100,3 +98,5 @@ Contributions and bug reports are welcome!
 BSD3 License
 
 -Yorick Laupa
+
+[Talk and exchange ideas in our dedicated Discord Server]: https://discord.gg/x7q37jJ
