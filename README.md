@@ -26,7 +26,7 @@ $ cabal install eventstore
 
 * From source
 ```
-$ git clone https://github.com/YoEight/eventstore.git
+$ git clone https://gitlab.com/YoEight/eventstore-hs.git
 $ cd eventstore
 $ cabal install --only-dependencies
 $ cabal configure

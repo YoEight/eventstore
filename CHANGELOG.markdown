@@ -1,3 +1,7 @@
+1.1.6
+-----
+* Update package metadata information.
+
 1.1.5
 -----
 * Bump `aeson` version.
