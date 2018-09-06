@@ -1,6 +1,6 @@
 name: eventstore
-version: 1.1.5
-homepage: https://code.coppermine.io/eventsourcing/haskell-ges
+version: 1.1.6
+homepage: https://gitlab.com/YoEight/eventstore-hs.git
 tested-with: GHC >= 7.8 && < 8.6
 synopsis: EventStore TCP Client
 description: EventStore TCP Client <https://eventstore.org>
@@ -10,7 +10,7 @@ author: Yorick Laupa
 maintainer: yo.eight@gmail.com
 copyright: Yorick Laupa
 category: Database
-git: https://code.coppermine.io/eventsourcing/haskell-ges
+git: https://gitlab.com/YoEight/eventstore-hs.git
 
 dependencies:
   - base >=4.7 && <5
