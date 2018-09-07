@@ -1,17 +1,30 @@
 .job_template: &cabal_build
   stage: build
   script:
+    - curl -G -L -o artifacts.zip --data-urlencode "job=${CI_JOB_NAME}" $ARTIFACTS_URL || true
+    - unzip -q artifacts.zip || true
     - cabal update
     - ghc-pkg init $CI_PROJECT_DIR/pkg-db || true
     - cabal install --package-db $CI_PROJECT_DIR/pkg-db --prefix $CI_PROJECT_DIR/ci-cabal --only-dependencies
     - cabal configure --package-db $CI_PROJECT_DIR/pkg-db --prefix $CI_PROJECT_DIR/ci-cabal
     - cabal build
     - cabal sdist
+  artifacts:
+    paths:
+      - dist/
+      - pkg-db/
+      - ci-cabal/
 
 .job_template: &cabal_cache
   paths:
     - pkg-db
     - ci-cabal
+
+variables:
+  ARTIFACTS_URL: "${CI_PROJECT_URL}/-/jobs/artifacts/dev/1.0/download"
+
+before_script:
+  - apt update && apt install -y unzip curl
 
 stages:
   - build
@@ -22,39 +35,26 @@ stages:
 GHC 7.10:
   <<: *cabal_build
   image: haskell:7.10
-  cache:
-    <<: *cabal_cache
-    key: ghc-7.10
 
 GHC 8.0:
   <<: *cabal_build
   image: haskell:8.0
-  cache:
-    <<: *cabal_cache
-    key: ghc-8.0
 
 GHC 8.2:
   <<: *cabal_build
   before_script:
+    - apt update && apt install -y unzip curl
     - cabal update
     - cabal install alex happy
   image: haskell:8.2
-  cache:
-    <<: *cabal_cache
-    key: ghc-8.2
 
 GHC 8.4:
   <<: *cabal_build
   before_script:
+    - apt update && apt install -y unzip curl
     - cabal update
     - cabal install alex happy
   image: haskell:8.4
-  cache:
-    <<: *cabal_cache
-    key: ghc-8.4
-  artifacts:
-    paths:
-      - dist/
 
 Integration tests:
   image: fpco/stack-build:lts-11
@@ -63,12 +63,14 @@ Integration tests:
   services:
     - name: eventstore/eventstore:release-4.1.0
       alias: eventstore
+
   script:
+    - curl -G -L -o artifacts.zip --data-urlencode "job=${CI_JOB_NAME}" $ARTIFACTS_URL || true
+    - unzip -q artifacts.zip || true
     - stack --stack-root $CI_PROJECT_DIR/stack_root test --fast
-  cache:
-    key: stack
+  artifacts:
     paths:
-      - stack_root
+      - stack_root/
 
 Upload on hackage:
   stage: deploy
