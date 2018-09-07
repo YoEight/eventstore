@@ -2,10 +2,10 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: efad84983fbffd630c221007e541d0a71ec04435a4d4e1aa642cc25e5108ccf0
+-- hash: 77cf0e70a2660130e6167a5012a565691688263faa51766669c1146abb486d21
 
 name:           eventstore
-version:        1.1.6
+version:        1.1.7
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
