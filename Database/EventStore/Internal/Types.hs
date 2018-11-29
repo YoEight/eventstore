@@ -24,6 +24,7 @@ import Prelude (String)
 import Data.Maybe
 import Data.Monoid (Endo(..))
 import Foreign.C.Types (CTime(..))
+import Numeric.Natural (Natural)
 
 --------------------------------------------------------------------------------
 import           Control.Monad.Reader
@@ -232,6 +233,35 @@ exactEventVersion n
 --   that as a concurrency problem.
 streamExists :: ExpectedVersion
 streamExists = StreamExists
+
+--------------------------------------------------------------------------------
+-- | Represents an event position within a stream.
+newtype EventNumber = EventNumber Int64
+
+--------------------------------------------------------------------------------
+-- | The first event in a stream.
+streamStart :: EventNumber
+streamStart = EventNumber 0
+
+--------------------------------------------------------------------------------
+-- | The last event in the stream.
+streamEnd :: EventNumber
+streamEnd = EventNumber (-1)
+
+--------------------------------------------------------------------------------
+-- | the Nth event of a stream.
+eventNumber :: Natural -> EventNumber
+eventNumber n = EventNumber (fromIntegral n)
+
+--------------------------------------------------------------------------------
+-- | Returns a 'StreamPosition' from a raw 'Int64'.
+rawEventNumber :: Int64 -> EventNumber
+rawEventNumber = EventNumber
+
+--------------------------------------------------------------------------------
+-- | Returns a raw 'Int64' from an 'EventNumber'.
+eventNumberToInt64 :: EventNumber -> Int64
+eventNumberToInt64 (EventNumber n) = n
 
 --------------------------------------------------------------------------------
 -- EventStore Messages
@@ -997,7 +1027,7 @@ data StreamMetadataResult
     = StreamMetadataResult
       { streamMetaResultStream :: !Text
         -- ^ The name of the stream.
-      , streamMetaResultVersion :: !Int32
+      , streamMetaResultVersion :: !Int64
         -- ^ The version of the metadata format.
       , streamMetaResultData :: !StreamMetadata
         -- ^ A 'StreamMetadata' containing user-specified metadata.
