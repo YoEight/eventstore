@@ -1,3 +1,7 @@
+1.2.0
+-----
+* Introduce a type-safe `EventNumber` type.
+
 1.1.6
 -----
 * Update package metadata information.

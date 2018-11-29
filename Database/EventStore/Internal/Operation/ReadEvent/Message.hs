@@ -34,7 +34,7 @@ import Database.EventStore.Internal.Types
 data Request
     = Request
       { _streamId       :: Required 1 (Value Text)
-      , _eventNumber    :: Required 2 (Value Int32)
+      , _eventNumber    :: Required 2 (Value Int64)
       , _resolveLinkTos :: Required 3 (Value Bool)
       , _requireMaster  :: Required 4 (Value Bool)
       }
@@ -45,7 +45,7 @@ instance Encode Request
 
 --------------------------------------------------------------------------------
 -- | 'Request' smart constructor.
-newRequest :: Text -> Int32 -> Bool -> Bool -> Request
+newRequest :: Text -> Int64 -> Bool -> Bool -> Request
 newRequest stream_id evt_num res_link_tos req_master =
     Request
     { _streamId       = putField stream_id

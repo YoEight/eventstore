@@ -79,7 +79,7 @@ streamNotFound = InvalidOperation "Read metadata on an inexistant stream"
 
 --------------------------------------------------------------------------------
 onReadResult :: ReadResult 'RegularStream ReadEvent
-             -> (Text -> Int32 -> ResolvedEvent -> Code o a)
+             -> (Text -> Int64 -> ResolvedEvent -> Code o a)
              -> Code o a
 onReadResult (ReadSuccess r) k =
     case r of

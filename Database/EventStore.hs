@@ -51,6 +51,13 @@ module Database.EventStore
     , withJsonAndMetadata
     , withBinary
     , withBinaryAndMetadata
+     -- * Event number
+    , EventNumber
+    , streamStart
+    , streamEnd
+    , eventNumber
+    , rawEventNumber
+    , eventNumberToInt64
      -- * Common Operation types
     , OperationMaxAttemptReached(..)
      -- * Read Operations
@@ -409,13 +416,14 @@ transactionRollback _ = return ()
 -- | Reads a single event from given stream.
 readEvent :: Connection
           -> StreamName
-          -> Int32      -- ^ Event number
+          -> EventNumber
           -> Bool       -- ^ Resolve Link Tos
           -> Maybe Credentials
           -> IO (Async (ReadResult 'RegularStream Op.ReadEvent))
-readEvent Connection{..} stream_id evt_num res_link_tos cred = do
+readEvent Connection{..} stream_id evtNum res_link_tos cred = do
     p <- newPromise
-    let op = Op.readEvent _settings (streamNameRaw stream_id) evt_num res_link_tos cred
+    let evt_num = eventNumberToInt64 evtNum
+        op = Op.readEvent _settings (streamNameRaw stream_id) evt_num res_link_tos cred
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
@@ -423,7 +431,7 @@ readEvent Connection{..} stream_id evt_num res_link_tos cred = do
 -- | Reads events from a given stream forward.
 readStreamEventsForward :: Connection
                         -> StreamName
-                        -> Int64      -- ^ From event number
+                        -> EventNumber
                         -> Int32      -- ^ Batch size
                         -> Bool       -- ^ Resolve Link Tos
                         -> Maybe Credentials
@@ -435,7 +443,7 @@ readStreamEventsForward mgr =
 -- | Reads events from a given stream backward.
 readStreamEventsBackward :: Connection
                          -> StreamName
-                         -> Int64      -- ^ From event number
+                         -> EventNumber
                          -> Int32      -- ^ Batch size
                          -> Bool       -- ^ Resolve Link Tos
                          -> Maybe Credentials
@@ -447,14 +455,15 @@ readStreamEventsBackward mgr =
 readStreamEventsCommon :: Connection
                        -> ReadDirection
                        -> StreamName
-                       -> Int64
+                       -> EventNumber
                        -> Int32
                        -> Bool
                        -> Maybe Credentials
                        -> IO (Async (ReadResult 'RegularStream StreamSlice))
-readStreamEventsCommon Connection{..} dir stream_id start cnt res_link_tos cred = do
+readStreamEventsCommon Connection{..} dir stream_id startNum cnt res_link_tos cred = do
     p <- newPromise
     let name = streamNameRaw stream_id
+        start = eventNumberToInt64 startNum
         op   = Op.readStreamEvents _settings dir name start cnt res_link_tos cred
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)

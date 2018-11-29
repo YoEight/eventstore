@@ -37,11 +37,11 @@ import Database.EventStore.Internal.Types
 data ReadEvent
     = ReadEventNotFound
       { readEventStream :: !Text
-      , readEventNumber :: !Int32
+      , readEventNumber :: !Int64
       }
     | ReadEvent
       { readEventStream   :: !Text
-      , readEventNumber   :: !Int32
+      , readEventNumber   :: !Int64
       , readEventResolved :: !ResolvedEvent
       } deriving Show
 
@@ -49,7 +49,7 @@ data ReadEvent
 -- | Read a specific event given event number operation.
 readEvent :: Settings
           -> Text
-          -> Int32
+          -> Int64
           -> Bool
           -> Maybe Credentials
           -> Operation (ReadResult 'RegularStream ReadEvent)
