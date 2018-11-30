@@ -62,6 +62,7 @@ module Database.EventStore
     , OperationMaxAttemptReached(..)
      -- * Read Operations
     , StreamMetadataResult(..)
+    , ResolveLink(..)
     , readEvent
     , readAllEventsBackward
     , readAllEventsForward
@@ -417,12 +418,13 @@ transactionRollback _ = return ()
 readEvent :: Connection
           -> StreamName
           -> EventNumber
-          -> Bool       -- ^ Resolve Link Tos
+          -> ResolveLink
           -> Maybe Credentials
           -> IO (Async (ReadResult 'RegularStream Op.ReadEvent))
-readEvent Connection{..} stream_id evtNum res_link_tos cred = do
+readEvent Connection{..} stream_id evtNum resLinkTos cred = do
     p <- newPromise
     let evt_num = eventNumberToInt64 evtNum
+        res_link_tos = resolveLinkToBool resLinkTos
         op = Op.readEvent _settings (streamNameRaw stream_id) evt_num res_link_tos cred
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
@@ -433,7 +435,7 @@ readStreamEventsForward :: Connection
                         -> StreamName
                         -> EventNumber
                         -> Int32      -- ^ Batch size
-                        -> Bool       -- ^ Resolve Link Tos
+                        -> ResolveLink
                         -> Maybe Credentials
                         -> IO (Async (ReadResult 'RegularStream StreamSlice))
 readStreamEventsForward mgr =
@@ -445,7 +447,7 @@ readStreamEventsBackward :: Connection
                          -> StreamName
                          -> EventNumber
                          -> Int32      -- ^ Batch size
-                         -> Bool       -- ^ Resolve Link Tos
+                         -> ResolveLink
                          -> Maybe Credentials
                          -> IO (Async (ReadResult 'RegularStream StreamSlice))
 readStreamEventsBackward mgr =
@@ -457,13 +459,14 @@ readStreamEventsCommon :: Connection
                        -> StreamName
                        -> EventNumber
                        -> Int32
-                       -> Bool
+                       -> ResolveLink
                        -> Maybe Credentials
                        -> IO (Async (ReadResult 'RegularStream StreamSlice))
-readStreamEventsCommon Connection{..} dir stream_id startNum cnt res_link_tos cred = do
+readStreamEventsCommon Connection{..} dir stream_id startNum cnt resLinkTos cred = do
     p <- newPromise
     let name = streamNameRaw stream_id
         start = eventNumberToInt64 startNum
+        res_link_tos = resolveLinkToBool resLinkTos
         op   = Op.readStreamEvents _settings dir name start cnt res_link_tos cred
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
@@ -473,7 +476,7 @@ readStreamEventsCommon Connection{..} dir stream_id startNum cnt res_link_tos cr
 readAllEventsForward :: Connection
                      -> Position
                      -> Int32      -- ^ Batch size
-                     -> Bool       -- ^ Resolve Link Tos
+                     -> ResolveLink
                      -> Maybe Credentials
                      -> IO (Async AllSlice)
 readAllEventsForward mgr =
@@ -484,7 +487,7 @@ readAllEventsForward mgr =
 readAllEventsBackward :: Connection
                       -> Position
                       -> Int32      -- ^ Batch size
-                      -> Bool       -- ^ Resolve Link Tos
+                      -> ResolveLink
                       -> Maybe Credentials
                       -> IO (Async AllSlice)
 readAllEventsBackward mgr =
@@ -495,12 +498,13 @@ readAllEventsCommon :: Connection
                     -> ReadDirection
                     -> Position
                     -> Int32
-                    -> Bool
+                    -> ResolveLink
                     -> Maybe Credentials
                     -> IO (Async AllSlice)
-readAllEventsCommon Connection{..} dir pos max_c res_link_tos cred = do
+readAllEventsCommon Connection{..} dir pos max_c resLinkTos cred = do
     p <- newPromise
-    let op = Op.readAllEvents _settings c_pos p_pos max_c res_link_tos dir cred
+    let res_link_tos = resolveLinkToBool resLinkTos
+        op = Op.readAllEvents _settings c_pos p_pos max_c res_link_tos dir cred
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
   where
@@ -510,16 +514,18 @@ readAllEventsCommon Connection{..} dir pos max_c res_link_tos cred = do
 -- | Subcribes to given stream.
 subscribe :: Connection
           -> StreamName
-          -> Bool       -- ^ Resolve Link Tos
+          -> ResolveLink
           -> Maybe Credentials
           -> IO RegularSubscription
-subscribe Connection{..} stream resLnkTos cred =
+subscribe Connection{..} stream resLinkTos cred =
     newRegularSubscription _exec stream resLnkTos cred
+  where
+    resLnkTos = resolveLinkToBool resLinkTos
 
 --------------------------------------------------------------------------------
 -- | Subcribes to $all stream.
 subscribeToAll :: Connection
-               -> Bool       -- ^ Resolve Link Tos
+               -> ResolveLink
                -> Maybe Credentials
                -> IO RegularSubscription
 subscribeToAll conn resLnkTos cred = subscribe conn AllStream resLnkTos cred
@@ -531,7 +537,7 @@ subscribeToAll conn resLnkTos cred = subscribe conn AllStream resLnkTos cred
 --   be sent using 'subscribe'.
 subscribeFrom :: Connection
               -> StreamName
-              -> Bool        -- ^ Resolve Link Tos
+              -> ResolveLink
               -> Maybe Int64 -- ^ Last checkpoint
               -> Maybe Int32 -- ^ Batch size
               -> Maybe Credentials
@@ -544,7 +550,7 @@ subscribeFrom conn streamId resLnkTos lastChkPt batch cred =
 --------------------------------------------------------------------------------
 -- | Same as 'subscribeFrom' but applied to $all stream.
 subscribeToAllFrom :: Connection
-                   -> Bool           -- ^ Resolve Link Tos
+                   -> ResolveLink
                    -> Maybe Position -- ^ Last checkpoint
                    -> Maybe Int32    -- ^ Batch size
                    -> Maybe Credentials
@@ -557,13 +563,15 @@ subscribeToAllFrom conn resLnkTos lastChkPt batch cred =
 
 --------------------------------------------------------------------------------
 subscribeFromCommon :: Connection
-                    -> Bool
+                    -> ResolveLink
                     -> Maybe Int32
                     -> Maybe Credentials
                     -> Op.CatchupState
                     -> IO CatchupSubscription
-subscribeFromCommon Connection{..} resLnkTos batch cred tpe =
+subscribeFromCommon Connection{..} resLinkTos batch cred tpe =
     newCatchupSubscription _exec resLnkTos batch cred tpe
+  where
+    resLnkTos = resolveLinkToBool resLinkTos
 
 --------------------------------------------------------------------------------
 -- | Asynchronously sets the metadata for a stream.

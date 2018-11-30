@@ -264,6 +264,17 @@ eventNumberToInt64 :: EventNumber -> Int64
 eventNumberToInt64 (EventNumber n) = n
 
 --------------------------------------------------------------------------------
+-- | Determines whether any link event encountered in the stream will be
+--   resolved. See the discussion for more information:
+--   https://eventstore.org/docs/dotnet-api/reading-events/index.html#resolvedevent
+data ResolveLink = ResolveLink | NoResolveLink deriving (Show, Eq)
+
+--------------------------------------------------------------------------------
+resolveLinkToBool :: ResolveLink -> Bool
+resolveLinkToBool ResolveLink   = True
+resolveLinkToBool NoResolveLink = False
+
+--------------------------------------------------------------------------------
 -- EventStore Messages
 --------------------------------------------------------------------------------
 -- | Serializes form of an 'Event'.

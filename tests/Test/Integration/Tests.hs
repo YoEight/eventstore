@@ -141,7 +141,7 @@ readEventTest conn = do
         evt = createEvent "foo" Nothing $ withJson js
     as <- sendEvent conn stream anyVersion evt Nothing
     _  <- wait as
-    bs <- readEvent conn stream streamStart False Nothing
+    bs <- readEvent conn stream streamStart NoResolveLink Nothing
     rs <- wait bs
     case rs of
         ReadSuccess re ->
@@ -172,13 +172,13 @@ transactionTest conn = do
         evt = createEvent "foo" Nothing $ withJson js
     t  <- startTransaction conn stream anyVersion Nothing >>= wait
     _  <- transactionWrite t [evt] Nothing >>= wait
-    rs <- readEvent conn stream streamStart False Nothing >>= wait
+    rs <- readEvent conn stream streamStart NoResolveLink Nothing >>= wait
     case rs of
         ReadNoStream -> return ()
         e -> fail $ "transaction-test stream is supposed to not exist "
                   <> show e
     _   <- transactionCommit t Nothing >>= wait
-    rs2 <- readEvent conn stream streamStart False Nothing >>= wait
+    rs2 <- readEvent conn stream streamStart NoResolveLink Nothing >>= wait
     case rs2 of
         ReadSuccess re ->
             case re of
@@ -200,7 +200,7 @@ readStreamEventForwardTest conn = do
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     _  <- sendEvents conn stream anyVersion evts Nothing >>= wait
-    rs <- readStreamEventsForward conn stream streamStart 10 False Nothing >>= wait
+    rs <- readStreamEventsForward conn stream streamStart 10 NoResolveLink Nothing >>= wait
     case rs of
         ReadSuccess sl -> do
             let jss_evts = catMaybes $ fmap resolvedEventDataAsJson
@@ -218,7 +218,7 @@ readStreamEventBackwardTest conn = do
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     _  <- sendEvents conn "read-backward-test" anyVersion evts Nothing >>= wait
     let startFrom = eventNumber 2
-    rs <- readStreamEventsBackward conn "read-backward-test" startFrom 10 False Nothing >>= wait
+    rs <- readStreamEventsBackward conn "read-backward-test" startFrom 10 NoResolveLink Nothing >>= wait
     case rs of
         ReadSuccess sl -> do
             let jss_evts = catMaybes $ fmap resolvedEventDataAsJson
@@ -229,13 +229,13 @@ readStreamEventBackwardTest conn = do
 --------------------------------------------------------------------------------
 readAllEventsForwardTest :: Connection -> IO ()
 readAllEventsForwardTest conn = do
-    sl <- readAllEventsForward conn positionStart 3 False Nothing >>= wait
+    sl <- readAllEventsForward conn positionStart 3 NoResolveLink Nothing >>= wait
     assertEqual "Events is not empty" False (null $ sliceEvents sl)
 
 --------------------------------------------------------------------------------
 readAllEventsBackwardTest :: Connection -> IO ()
 readAllEventsBackwardTest conn = do
-    sl <- readAllEventsBackward conn positionEnd 3 False Nothing >>= wait
+    sl <- readAllEventsBackward conn positionEnd 3 NoResolveLink Nothing >>= wait
     assertEqual "Events is not empty" False (null $ sliceEvents sl)
 
 --------------------------------------------------------------------------------
@@ -248,7 +248,7 @@ subscribeTest conn = do
               , object [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-    sub  <- subscribe conn stream False Nothing
+    sub  <- subscribe conn stream NoResolveLink Nothing
     _    <- waitConfirmation sub
     _    <- sendEvents conn stream anyVersion evts Nothing >>= wait
     let loop 3 = return []
@@ -282,7 +282,7 @@ subscribeFromTest conn = do
         evts   = fmap (createEvent "foo" Nothing . withJson) jss
         evts2  = fmap (createEvent "foo" Nothing . withJson) jss2
     _   <- sendEvents conn stream anyVersion evts Nothing >>= wait
-    sub <- subscribeFrom conn stream False Nothing (Just 1) Nothing
+    sub <- subscribeFrom conn stream NoResolveLink Nothing (Just 1) Nothing
     _   <- waitConfirmation sub
     _   <- sendEvents conn stream anyVersion evts2 Nothing >>= wait
 
@@ -317,7 +317,7 @@ data SubNoStreamTest
 subscribeFromNoStreamTest :: Connection -> IO ()
 subscribeFromNoStreamTest conn = do
   stream <- freshStreamId
-  sub <- subscribeFrom conn stream False Nothing Nothing Nothing
+  sub <- subscribeFrom conn stream NoResolveLink Nothing Nothing Nothing
   let loop [] = do
           m <- nextEventMaybe sub
           case m of
