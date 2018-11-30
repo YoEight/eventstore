@@ -538,14 +538,15 @@ subscribeToAll conn resLnkTos cred = subscribe conn AllStream resLnkTos cred
 subscribeFrom :: Connection
               -> StreamName
               -> ResolveLink
-              -> Maybe Int64 -- ^ Last checkpoint
+              -> Maybe EventNumber
               -> Maybe Int32 -- ^ Batch size
               -> Maybe Credentials
               -> IO CatchupSubscription
 subscribeFrom conn streamId resLnkTos lastChkPt batch cred =
     subscribeFromCommon conn resLnkTos batch cred tpe
   where
-    tpe = Op.RegularCatchup (streamNameRaw streamId) (fromMaybe 0 lastChkPt)
+    tpe = Op.RegularCatchup (streamNameRaw streamId) startPoint
+    startPoint = eventNumberToInt64 $ fromMaybe streamStart lastChkPt
 
 --------------------------------------------------------------------------------
 -- | Same as 'subscribeFrom' but applied to $all stream.
