@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 6e5586a786b297c5ed3f24f7817c1459be328cc5c77286d9205eed4ce8bb58e6
+-- hash: e7a585ace910a2bfcd13b439bb4b56d068d44070ddf3034ace6178ea87912461
 
 name:           eventstore
 version:        1.2.0
@@ -17,7 +17,7 @@ maintainer:     yo.eight@gmail.com
 copyright:      Yorick Laupa
 license:        BSD3
 license-file:   LICENSE
-tested-with:    GHC >= 7.8 && < 8.6
+tested-with:    GHC >= 7.8 && <= 8.6
 build-type:     Simple
 extra-source-files:
     README.md
@@ -95,7 +95,7 @@ library
     , cereal >=0.4 && <0.6
     , clock
     , connection ==0.2.*
-    , containers ==0.5.*
+    , containers
     , dns >=3.0.1
     , dotnet-timespan
     , ekg-core

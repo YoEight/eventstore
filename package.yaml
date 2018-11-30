@@ -1,7 +1,7 @@
 name: eventstore
 version: 1.2.0
 homepage: https://gitlab.com/YoEight/eventstore-hs
-tested-with: GHC >= 7.8 && < 8.6
+tested-with: GHC >= 7.8 && <= 8.6
 synopsis: EventStore TCP Client
 description: EventStore TCP Client <https://eventstore.org>
 license: BSD3
@@ -17,6 +17,7 @@ dependencies:
   - aeson >=0.8
   - mono-traversable ==1.*
   - connection ==0.2.*
+  - containers
   - dotnet-timespan
   - stm
   - time >=1.4
@@ -26,7 +27,6 @@ dependencies:
   - bytestring
   - semigroups
   - hashable
-  - containers
   - unordered-containers
   - stm-chans
   - stm
@@ -60,7 +60,6 @@ library:
     - Database.EventStore.Internal.Test
   dependencies:
     - cereal >=0.4 && <0.6
-    - containers ==0.5.*
     - protobuf >=0.2.1.1 && <0.3
     - random ==1.*
     - unordered-containers

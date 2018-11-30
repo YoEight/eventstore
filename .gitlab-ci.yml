@@ -56,8 +56,26 @@ GHC 8.4:
     - cabal install alex happy
   image: haskell:8.4
 
+GHC 8.6:
+  image: haskell:8.6
+  stage: build
+  before_script:
+    - apt update && apt install -y unzip curl
+    - cabal new-update
+    - cabal new-install alex happy
+  script:
+    - curl -G -L -o artifacts.zip --data-urlencode "job=${CI_JOB_NAME}" $ARTIFACTS_URL || true
+    - unzip -q artifacts.zip || true
+    - cabal --store-dir $CI_PROJECT_DIR/ci-cabal new-configure
+    - cabal --store-dir $CI_PROJECT_DIR/ci-cabal new-build
+    - cabal new-sdist
+  artifacts:
+    paths:
+      - dist-newstyle/
+      - ci-cabal/
+
 Integration tests:
-  image: fpco/stack-build:lts-11
+  image: haskell:8.6
   variables:
     EVENTSTORE_HOST: "eventstore"
   services:
@@ -65,22 +83,20 @@ Integration tests:
       alias: eventstore
 
   script:
-    - curl -G -L -o artifacts.zip --data-urlencode "job=${CI_JOB_NAME}" $ARTIFACTS_URL || true
-    - unzip -q artifacts.zip || true
-    - stack --stack-root $CI_PROJECT_DIR/stack_root test --fast
-  artifacts:
-    paths:
-      - stack_root/
+    - cabal new-update
+    - cabal --store-dir $CI_PROJECT_DIR/ci-cabal new-test
+  dependencies:
+    - GHC 8.6
 
 Upload on hackage:
   stage: deploy
   script:
     - apt update
     - apt install -y curl
-    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD $(ls dist/eventstore*)
-  image: haskell:8.4
+    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD $(ls dist-newstyle/sdist/eventstore*)
+  image: haskell:8.6
   dependencies:
-    - GHC 8.4
+    - GHC 8.6
   when: manual
 
 Publish on hackage:
@@ -88,9 +104,9 @@ Publish on hackage:
   script:
     - apt update
     - apt install -y curl
-    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD --publish $(ls dist/eventstore*)
-  image: haskell:8.4
+    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD --publish $(ls dist-newstyle/sdist/eventstore*)
+  image: haskell:8.6
   when: manual
   dependencies:
-    - GHC 8.4
+    - GHC 8.6
 

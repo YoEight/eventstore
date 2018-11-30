@@ -13,3 +13,6 @@ cabal.config
 *.swp
 .stack-work/
 tags
+.ghc*
+dist-newstyle/
+cabal.project.local
