@@ -1,6 +1,7 @@
 1.2.0
 -----
-* Introduce a type-safe `EventNumber` type.
+* Introduce a type-safe `EventNumber` setting.
+* Introduce a type-safe `ResolveLink` setting.
 
 1.1.6
 -----
