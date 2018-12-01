@@ -2,6 +2,7 @@
 -----
 * Introduce a type-safe `EventNumber` setting.
 * Introduce a type-safe `ResolveLink` setting.
+* Support GHC 8.6
 
 1.1.6
 -----

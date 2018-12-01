@@ -52,6 +52,9 @@ module Database.EventStore.Internal.Control
   ) where
 
 --------------------------------------------------------------------------------
+#if __GLASGOW_HASKELL__ > 710
+import Control.Monad.Fail
+#endif
 import Data.Typeable
 #if __GLASGOW_HASKELL__ < 802
 import Data.Typeable.Internal
@@ -86,6 +89,9 @@ newtype EventStore a =
   deriving ( Functor
            , Applicative
            , Monad
+#if __GLASGOW_HASKELL__ > 710
+           , MonadFail
+#endif
            , MonadThrow
            , MonadCatch
            , MonadIO
