@@ -22,6 +22,7 @@ import Data.DotNet.TimeSpan
 import Data.Maybe (fromMaybe)
 import Data.UUID hiding (null)
 import Data.UUID.V4
+import qualified Streaming.Prelude as Streaming
 import System.Environment (lookupEnv)
 import Test.Tasty.HUnit
 import Test.Tasty.Hspec
@@ -76,6 +77,7 @@ import Database.EventStore.Internal.Test hiding
     , transactionCommit
     , i
     )
+import Database.EventStore.Streaming
 import Test.Common
 
 --------------------------------------------------------------------------------
@@ -117,6 +119,8 @@ spec = beforeAll createConnection $ afterAll shuttingDown $ describe "Features" 
     it "deletes a persistent subscription" deletePersistentTest
     it "connects to a persistent subscription" connectToPersistentTest
     it "set MaxAge metadata correctly" maxAgeTest
+    it "streams regular stream (forward)" streamRegularStreamForwardTest
+    it "streams regular stream (backward)" streamRegularStreamBackwardTest
 
 --------------------------------------------------------------------------------
 freshStreamId :: IO StreamName
@@ -458,3 +462,49 @@ maxAgeTest conn = do
             assertEqual "Should have equal timespan" (Just timespan)
             (streamMetadataMaxAge m)
         _ -> fail $ "Stream " <> show stream <> " doesn't exist"
+
+--------------------------------------------------------------------------------
+generateEvents :: Int -> [Value]
+generateEvents n = take n $ fmap toObj [1..]
+
+--------------------------------------------------------------------------------
+toObj :: Int -> Value
+toObj n = object [ pack (show n) .= n ]
+
+--------------------------------------------------------------------------------
+streamRegularStreamForwardTest :: Connection -> IO ()
+streamRegularStreamForwardTest conn = do
+    stream <- freshStreamId
+
+    let jss  = generateEvents 10
+        evts = fmap (createEvent "foo" Nothing . withJson) jss
+        src = readStreamThroughForward conn stream NoResolveLink streamStart (Just 1) Nothing
+
+    _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
+    rest <- Streaming.foldM_ check (pure [1..10]) pure src
+    assertEqual "Should be empty" [] rest
+  where
+    check (x:xs) e =
+        case resolvedEventDataAsJson e of
+            Just e | e == toObj x -> pure xs
+                   | otherwise    -> fail "Out of order event's appeared (stream)"
+            _ -> fail "Can't deserialized event"
+
+--------------------------------------------------------------------------------
+streamRegularStreamBackwardTest :: Connection -> IO ()
+streamRegularStreamBackwardTest conn = do
+    stream <- freshStreamId
+
+    let jss  = generateEvents 10
+        evts = fmap (createEvent "foo" Nothing . withJson) jss
+        src = readStreamThroughBackward conn stream NoResolveLink streamEnd (Just 1) Nothing
+
+    _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
+    rest <- Streaming.foldM_ check (pure $ reverse [1..10]) pure src
+    assertEqual "Should be empty" [] rest
+  where
+    check (x:xs) e =
+        case resolvedEventDataAsJson e of
+            Just e | e == toObj x -> pure xs
+                   | otherwise    -> fail "Out of order event's appeared (stream)"
+            _ -> fail "Can't deserialized event"

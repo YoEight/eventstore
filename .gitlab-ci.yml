@@ -32,10 +32,6 @@ stages:
   - deploy
   - publish
 
-GHC 7.10:
-  <<: *cabal_build
-  image: haskell:7.10
-
 GHC 8.0:
   <<: *cabal_build
   image: haskell:8.0
