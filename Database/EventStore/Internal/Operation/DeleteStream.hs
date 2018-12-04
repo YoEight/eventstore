@@ -61,6 +61,6 @@ deleteStream Settings{..} s v hard cred = construct $ do
         OP_FORWARD_TIMEOUT        -> retry
         OP_COMMIT_TIMEOUT         -> retry
         OP_WRONG_EXPECTED_VERSION -> wrongVersion s v
-        OP_STREAM_DELETED         -> streamDeleted s
+        OP_STREAM_DELETED         -> streamDeleted $ StreamName s
         OP_INVALID_TRANSACTION    -> invalidTransaction
         OP_ACCESS_DENIED          -> accessDenied (StreamName s)

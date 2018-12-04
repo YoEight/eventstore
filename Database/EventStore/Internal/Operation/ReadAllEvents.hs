@@ -57,9 +57,9 @@ readAllEvents Settings{..} c_pos p_pos max_c tos dir cred = construct $ do
         es     = getField $ _Events resp
         evts   = fmap newResolvedEventFromBuf es
         eos    = null evts
-        f_pos  = Position c_pos p_pos
         n_pos  = Position nc_pos np_pos
-        slice  = AllSlice f_pos n_pos dir evts eos
+        slice  =
+            if eos then SliceEndOfStream else Slice evts (Just n_pos)
     case fromMaybe SUCCESS r of
         ERROR         -> serverError err
         ACCESS_DENIED -> accessDenied AllStream

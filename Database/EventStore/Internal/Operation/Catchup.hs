@@ -13,10 +13,8 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.Catchup
-    ( CatchupState(..)
-    , CatchupOpResult(..)
-    , Checkpoint(..)
-    , catchup
+    ( catchupRegular
+    , catchupAll
     ) where
 
 --------------------------------------------------------------------------------
@@ -36,96 +34,79 @@ import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
--- | Represents the next checkpoint to reach on a catchup subscription. Wheither
---   it's a regular stream or the $all stream, it either point to an 'Int32' or
---   a 'Position'.
-data Checkpoint = CheckpointNumber Int32 | CheckpointPosition Position
-
---------------------------------------------------------------------------------
 defaultBatchSize :: Int32
 defaultBatchSize = 500
 
 --------------------------------------------------------------------------------
 streamNotFound :: Text -> OperationError
-streamNotFound stream = StreamNotFound stream
+streamNotFound stream = StreamNotFound $ StreamName stream
 
 --------------------------------------------------------------------------------
--- | Catchup operation state.
-data CatchupState
-    = RegularCatchup Text Int64
-      -- ^ Indicates the stream name and the next event number to start from.
-    | AllCatchup Position
-      -- ^ Indicates the commit and prepare position. Used when catching up from
-      --   the $all stream.
-    deriving Show
+fetchStream :: Settings
+            -> Text -- Stream name.
+            -> Int32 -- Batch size.
+            -> Bool -- Resolve link tos.
+            -> Maybe Credentials
+            -> EventNumber
+            -> Code o (Slice EventNumber)
+fetchStream setts stream batch tos cred (EventNumber n) = do
+    outcome <-
+        deconstruct $ fmap Left $
+            readStreamEvents setts Forward stream n batch tos cred
+
+    fromReadResult stream outcome pure
 
 --------------------------------------------------------------------------------
-fetch :: Settings
-      -> Int32
-      -> Bool
-      -> CatchupState
-      -> Maybe Credentials
-      -> Code o SomeSlice
-fetch setts batch tos state cred =
-    case state of
-        RegularCatchup stream n -> do
-            outcome <- deconstruct $ fmap Left $
-                           readStreamEvents setts Forward stream n batch tos cred
-            fromReadResult stream outcome (return . toSlice)
-        AllCatchup (Position com pre) ->
-            deconstruct $ fmap (Left . toSlice) $
-                readAllEvents setts com pre batch tos Forward cred
+fetchAll :: Settings
+         -> Int32 -- Batch size.
+         -> Bool -- Resolve link tos.
+         -> Maybe Credentials
+         -> Position
+         -> Code o (Slice Position)
+fetchAll setts batch tos cred (Position com pre) =
+    deconstruct $ fmap Left $
+        readAllEvents setts com pre batch tos Forward cred
 
 --------------------------------------------------------------------------------
-updateState :: CatchupState -> Location -> CatchupState
-updateState (RegularCatchup stream _) (StreamEventNumber n) =
-    RegularCatchup stream n
-updateState (AllCatchup _) (StreamPosition p) = AllCatchup p
-updateState x y = error $ "Unexpected input updateState: " <> show (x,y)
-
---------------------------------------------------------------------------------
-sourceStream :: Settings
-             -> Int32
-             -> Bool
-             -> CatchupState
-             -> Maybe Credentials
+sourceStream :: t
+             -> (forall o. t -> Code o (Slice t))
              -> Operation SubAction
-sourceStream setts batch tos start cred = unfoldPlan start go
+sourceStream seed iteratee = unfoldPlan seed go
   where
     go state = do
-        s <- fetch setts batch tos state cred
+        s <- iteratee state
         traverse_ (yield . Submit) (sliceEvents s)
 
-        when (sliceEOS s)
-            stop
-
-        return $ updateState state (sliceNext s)
-
---------------------------------------------------------------------------------
-catchupStreamName :: CatchupState -> Text
-catchupStreamName (RegularCatchup stream _) = stream
-catchupStreamName _ = ""
+        case sliceNext s of
+            Just newState -> pure newState
+            Nothing       -> stop
 
 --------------------------------------------------------------------------------
-data CatchupOpResult =
-    CatchupOpResult { catchupReadEvents :: ![ResolvedEvent]
-                    , catchupEndOfStream :: !Bool
-                    , catchupCheckpoint :: !Checkpoint
-                    }
-
---------------------------------------------------------------------------------
--- | Stream catching up operation.
-catchup :: Settings
-        -> CatchupState
-        -> Bool
-        -> Maybe Int32
-        -> Maybe Credentials
-        -> Operation SubAction
-catchup setts state tos batchSiz cred =
-    sourceStream setts batch tos state cred <> volatile stream tos cred
+catchupRegular :: Settings
+               -> Text
+               -> EventNumber
+               -> Bool        -- Resolve link tos.
+               -> Maybe Int32 -- Batch size.
+               -> Maybe Credentials
+               -> Operation SubAction
+catchupRegular setts stream from tos batchSiz cred =
+    sourceStream from (fetchStream setts stream batch tos cred)
+        <> volatile stream tos cred
   where
-    batch  = fromMaybe defaultBatchSize batchSiz
-    stream = catchupStreamName state
+    batch = fromMaybe defaultBatchSize batchSiz
+
+--------------------------------------------------------------------------------
+catchupAll :: Settings
+           -> Position
+           -> Bool        -- Resolve link tos.
+           -> Maybe Int32 -- Batch size.
+           -> Maybe Credentials
+           -> Operation SubAction
+catchupAll setts from tos batchSiz cred =
+    sourceStream from (fetchAll setts batch tos cred)
+        <> volatile "" tos cred
+  where
+    batch = fromMaybe defaultBatchSize batchSiz
 
 --------------------------------------------------------------------------------
 fromReadResult :: Text
