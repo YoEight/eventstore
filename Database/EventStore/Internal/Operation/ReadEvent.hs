@@ -64,7 +64,7 @@ readEvent Settings{..} s evtn tos cred = construct $ do
     case r of
         NOT_FOUND      -> yield not_found
         NO_STREAM      -> yield ReadNoStream
-        STREAM_DELETED -> yield $ ReadStreamDeleted s
+        STREAM_DELETED -> yield $ ReadStreamDeleted $ StreamName s
         ERROR          -> yield (ReadError err)
         ACCESS_DENIED  -> yield $ ReadAccessDenied $ StreamName s
         SUCCESS        -> yield found

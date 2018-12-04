@@ -1,10 +1,10 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.31.0.
+-- This file has been generated from package.yaml by hpack version 0.31.1.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e7a585ace910a2bfcd13b439bb4b56d068d44070ddf3034ace6178ea87912461
+-- hash: cc8e9ce85a6bd7e6c1f902847a324ea05bfba0a46c6bb7f114ef798ff0a35761
 
 name:           eventstore
 version:        1.2.0
@@ -113,6 +113,7 @@ library
     , mtl
     , protobuf >=0.2.1.1 && <0.3
     , random ==1.*
+    , safe
     , safe-exceptions
     , semigroups >=0.5
     , stm
@@ -158,6 +159,7 @@ test-suite eventstore-tests
     , monad-control
     , mono-traversable ==1.*
     , protobuf
+    , safe
     , safe-exceptions
     , semigroups
     , stm

@@ -163,6 +163,10 @@ module Database.EventStore
     , connectToPersistentSubscription
      -- * Results
     , Slice(..)
+    , sliceEvents
+    , sliceEOS
+    , sliceNext
+    , emptySlice
     , AllSlice
     , Op.DeleteResult(..)
     , WriteResult(..)
@@ -541,12 +545,12 @@ subscribeFrom :: Connection
               -> Maybe EventNumber
               -> Maybe Int32 -- ^ Batch size
               -> Maybe Credentials
-              -> IO CatchupSubscription
+              -> IO (CatchupSubscription EventNumber)
 subscribeFrom conn streamId resLnkTos lastChkPt batch cred =
-    subscribeFromCommon conn resLnkTos batch cred tpe
+    subscribeFromCommon conn resLnkTos batch cred (RegularKind streamStr) startPoint
   where
-    tpe = Op.RegularCatchup (streamNameRaw streamId) startPoint
-    startPoint = eventNumberToInt64 $ fromMaybe streamStart lastChkPt
+    startPoint = fromMaybe streamStart lastChkPt
+    streamStr = streamNameRaw streamId
 
 --------------------------------------------------------------------------------
 -- | Same as 'subscribeFrom' but applied to $all stream.
@@ -555,22 +559,23 @@ subscribeToAllFrom :: Connection
                    -> Maybe Position -- ^ Last checkpoint
                    -> Maybe Int32    -- ^ Batch size
                    -> Maybe Credentials
-                   -> IO CatchupSubscription
+                   -> IO (CatchupSubscription Position)
 subscribeToAllFrom conn resLnkTos lastChkPt batch cred =
-    subscribeFromCommon conn resLnkTos batch cred tpe
+    subscribeFromCommon conn resLnkTos batch cred AllKind seed
   where
-    Position cPos pPos = fromMaybe positionStart lastChkPt
-    tpe = Op.AllCatchup (Position cPos pPos)
+    seed = fromMaybe positionStart lastChkPt
 
 --------------------------------------------------------------------------------
-subscribeFromCommon :: Connection
+subscribeFromCommon :: Track t
+                    => Connection
                     -> ResolveLink
                     -> Maybe Int32
                     -> Maybe Credentials
-                    -> Op.CatchupState
-                    -> IO CatchupSubscription
-subscribeFromCommon Connection{..} resLinkTos batch cred tpe =
-    newCatchupSubscription _exec resLnkTos batch cred tpe
+                    -> Kind t
+                    -> t
+                    -> IO (CatchupSubscription t)
+subscribeFromCommon Connection{..} resLinkTos batch cred kind seed =
+    newCatchupSubscription _exec resLnkTos batch cred kind seed
   where
     resLnkTos = resolveLinkToBool resLinkTos
 

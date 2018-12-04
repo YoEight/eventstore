@@ -236,7 +236,7 @@ streamExists = StreamExists
 
 --------------------------------------------------------------------------------
 -- | Represents an event position within a stream.
-newtype EventNumber = EventNumber Int64
+newtype EventNumber = EventNumber Int64 deriving (Eq, Ord, Show)
 
 --------------------------------------------------------------------------------
 -- | The first event in a stream.

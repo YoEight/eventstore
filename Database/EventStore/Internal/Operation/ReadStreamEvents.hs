@@ -58,11 +58,13 @@ readStreamEvents Settings{..} dir s st cnt tos cred = construct $ do
         err   = getField $ _error resp
         eos   = getField $ _endOfStream resp
         nxt   = getField $ _nextNumber resp
-        lst   = getField $ _lastNumber resp
-        found = StreamSlice s lst dir st nxt evts eos
+        found =
+            if null evts && eos
+            then SliceEndOfStream
+            else Slice evts (if eos then Nothing else Just $ EventNumber nxt)
     case r of
         NO_STREAM      -> yield ReadNoStream
-        STREAM_DELETED -> yield $ ReadStreamDeleted s
+        STREAM_DELETED -> yield $ ReadStreamDeleted $ StreamName s
         NOT_MODIFIED   -> yield ReadNotModified
         ERROR          -> yield (ReadError err)
         ACCESS_DENIED  -> yield $ ReadAccessDenied $ StreamName s

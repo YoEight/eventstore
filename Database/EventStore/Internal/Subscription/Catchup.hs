@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs               #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -16,6 +17,7 @@ module Database.EventStore.Internal.Subscription.Catchup where
 
 --------------------------------------------------------------------------------
 import Control.Monad.Fix
+import Safe (fromJustNote)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
@@ -38,28 +40,57 @@ data Phase
   | Closed (Either SomeException SubDropReason)
 
 --------------------------------------------------------------------------------
-data CatchupTrack
-  = CatchupRegular !(Maybe Int64)
-  | CatchupAll !(Maybe Position)
+class Track t where
+    receivedAlready :: t -> ResolvedEvent -> Bool
+    nextTarget      :: ResolvedEvent -> t
 
 --------------------------------------------------------------------------------
-catchupTrack :: CatchupState -> CatchupTrack
-catchupTrack RegularCatchup{} = CatchupRegular Nothing
-catchupTrack AllCatchup{}     = CatchupAll Nothing
+instance Track EventNumber where
+    receivedAlready old e =
+        EventNumber (resolvedEventOriginalEventNumber e) < old
+
+    nextTarget e = EventNumber (resolvedEventOriginalEventNumber e)
 
 --------------------------------------------------------------------------------
-receivedAlready :: CatchupTrack -> ResolvedEvent -> Bool
-receivedAlready (CatchupRegular old) e =
-  maybe False (resolvedEventOriginalEventNumber e <=) old
-receivedAlready (CatchupAll old) e =
-  fromMaybe False ((<=) <$> resolvedEventPosition e <*> old)
+instance Track Position where
+    receivedAlready old e =
+        let pos =
+                fromJustNote
+                    "Position is always defined when reading events from $all stream"
+                    $ resolvedEventPosition e in
+        pos < old
+
+    nextTarget e =
+        fromJustNote
+            "Position is always defined when reading events from $all stream"
+            $ resolvedEventPosition e
 
 --------------------------------------------------------------------------------
-updateTrack :: ResolvedEvent -> CatchupTrack -> CatchupTrack
-updateTrack e (CatchupRegular _) =
-  CatchupRegular (Just $ resolvedEventOriginalEventNumber e)
-updateTrack e (CatchupAll _) =
-  CatchupAll (resolvedEventPosition e)
+data Kind t where
+  RegularKind :: Text -> Kind EventNumber
+  AllKind     :: Kind Position
+
+--------------------------------------------------------------------------------
+kindStreamName :: Kind t -> StreamName
+kindStreamName (RegularKind n) = StreamName n
+kindStreamName AllKind         = AllStream
+
+--------------------------------------------------------------------------------
+kindTrack :: Kind t -> Maybe t
+kindTrack _ = Nothing
+
+--------------------------------------------------------------------------------
+kindCatchup :: Settings
+            -> Bool
+            -> Maybe Int32
+            -> Maybe Credentials
+            -> Kind t
+            -> t
+            -> Operation SubAction
+kindCatchup setts tos batch cred kind start =
+    case kind of
+        RegularKind n -> catchupRegular setts n start tos batch cred
+        AllKind       -> catchupAll setts start tos batch cred
 
 --------------------------------------------------------------------------------
 -- | This kind of subscription specifies a starting point, in the form of an
@@ -71,16 +102,16 @@ updateTrack e (CatchupAll _) =
 --   events in it, the subscriber can expect to see events 51 through 100, and
 --   then any events subsequently written until such time as the subscription is
 --   dropped or closed.
-data CatchupSubscription =
+data CatchupSubscription t =
   CatchupSubscription { _catchupExec   :: Exec
                       , _catchupStream :: StreamName
                       , _catchupPhase  :: TVar Phase
-                      , _catchupTrack  :: TVar CatchupTrack
+                      , _catchupTrack  :: TVar t
                       , _catchupNext   :: STM (Maybe ResolvedEvent)
                       }
 
 --------------------------------------------------------------------------------
-instance Subscription CatchupSubscription where
+instance Subscription (CatchupSubscription t) where
   nextEventMaybeSTM = _catchupNext
 
   getSubscriptionDetailsSTM s = do
@@ -95,28 +126,25 @@ instance Subscription CatchupSubscription where
   unsubscribe s = subUnsubscribe (_catchupExec s) s
 
 --------------------------------------------------------------------------------
-streamName :: CatchupState -> StreamName
-streamName (RegularCatchup stream _) = StreamName stream
-streamName _                         = "$all"
-
---------------------------------------------------------------------------------
 streamText :: StreamName -> Text
 streamText (StreamName s) = s
 streamText _              = ""
 
 --------------------------------------------------------------------------------
-newCatchupSubscription :: Exec
+newCatchupSubscription :: Track t
+                       => Exec
                        -> Bool
                        -> Maybe Int32
                        -> Maybe Credentials
-                       -> CatchupState
-                       -> IO CatchupSubscription
-newCatchupSubscription exec tos batch cred state = do
+                       -> Kind t
+                       -> t
+                       -> IO (CatchupSubscription t)
+newCatchupSubscription exec tos batch cred kind seed = do
   phaseVar <- newTVarIO CatchingUp
   queue    <- newTQueueIO
-  track    <- newTVarIO $ catchupTrack state
+  track    <- newTVarIO seed
 
-  let stream = streamName state
+  let stream = kindStreamName kind
       sub = CatchupSubscription exec stream phaseVar track $ do
         p       <- readTVar phaseVar
         isEmpty <- isEmptyTQueue queue
@@ -144,28 +172,17 @@ newCatchupSubscription exec tos batch cred state = do
           Submit e -> atomically $ do
             tracker <- readTVar track
             unless (receivedAlready tracker e) $ do
-              writeTVar track (updateTrack e tracker)
+              writeTVar track (nextTarget e)
               writeTQueue queue e
           ConnectionReset -> do
-            tpe <- readTVarIO track
-            let newState =
-                  case tpe of
-                    CatchupRegular old ->
-                      case old of
-                        Just n -> RegularCatchup (streamText stream) n
-                        _      -> state
-                    CatchupAll old ->
-                      case old of
-                        Just p -> AllCatchup p
-                        _      -> state
-
-                newOp = catchup (execSettings exec) newState tos batch cred
+            chk <- readTVarIO track
+            let newOp = kindCatchup (execSettings exec) tos batch cred kind chk
 
             newCb <- mfix $ \self -> newCallback (callback self)
             publishWith exec (SubmitOperation newCb newOp)
 
   cb <- mfix $ \self -> newCallback (callback self)
-  let op = catchup (execSettings exec) state tos batch cred
+  let op = kindCatchup (execSettings exec) tos batch cred kind seed
   publishWith exec (SubmitOperation cb op)
   return sub
 
@@ -176,17 +193,17 @@ throwClosed (Right r) = throwSTM (SubscriptionClosed $ Just r)
 
 --------------------------------------------------------------------------------
 -- | Non blocking version of `waitTillCatchup`.
-hasCaughtUp :: CatchupSubscription -> IO Bool
+hasCaughtUp :: CatchupSubscription t -> IO Bool
 hasCaughtUp sub = atomically $ hasCaughtUpSTM sub
 
 --------------------------------------------------------------------------------
 -- | Waits until 'CatchupSubscription' subscription catch-up its stream.
-waitTillCatchup :: CatchupSubscription -> IO ()
+waitTillCatchup :: CatchupSubscription t -> IO ()
 waitTillCatchup sub = atomically $ unlessM (hasCaughtUpSTM sub) retrySTM
 
 --------------------------------------------------------------------------------
 -- | Like 'hasCaughtUp' but lives in 'STM' monad.
-hasCaughtUpSTM :: CatchupSubscription -> STM Bool
+hasCaughtUpSTM :: CatchupSubscription t -> STM Bool
 hasCaughtUpSTM CatchupSubscription{..} = do
   p <- readTVar _catchupPhase
   case p of

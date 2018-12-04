@@ -18,6 +18,7 @@ module Database.EventStore.Internal.Operation.Read.Common where
 --------------------------------------------------------------------------------
 import Control.Applicative
 import Data.Foldable
+import Data.Maybe (isNothing)
 import Data.Monoid
 import Data.Traversable
 import Data.Int
@@ -35,7 +36,7 @@ import Prelude
 data ReadResult       :: StreamType -> * -> * where
     ReadSuccess       :: a -> ReadResult t a
     ReadNoStream      :: ReadResult 'RegularStream a
-    ReadStreamDeleted :: Text -> ReadResult 'RegularStream a
+    ReadStreamDeleted :: StreamName -> ReadResult 'RegularStream a
     ReadNotModified   :: ReadResult t a
     ReadError         :: Maybe Text -> ReadResult t a
     ReadAccessDenied  :: StreamName -> ReadResult t a
@@ -84,107 +85,43 @@ instance Traversable (ReadResult t) where
 
 --------------------------------------------------------------------------------
 -- | Gathers common slice operations.
-class Slice a where
-    type Loc a
-
-    sliceEvents :: a -> [ResolvedEvent]
-    -- ^ Gets slice's 'ResolvedEvent's.
-    sliceDirection :: a -> ReadDirection
-    -- ^ Gets slice's reading direction.
-    sliceEOS :: a -> Bool
-    -- ^ If the slice reaches the end of the stream.
-    sliceFrom :: a -> Loc a
-    -- ^ Gets the starting location of this slice.
-    sliceNext :: a -> Loc a
-    -- ^ Gets the next location of this slice.
-    toSlice :: a -> SomeSlice
-    -- ^ Returns a common view of a slice.
-
---------------------------------------------------------------------------------
--- | Regular stream slice.
-data StreamSlice =
-    StreamSlice
-    { sliceStream :: !Text
-    , sliceLast   :: !Int64
-    , _ssDir      :: !ReadDirection
-    , _ssFrom     :: !Int64
-    , _ssNext     :: !Int64
-    , _ssEvents   :: ![ResolvedEvent]
-    , _ssEOS      :: !Bool
-    } deriving Show
-
---------------------------------------------------------------------------------
-instance Slice StreamSlice where
-    type Loc StreamSlice = Int64
-
-    sliceEvents    = _ssEvents
-    sliceDirection = _ssDir
-    sliceEOS       = _ssEOS
-    sliceFrom      = _ssFrom
-    sliceNext      = _ssNext
-
-    toSlice s =
-        SomeSlice
-        { __events = sliceEvents s
-        , __eos    = sliceEOS s
-        , __dir    = sliceDirection s
-        , __from   = StreamEventNumber $ sliceFrom s
-        , __next   = StreamEventNumber $ sliceNext s
-        }
-
---------------------------------------------------------------------------------
--- | Represents a slice of the $all stream.
-data AllSlice =
-    AllSlice
-    { _saFrom   :: !Position
-    , _saNext   :: !Position
-    , _saDir    :: !ReadDirection
-    , _saEvents :: ![ResolvedEvent]
-    , _saEOS    :: !Bool
-    } deriving Show
-
---------------------------------------------------------------------------------
-instance Slice AllSlice where
-    type Loc AllSlice = Position
-
-    sliceEvents    = _saEvents
-    sliceDirection = _saDir
-    sliceEOS       = _saEOS
-    sliceFrom      = _saFrom
-    sliceNext      = _saNext
-
-    toSlice s =
-        SomeSlice
-        { __events = sliceEvents s
-        , __eos    = sliceEOS s
-        , __dir    = sliceDirection s
-        , __from   = StreamPosition $ sliceFrom s
-        , __next   = StreamPosition $ sliceNext s
-        }
-
---------------------------------------------------------------------------------
-data Location
-    = StreamEventNumber !Int64
-    | StreamPosition !Position
+data Slice t
+    = SliceEndOfStream
+    | Slice ![ResolvedEvent] !(Maybe t)
     deriving Show
 
 --------------------------------------------------------------------------------
-data SomeSlice =
-    SomeSlice
-    { __events :: ![ResolvedEvent]
-    , __eos    :: !Bool
-    , __dir    :: !ReadDirection
-    , __from   :: !Location
-    , __next   :: !Location
-    } deriving Show
+-- | Empty slice.
+emptySlice :: Slice t
+emptySlice = SliceEndOfStream
 
 --------------------------------------------------------------------------------
-instance Slice SomeSlice where
-    type Loc SomeSlice = Location
+instance Functor Slice where
+    fmap f SliceEndOfStream = SliceEndOfStream
+    fmap f (Slice xs next)  = Slice xs (fmap f next)
 
-    sliceEvents    = __events
-    sliceDirection = __dir
-    sliceEOS       = __eos
-    sliceFrom      = __from
-    sliceNext      = __next
-    toSlice        = id
+--------------------------------------------------------------------------------
+-- | Gets slice's 'ResolvedEvents's.
+sliceEvents :: Slice t -> [ResolvedEvent]
+sliceEvents SliceEndOfStream = []
+sliceEvents (Slice xs _)     = xs
+
+--------------------------------------------------------------------------------
+-- | If the slice has reached the end of the stream.
+sliceEOS :: Slice t -> Bool
+sliceEOS SliceEndOfStream = True
+sliceEOS (Slice _ next)   = isNothing next
+
+--------------------------------------------------------------------------------
+-- | Gets the next location of this slice.
+sliceNext :: Slice t -> Maybe t
+sliceNext SliceEndOfStream = Nothing
+sliceNext (Slice _ next)   = next
+
+--------------------------------------------------------------------------------
+-- | Regular stream slice.
+type StreamSlice = Slice EventNumber
+
+--------------------------------------------------------------------------------
+-- | Represents a slice of the $all stream.
+type AllSlice = Slice Position

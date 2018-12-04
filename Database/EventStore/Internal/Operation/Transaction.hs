@@ -54,7 +54,7 @@ transactionStart Settings{..} stream exp_v cred = construct $ do
         OP_FORWARD_TIMEOUT        -> retry
         OP_COMMIT_TIMEOUT         -> retry
         OP_WRONG_EXPECTED_VERSION -> wrongVersion stream exp_v
-        OP_STREAM_DELETED         -> streamDeleted stream
+        OP_STREAM_DELETED         -> streamDeleted $ StreamName stream
         OP_INVALID_TRANSACTION    -> invalidTransaction
         OP_ACCESS_DENIED          -> accessDenied $ StreamName stream
         OP_SUCCESS                -> yield tid
@@ -78,7 +78,7 @@ transactionWrite Settings{..} stream exp_v trans_id evts cred = construct $ do
         OP_FORWARD_TIMEOUT        -> retry
         OP_COMMIT_TIMEOUT         -> retry
         OP_WRONG_EXPECTED_VERSION -> wrongVersion stream exp_v
-        OP_STREAM_DELETED         -> streamDeleted stream
+        OP_STREAM_DELETED         -> streamDeleted $ StreamName stream
         OP_INVALID_TRANSACTION    -> invalidTransaction
         OP_ACCESS_DENIED          -> accessDenied $ StreamName stream
         OP_SUCCESS                -> yield ()
@@ -107,7 +107,7 @@ transactionCommit Settings{..} stream exp_v trans_id cred = construct $ do
         OP_FORWARD_TIMEOUT        -> retry
         OP_COMMIT_TIMEOUT         -> retry
         OP_WRONG_EXPECTED_VERSION -> wrongVersion stream exp_v
-        OP_STREAM_DELETED         -> streamDeleted stream
+        OP_STREAM_DELETED         -> streamDeleted $ StreamName stream
         OP_INVALID_TRANSACTION    -> invalidTransaction
         OP_ACCESS_DENIED          -> accessDenied $ StreamName stream
         OP_SUCCESS                -> yield res

@@ -63,6 +63,7 @@ import Database.EventStore
     , transactionWrite
     , deleteStream
     , transactionCommit
+    , sliceEvents
     )
 import Database.EventStore.Internal.Test hiding
     ( Connection(..)

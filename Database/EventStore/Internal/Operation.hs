@@ -74,14 +74,14 @@ data OpResult
 -- | Operation exception that can occurs on an operation response.
 data OperationError
     = WrongExpectedVersion Text ExpectedVersion -- ^ Stream and Expected Version
-    | StreamDeleted Text                        -- ^ Stream
+    | StreamDeleted StreamName                        -- ^ Stream
     | InvalidTransaction
     | AccessDenied StreamName                   -- ^ Stream
     | InvalidServerResponse Command Command     -- ^ Expected, Found
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason
     | InvalidOperation Text
-    | StreamNotFound Text
+    | StreamNotFound StreamName
     | NotAuthenticatedOp
       -- ^ Invalid operation state. If happens, it's a driver bug.
     | Aborted
@@ -218,7 +218,7 @@ wrongVersion stream ver = failure (WrongExpectedVersion stream ver)
 
 --------------------------------------------------------------------------------
 -- | Raises 'StreamDeleted' exception.
-streamDeleted :: Text -> Code o a
+streamDeleted :: StreamName -> Code o a
 streamDeleted stream = failure (StreamDeleted stream)
 
 --------------------------------------------------------------------------------
