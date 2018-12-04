@@ -2,8 +2,9 @@
 -----
 * Introduce a type-safe `EventNumber` setting.
 * Introduce a type-safe `ResolveLink` setting.
-* Support GHC 8.6.
+* Support GHC 8.6 but drop GHC < 8.
 * Refactor `Slice` api.
+* Implement a stream-processing interface.
 
 1.1.6
 -----

@@ -36,6 +36,7 @@ dependencies:
   - exceptions
   - transformers-base
   - safe
+  - streaming
 
 extra-source-files:
   - README.md
@@ -58,6 +59,7 @@ library:
   source-dirs:  '.'
   exposed-modules:
     - Database.EventStore
+    - Database.EventStore.Streaming
     - Database.EventStore.Internal.Test
   dependencies:
     - cereal >=0.4 && <0.6

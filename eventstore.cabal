@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: cc8e9ce85a6bd7e6c1f902847a324ea05bfba0a46c6bb7f114ef798ff0a35761
+-- hash: 397c16fc115765cfccc8c21c8b7133555d40e98546632200395b77c3551720c8
 
 name:           eventstore
 version:        1.2.0
@@ -30,6 +30,7 @@ source-repository head
 library
   exposed-modules:
       Database.EventStore
+      Database.EventStore.Streaming
       Database.EventStore.Internal.Test
   other-modules:
       Database.EventStore.Internal.Callback
@@ -118,6 +119,7 @@ library
     , semigroups >=0.5
     , stm
     , stm-chans
+    , streaming
     , text
     , time >=1.4
     , transformers-base
@@ -164,6 +166,7 @@ test-suite eventstore-tests
     , semigroups
     , stm
     , stm-chans
+    , streaming
     , tasty
     , tasty-hspec
     , tasty-hunit
