@@ -62,12 +62,11 @@ module Database.EventStore
     , OperationMaxAttemptReached(..)
      -- * Read Operations
     , StreamMetadataResult(..)
+    , BatchResult(..)
     , ResolveLink(..)
     , readEvent
-    , readAllEventsBackward
-    , readAllEventsForward
-    , readStreamEventsBackward
-    , readStreamEventsForward
+    , readEventsBackward
+    , readEventsForward
     , getStreamMetadata
       -- * Write Operations
     , StreamACL(..)
@@ -118,6 +117,7 @@ module Database.EventStore
       -- * Subscription
     , SubscriptionClosed(..)
     , SubscriptionId
+    , SubscriptionStream(..)
     , Subscription
     , SubDropReason(..)
     , SubDetails
@@ -128,19 +128,15 @@ module Database.EventStore
     , nextEventMaybeSTM
     , getSubscriptionDetailsSTM
     , unsubscribe
-    , subscriptionStream
       -- * Volatile Subscription
     , RegularSubscription
     , subscribe
-    , subscribeToAll
     , getSubscriptionId
-    , isSubscribedToAll
     , nextEvent
     , nextEventMaybe
       -- * Catch-up Subscription
     , CatchupSubscription
     , subscribeFrom
-    , subscribeToAllFrom
     , waitTillCatchup
     , hasCaughtUp
     , hasCaughtUpSTM
@@ -173,13 +169,14 @@ module Database.EventStore
     , ReadResult(..)
     , RecordedEvent(..)
     , Op.ReadEvent(..)
-    , StreamType(..)
     , StreamSlice
     , Position(..)
     , ReadDirection(..)
     , ResolvedEvent(..)
     , OperationError(..)
+    , StreamId(..)
     , StreamName(..)
+    , isAllStream
     , isEventResolvedLink
     , resolvedEventOriginal
     , resolvedEventDataAsJson
@@ -327,7 +324,7 @@ sendEvents :: Connection
            -> IO (Async WriteResult)
 sendEvents Connection{..} evt_stream exp_ver evts cred = do
     p <- newPromise
-    let op = Op.writeEvents _settings (streamNameRaw evt_stream) exp_ver cred evts
+    let op = Op.writeEvents _settings (streamIdRaw evt_stream) exp_ver cred evts
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
@@ -341,7 +338,7 @@ deleteStream :: Connection
              -> IO (Async Op.DeleteResult)
 deleteStream Connection{..} evt_stream exp_ver hard_del cred = do
     p <- newPromise
-    let op = Op.deleteStream _settings (streamNameRaw evt_stream) exp_ver hard_del cred
+    let op = Op.deleteStream _settings (streamIdRaw evt_stream) exp_ver hard_del cred
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
@@ -375,12 +372,12 @@ startTransaction :: Connection
                  -> IO (Async Transaction)
 startTransaction conn@Connection{..} evt_stream exp_ver cred = do
     p <- newPromise
-    let op = Op.transactionStart _settings (streamNameRaw evt_stream) exp_ver cred
+    let op = Op.transactionStart _settings (streamIdRaw evt_stream) exp_ver cred
     publishWith _exec (SubmitOperation p op)
     async $ do
         tid <- retrieve p
         return Transaction
-               { _tStream  = streamNameRaw evt_stream
+               { _tStream  = streamIdRaw evt_stream
                , _tTransId = TransactionId tid
                , _tExpVer  = exp_ver
                , _tConn    = conn
@@ -424,154 +421,110 @@ readEvent :: Connection
           -> EventNumber
           -> ResolveLink
           -> Maybe Credentials
-          -> IO (Async (ReadResult 'RegularStream Op.ReadEvent))
+          -> IO (Async (ReadResult EventNumber Op.ReadEvent))
 readEvent Connection{..} stream_id evtNum resLinkTos cred = do
     p <- newPromise
     let evt_num = eventNumberToInt64 evtNum
         res_link_tos = resolveLinkToBool resLinkTos
-        op = Op.readEvent _settings (streamNameRaw stream_id) evt_num res_link_tos cred
+        op = Op.readEvent _settings (streamIdRaw stream_id) evt_num res_link_tos cred
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
 --------------------------------------------------------------------------------
--- | Reads events from a given stream forward.
-readStreamEventsForward :: Connection
-                        -> StreamName
-                        -> EventNumber
-                        -> Int32      -- ^ Batch size
-                        -> ResolveLink
-                        -> Maybe Credentials
-                        -> IO (Async (ReadResult 'RegularStream StreamSlice))
-readStreamEventsForward mgr =
-    readStreamEventsCommon mgr Forward
+-- | When batch-reading a stream, this type-level function maps the result you
+--   will have whether you read a regular stream or $all stream. When reading
+--   a regular stream, some read-error can occur like the stream got deleted.
+--   However read-error cannot occur when reading $all stream (because $all
+--   cannot get deleted).
+type family BatchResult t where
+    BatchResult EventNumber = ReadResult EventNumber StreamSlice
+    BatchResult Position    = AllSlice
 
 --------------------------------------------------------------------------------
--- | Reads events from a given stream backward.
-readStreamEventsBackward :: Connection
-                         -> StreamName
-                         -> EventNumber
-                         -> Int32      -- ^ Batch size
-                         -> ResolveLink
-                         -> Maybe Credentials
-                         -> IO (Async (ReadResult 'RegularStream StreamSlice))
-readStreamEventsBackward mgr =
-    readStreamEventsCommon mgr Backward
+-- | Reads events from a stream forward.
+readEventsForward :: Connection
+                  -> StreamId t
+                  -> t
+                  -> Int32      -- ^ Batch size
+                  -> ResolveLink
+                  -> Maybe Credentials
+                  -> IO (Async (BatchResult t))
+readEventsForward conn = readEventsCommon conn Forward
 
 --------------------------------------------------------------------------------
-readStreamEventsCommon :: Connection
-                       -> ReadDirection
-                       -> StreamName
-                       -> EventNumber
-                       -> Int32
-                       -> ResolveLink
-                       -> Maybe Credentials
-                       -> IO (Async (ReadResult 'RegularStream StreamSlice))
-readStreamEventsCommon Connection{..} dir stream_id startNum cnt resLinkTos cred = do
-    p <- newPromise
-    let name = streamNameRaw stream_id
-        start = eventNumberToInt64 startNum
-        res_link_tos = resolveLinkToBool resLinkTos
-        op   = Op.readStreamEvents _settings dir name start cnt res_link_tos cred
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+-- | Reads events from a stream backward.
+readEventsBackward :: Connection
+                   -> StreamId t
+                   -> t
+                   -> Int32      -- ^ Batch size
+                   -> ResolveLink
+                   -> Maybe Credentials
+                   -> IO (Async (BatchResult t))
+readEventsBackward conn = readEventsCommon conn Backward
 
 --------------------------------------------------------------------------------
--- | Reads events from the $all stream forward.
-readAllEventsForward :: Connection
-                     -> Position
-                     -> Int32      -- ^ Batch size
-                     -> ResolveLink
-                     -> Maybe Credentials
-                     -> IO (Async AllSlice)
-readAllEventsForward mgr =
-    readAllEventsCommon mgr Forward
-
---------------------------------------------------------------------------------
--- | Reads events from the $all stream backward
-readAllEventsBackward :: Connection
-                      -> Position
-                      -> Int32      -- ^ Batch size
-                      -> ResolveLink
-                      -> Maybe Credentials
-                      -> IO (Async AllSlice)
-readAllEventsBackward mgr =
-    readAllEventsCommon mgr Backward
-
---------------------------------------------------------------------------------
-readAllEventsCommon :: Connection
-                    -> ReadDirection
-                    -> Position
-                    -> Int32
-                    -> ResolveLink
-                    -> Maybe Credentials
-                    -> IO (Async AllSlice)
-readAllEventsCommon Connection{..} dir pos max_c resLinkTos cred = do
+readEventsCommon :: Connection
+                 -> ReadDirection
+                 -> StreamId t
+                 -> t
+                 -> Int32
+                 -> ResolveLink
+                 -> Maybe Credentials
+                 -> IO (Async (BatchResult t))
+readEventsCommon Connection{..} dir streamId start cnt resLinkTos cred = do
     p <- newPromise
     let res_link_tos = resolveLinkToBool resLinkTos
-        op = Op.readAllEvents _settings c_pos p_pos max_c res_link_tos dir cred
+        op =
+            case streamId of
+                StreamName{} ->
+                    let name   = streamIdRaw streamId
+                        evtNum = eventNumberToInt64 start in
+                    Op.readStreamEvents _settings dir name evtNum cnt res_link_tos cred
+                All ->
+                    let Position c_pos p_pos = start in
+                    Op.readAllEvents _settings c_pos p_pos cnt res_link_tos dir cred
+
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
-  where
-    Position c_pos p_pos = pos
 
 --------------------------------------------------------------------------------
--- | Subcribes to given stream.
+-- | Subscribes to a stream.
 subscribe :: Connection
-          -> StreamName
+          -> StreamId t
           -> ResolveLink
           -> Maybe Credentials
-          -> IO RegularSubscription
+          -> IO (RegularSubscription t)
 subscribe Connection{..} stream resLinkTos cred =
     newRegularSubscription _exec stream resLnkTos cred
   where
     resLnkTos = resolveLinkToBool resLinkTos
 
 --------------------------------------------------------------------------------
--- | Subcribes to $all stream.
-subscribeToAll :: Connection
-               -> ResolveLink
-               -> Maybe Credentials
-               -> IO RegularSubscription
-subscribeToAll conn resLnkTos cred = subscribe conn AllStream resLnkTos cred
-
---------------------------------------------------------------------------------
--- | Subscribes to given stream. If last checkpoint is defined, this will
+-- | Subscribes to a stream. If last checkpoint is defined, this will
 --   'readStreamEventsForward' from that event number, otherwise from the
 --   beginning. Once last stream event reached up, a subscription request will
 --   be sent using 'subscribe'.
 subscribeFrom :: Connection
-              -> StreamName
+              -> StreamId t
               -> ResolveLink
-              -> Maybe EventNumber
+              -> Maybe t
               -> Maybe Int32 -- ^ Batch size
               -> Maybe Credentials
-              -> IO (CatchupSubscription EventNumber)
-subscribeFrom conn streamId resLnkTos lastChkPt batch cred =
-    subscribeFromCommon conn resLnkTos batch cred (RegularKind streamStr) startPoint
+              -> IO (CatchupSubscription t)
+subscribeFrom Connection{..} streamId resLinkTos lastChkPt batch cred =
+    newCatchupSubscription _exec resLnkTos batch cred streamId $
+        case streamId of
+            StreamName{} -> fromMaybe streamStart lastChkPt
+            All          -> fromMaybe positionStart lastChkPt
   where
-    startPoint = fromMaybe streamStart lastChkPt
-    streamStr = streamNameRaw streamId
+    resLnkTos = resolveLinkToBool resLinkTos
 
 --------------------------------------------------------------------------------
--- | Same as 'subscribeFrom' but applied to $all stream.
-subscribeToAllFrom :: Connection
-                   -> ResolveLink
-                   -> Maybe Position -- ^ Last checkpoint
-                   -> Maybe Int32    -- ^ Batch size
-                   -> Maybe Credentials
-                   -> IO (CatchupSubscription Position)
-subscribeToAllFrom conn resLnkTos lastChkPt batch cred =
-    subscribeFromCommon conn resLnkTos batch cred AllKind seed
-  where
-    seed = fromMaybe positionStart lastChkPt
-
---------------------------------------------------------------------------------
-subscribeFromCommon :: Track t
-                    => Connection
+subscribeFromCommon :: Connection
                     -> ResolveLink
                     -> Maybe Int32
                     -> Maybe Credentials
-                    -> Kind t
+                    -> StreamId t
                     -> t
                     -> IO (CatchupSubscription t)
 subscribeFromCommon Connection{..} resLinkTos batch cred kind seed =
@@ -589,7 +542,7 @@ setStreamMetadata :: Connection
                   -> IO (Async WriteResult)
 setStreamMetadata Connection{..} evt_stream exp_ver metadata cred = do
     p <- newPromise
-    let name = streamNameRaw evt_stream
+    let name = streamIdRaw evt_stream
         op = Op.setMetaStream _settings name exp_ver cred metadata
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
@@ -602,7 +555,7 @@ getStreamMetadata :: Connection
                   -> IO (Async StreamMetadataResult)
 getStreamMetadata Connection{..} evt_stream cred = do
     p <- newPromise
-    let op = Op.readMetaStream _settings (streamNameRaw evt_stream) cred
+    let op = Op.readMetaStream _settings (streamIdRaw evt_stream) cred
     publishWith _exec (SubmitOperation p op)
     async (retrieve p)
 
@@ -616,7 +569,7 @@ createPersistentSubscription :: Connection
                              -> IO (Async (Maybe PersistActionException))
 createPersistentSubscription Connection{..} grp stream sett cred = do
     p <- newPromise
-    let op = Op.createPersist grp (streamNameRaw stream) sett cred
+    let op = Op.createPersist grp (streamIdRaw stream) sett cred
     publishWith _exec (SubmitOperation p op)
     async (persistAsync p)
 
@@ -630,7 +583,7 @@ updatePersistentSubscription :: Connection
                              -> IO (Async (Maybe PersistActionException))
 updatePersistentSubscription Connection{..} grp stream sett cred = do
     p <- newPromise
-    let op = Op.updatePersist grp (streamNameRaw stream) sett cred
+    let op = Op.updatePersist grp (streamIdRaw stream) sett cred
     publishWith _exec (SubmitOperation p op)
     async (persistAsync p)
 
@@ -643,7 +596,7 @@ deletePersistentSubscription :: Connection
                              -> IO (Async (Maybe PersistActionException))
 deletePersistentSubscription Connection{..} grp stream cred = do
     p <- newPromise
-    let op = Op.deletePersist grp (streamNameRaw stream) cred
+    let op = Op.deletePersist grp (streamIdRaw stream) cred
     publishWith _exec (SubmitOperation p op)
     async (persistAsync p)
 

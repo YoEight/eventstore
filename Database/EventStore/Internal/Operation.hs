@@ -5,6 +5,7 @@
 {-# LANGUAGE KindSignatures             #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE Rank2Types                 #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation
@@ -76,7 +77,7 @@ data OperationError
     = WrongExpectedVersion Text ExpectedVersion -- ^ Stream and Expected Version
     | StreamDeleted StreamName                        -- ^ Stream
     | InvalidTransaction
-    | AccessDenied StreamName                   -- ^ Stream
+    | forall t. AccessDenied (StreamId t)                   -- ^ Stream
     | InvalidServerResponse Command Command     -- ^ Expected, Found
     | ProtobufDecodingError String
     | ServerError (Maybe Text)                  -- ^ Reason
@@ -87,7 +88,10 @@ data OperationError
     | Aborted
       -- ^ Occurs when the user asked to close the connection or if the
       --   connection can't reconnect anymore.
-    deriving (Show, Typeable)
+    deriving Typeable
+
+--------------------------------------------------------------------------------
+deriving instance Show OperationError
 
 --------------------------------------------------------------------------------
 instance Exception OperationError
@@ -228,7 +232,7 @@ invalidTransaction = failure InvalidTransaction
 
 --------------------------------------------------------------------------------
 -- | Raises 'AccessDenied' exception.
-accessDenied :: StreamName -> Code oconcat a
+accessDenied :: StreamId t -> Code o a
 accessDenied = failure . AccessDenied
 
 --------------------------------------------------------------------------------

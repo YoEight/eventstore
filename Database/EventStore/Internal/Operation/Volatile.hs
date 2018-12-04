@@ -20,13 +20,16 @@ import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Settings
+import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Subscription.Message
 import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-volatile :: Text -> Bool -> Maybe Credentials -> Operation SubAction
-volatile stream tos cred = construct (issueRequest stream tos cred)
+volatile :: StreamId t -> Bool -> Maybe Credentials -> Operation SubAction
+volatile streamId tos cred = construct (issueRequest stream tos cred)
+  where
+    stream = streamIdRaw streamId
 
 --------------------------------------------------------------------------------
 issueRequest :: Text -> Bool -> Maybe Credentials -> Code SubAction ()

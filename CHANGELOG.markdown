@@ -5,6 +5,8 @@
 * Support GHC 8.6 but drop GHC < 8.
 * Refactor `Slice` api.
 * Implement a stream-processing interface.
+* typeful stream id representation.
+* Uniform batch-read and subscription interface.
 
 1.1.6
 -----

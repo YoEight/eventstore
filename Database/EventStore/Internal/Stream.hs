@@ -17,26 +17,34 @@ module Database.EventStore.Internal.Stream where
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Prelude
-
---------------------------------------------------------------------------------
--- | A stream can either point to $all or a regular one.
-data StreamType = All | RegularStream deriving (Eq, Ord)
+import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- | Represents a regular stream name or $all stream.
-data StreamName = StreamName Text | AllStream deriving Eq
+data StreamId loc where
+    StreamName :: Text -> StreamId EventNumber
+    All        :: StreamId Position
 
 --------------------------------------------------------------------------------
-streamNameRaw :: StreamName -> Text
-streamNameRaw (StreamName n) = n
-streamNameRaw AllStream      = ""
+-- | If the stream is the $all stream.
+isAllStream :: StreamId t -> Bool
+isAllStream StreamName{} = False
+isAllStream _            = True
 
 --------------------------------------------------------------------------------
-instance Show StreamName where
-    show (StreamName t) = show t
-    show AllStream      = "$all"
+instance Eq (StreamId t) where
+  StreamName n == StreamName v = n == v
+  All          == _            = True
 
 --------------------------------------------------------------------------------
-instance IsString StreamName where
-    fromString "$all" = AllStream
-    fromString stream = StreamName $ pack stream
+type StreamName = StreamId EventNumber
+
+--------------------------------------------------------------------------------
+streamIdRaw :: StreamId t -> Text
+streamIdRaw (StreamName n) = n
+streamIdRaw All            = ""
+
+--------------------------------------------------------------------------------
+instance Show (StreamId t) where
+    show (StreamName n) = show n
+    show All            = "$all"
