@@ -93,7 +93,8 @@ Upload on hackage:
   image: haskell:8.6
   dependencies:
     - GHC 8.6
-  when: manual
+  only:
+    - tags
 
 Publish on hackage:
   stage: publish
@@ -103,6 +104,8 @@ Publish on hackage:
     - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD --publish $(ls dist-newstyle/sdist/eventstore*)
   image: haskell:8.6
   when: manual
+  only:
+    - tags
   dependencies:
     - GHC 8.6
 
