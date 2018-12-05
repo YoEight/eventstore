@@ -254,7 +254,7 @@ eventNumber :: Natural -> EventNumber
 eventNumber n = EventNumber (fromIntegral n)
 
 --------------------------------------------------------------------------------
--- | Returns a 'StreamPosition' from a raw 'Int64'.
+-- | Returns a 'EventNumber from a raw 'Int64'.
 rawEventNumber :: Int64 -> EventNumber
 rawEventNumber = EventNumber
 
