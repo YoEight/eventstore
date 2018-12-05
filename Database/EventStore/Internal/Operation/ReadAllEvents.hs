@@ -62,5 +62,5 @@ readAllEvents Settings{..} c_pos p_pos max_c tos dir cred = construct $ do
             if eos then SliceEndOfStream else Slice evts (Just n_pos)
     case fromMaybe SUCCESS r of
         ERROR         -> serverError err
-        ACCESS_DENIED -> accessDenied AllStream
+        ACCESS_DENIED -> accessDenied All
         _             -> yield slice

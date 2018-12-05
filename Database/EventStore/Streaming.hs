@@ -10,45 +10,46 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Streaming
-    ( ReadException(..)
-    , readStreamThroughForward
-    , readStreamThroughBackward
-    , readAllThroughForward
-    , readAllThroughBackward
+    ( ReadError(..)
+    , readThroughForward
+    , readThroughBackward
+    , throwOnError
     ) where
 
 --------------------------------------------------------------------------------
 import Control.Exception (Exception, throwIO)
 import Data.Int (Int32)
 import Data.Maybe (fromMaybe)
+import Data.Typeable (Typeable)
 import Prelude
 
 --------------------------------------------------------------------------------
-import Data.Text (Text)
-
---------------------------------------------------------------------------------
 import           Control.Concurrent.Async.Lifted (wait)
-import qualified Database.EventStore as ES
-import           Database.EventStore.Internal.Operation.Read.Common (emptySlice)
-import           Database.EventStore.Internal.Types (EventNumber(..))
+import           Control.Monad.Except (ExceptT, throwError, runExceptT)
+import           Data.Text (Text)
 import           Streaming
 import qualified Streaming.Prelude as Streaming
 
 --------------------------------------------------------------------------------
-data ReadException
+import qualified Database.EventStore as ES
+import           Database.EventStore.Internal.Operation.Read.Common (emptySlice)
+import           Database.EventStore.Internal.Types (EventNumber(..))
+
+--------------------------------------------------------------------------------
+data ReadError t
     = StreamDeleted !ES.StreamName
     | ReadError !(Maybe Text)
-    | AccessDenied !ES.StreamName
+    | AccessDenied !(ES.StreamId t)
     deriving Show
 
 --------------------------------------------------------------------------------
-instance Exception ReadException
+instance (Show t, Typeable t) => Exception (ReadError t)
 
 --------------------------------------------------------------------------------
-data Fetch t = FetchError !ReadException | Fetch !(ES.Slice t)
+data Fetch t = FetchError !(ReadError t) | Fetch !(ES.Slice t)
 
 --------------------------------------------------------------------------------
-toFetch :: ES.ReadResult s (ES.Slice t) -> Fetch t
+toFetch :: ES.ReadResult t (ES.Slice t) -> Fetch t
 toFetch ES.ReadNoStream          = Fetch ES.emptySlice
 toFetch ES.ReadNotModified       = Fetch ES.emptySlice
 toFetch (ES.ReadStreamDeleted n) = FetchError (StreamDeleted n)
@@ -57,10 +58,17 @@ toFetch (ES.ReadAccessDenied n)  = FetchError (AccessDenied n)
 toFetch (ES.ReadSuccess s)       = Fetch s
 
 --------------------------------------------------------------------------------
+handleBatchResult :: ES.StreamId t -> ES.BatchResult t -> Fetch t
+handleBatchResult ES.StreamName{} = toFetch
+handleBatchResult ES.All          = Fetch
+
+--------------------------------------------------------------------------------
 data State t = Need t | Fetched ![ES.ResolvedEvent] !(Maybe t)
 
 --------------------------------------------------------------------------------
-streaming :: (t -> IO (Fetch t)) -> t -> Stream (Of ES.ResolvedEvent) IO ()
+streaming :: (t -> IO (Fetch t))
+          -> t
+          -> Stream (Of ES.ResolvedEvent) (ExceptT (ReadError t) IO) ()
 streaming iteratee = Streaming.unfoldr go . Need
   where
       go (Fetched buffer next) =
@@ -68,8 +76,8 @@ streaming iteratee = Streaming.unfoldr go . Need
             e:rest -> pure (Right (e, Fetched rest next))
             []     -> maybe stop (go . Need) next
       go (Need pos) = do
-          iteratee pos >>= \case
-              FetchError e -> throwIO e
+          liftIO (iteratee pos) >>= \case
+              FetchError e -> throwError e
               Fetch s      ->
                   case s of
                       ES.SliceEndOfStream -> stop
@@ -80,126 +88,77 @@ streaming iteratee = Streaming.unfoldr go . Need
 --------------------------------------------------------------------------------
 -- | Returns an iterator able to consume a stream entirely. When reading forward,
 --   the iterator ends when the last stream's event is reached.
-readStreamThroughForward :: ES.Connection
-                         -> ES.StreamName
-                         -> ES.ResolveLink
-                         -> ES.EventNumber
-                         -> Maybe Int32
-                         -> Maybe ES.Credentials
-                         -> Stream (Of ES.ResolvedEvent) IO ()
-readStreamThroughForward conn = readStreamThrough conn ES.Forward
+readThroughForward :: ES.Connection
+                   -> ES.StreamId t
+                   -> ES.ResolveLink
+                   -> t
+                   -> Maybe Int32
+                   -> Maybe ES.Credentials
+                   -> Stream (Of ES.ResolvedEvent) (ExceptT (ReadError t) IO) ()
+readThroughForward conn = readThrough conn ES.Forward
 
 --------------------------------------------------------------------------------
 -- | Returns an iterator able to consume a stream entirely. When reading backward,
 --   the iterator ends when the first stream's event is reached.
-readStreamThroughBackward :: ES.Connection
-                          -> ES.StreamName
-                          -> ES.ResolveLink
-                          -> ES.EventNumber
-                          -> Maybe Int32
-                          -> Maybe ES.Credentials
-                          -> Stream (Of ES.ResolvedEvent) IO ()
-readStreamThroughBackward conn = readStreamThrough conn ES.Backward
+readThroughBackward :: ES.Connection
+                    -> ES.StreamId t
+                    -> ES.ResolveLink
+                    -> t
+                    -> Maybe Int32
+                    -> Maybe ES.Credentials
+                    -> Stream (Of ES.ResolvedEvent) (ExceptT (ReadError t) IO) ()
+readThroughBackward conn = readThrough conn ES.Backward
 
 --------------------------------------------------------------------------------
-readStreamThrough :: ES.Connection
-                  -> ES.ReadDirection
-                  -> ES.StreamName
-                  -> ES.ResolveLink
-                  -> ES.EventNumber
-                  -> Maybe Int32
-                  -> Maybe ES.Credentials
-                  -> Stream (Of ES.ResolvedEvent) IO ()
-readStreamThrough conn dir name lnk from sizMay cred = streaming iteratee from
+-- | Throws an exception in case 'ExceptT' is a 'Left'.
+throwOnError :: (Show t, Typeable t)
+             => Stream (Of a) (ExceptT (ReadError t) IO) ()
+             -> Stream (Of a) IO ()
+throwOnError = hoist go
+  where
+    go action =
+        runExceptT action >>= \case
+            Left e  -> throwIO e
+            Right a -> pure a
+
+--------------------------------------------------------------------------------
+readThrough :: ES.Connection
+            -> ES.ReadDirection
+            -> ES.StreamId t
+            -> ES.ResolveLink
+            -> t
+            -> Maybe Int32
+            -> Maybe ES.Credentials
+            -> Stream (Of ES.ResolvedEvent) (ExceptT (ReadError t) IO) ()
+readThrough conn dir streamId lnk from sizMay cred = streaming iteratee from
   where
     batchSize = fromMaybe 500 sizMay
 
     iteratee =
         case dir of
-            ES.Forward  -> readForward conn name batchSize lnk cred
-            ES.Backward -> readBackward conn name batchSize lnk cred
-
---------------------------------------------------------------------------------
--- | Returns an iterator able to consume $all stream entirely. When reading forward,
---   the iterator ends when the last stream's event is reached.
-readAllThroughForward :: ES.Connection
-                      -> ES.ResolveLink
-                      -> ES.Position
-                      -> Maybe Int32
-                      -> Maybe ES.Credentials
-                      -> Stream (Of ES.ResolvedEvent) IO ()
-readAllThroughForward conn = readAllThrough conn ES.Forward
-
---------------------------------------------------------------------------------
--- | Returns an iterator able to consume $all stream entirely. When reading backward,
---   the iterator ends when the first stream's event is reached.
-readAllThroughBackward :: ES.Connection
-                       -> ES.ResolveLink
-                       -> ES.Position
-                       -> Maybe Int32
-                       -> Maybe ES.Credentials
-                       -> Stream (Of ES.ResolvedEvent) IO ()
-readAllThroughBackward conn = readAllThrough conn ES.Backward
-
---------------------------------------------------------------------------------
-readAllThrough :: ES.Connection
-               -> ES.ReadDirection
-               -> ES.ResolveLink
-               -> ES.Position
-               -> Maybe Int32
-               -> Maybe ES.Credentials
-               -> Stream (Of ES.ResolvedEvent) IO ()
-readAllThrough conn dir lnk from sizMay creds = streaming iteratee from
-  where
-    batchSize = fromMaybe 500 sizMay
-
-    iteratee =
-        case dir of
-            ES.Forward  -> readAllForward conn batchSize lnk creds
-            ES.Backward -> readAllBackward conn batchSize lnk creds
+            ES.Forward  -> readForward conn streamId batchSize lnk cred
+            ES.Backward -> readBackward conn streamId batchSize lnk cred
 
 --------------------------------------------------------------------------------
 readForward :: ES.Connection
-            -> ES.StreamName
+            -> ES.StreamId t
             -> Int32
             -> ES.ResolveLink
             -> Maybe ES.Credentials
-            -> ES.EventNumber
-            -> IO (Fetch EventNumber)
-readForward conn name siz lnk creds start =
-    fmap toFetch . wait =<<
-        ES.readStreamEventsForward conn name start siz lnk creds
+            -> t
+            -> IO (Fetch t)
+readForward conn streamId siz lnk creds start =
+    fmap (handleBatchResult streamId) . wait =<<
+        ES.readEventsForward conn streamId start siz lnk creds
 
 --------------------------------------------------------------------------------
 readBackward :: ES.Connection
-             -> ES.StreamName
+             -> ES.StreamId t
              -> Int32
              -> ES.ResolveLink
              -> Maybe ES.Credentials
-             -> ES.EventNumber
-             -> IO (Fetch EventNumber)
-readBackward conn name siz lnk creds start =
-    fmap toFetch . wait =<<
-        ES.readStreamEventsBackward conn name start siz lnk creds
-
---------------------------------------------------------------------------------
-readAllForward :: ES.Connection
-               -> Int32
-               -> ES.ResolveLink
-               -> Maybe ES.Credentials
-               -> ES.Position
-               -> IO (Fetch ES.Position)
-readAllForward conn siz lnk creds start =
-    fmap Fetch . wait =<<
-        ES.readAllEventsForward conn start siz lnk creds
-
---------------------------------------------------------------------------------
-readAllBackward :: ES.Connection
-                -> Int32
-                -> ES.ResolveLink
-                -> Maybe ES.Credentials
-                -> ES.Position
-                -> IO (Fetch ES.Position)
-readAllBackward conn siz lnk creds start =
-    fmap Fetch . wait =<<
-        ES.readAllEventsBackward conn start siz lnk creds
+             -> t
+             -> IO (Fetch t)
+readBackward conn streamId siz lnk creds start =
+    fmap (handleBatchResult streamId) . wait =<<
+        ES.readEventsBackward conn streamId start siz lnk creds

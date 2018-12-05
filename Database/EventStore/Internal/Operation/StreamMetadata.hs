@@ -78,7 +78,7 @@ streamNotFound :: OperationError
 streamNotFound = InvalidOperation "Read metadata on an inexistant stream"
 
 --------------------------------------------------------------------------------
-onReadResult :: ReadResult 'RegularStream ReadEvent
+onReadResult :: ReadResult EventNumber ReadEvent
              -> (Text -> Int64 -> ResolvedEvent -> Code o a)
              -> Code o a
 onReadResult (ReadSuccess r) k =

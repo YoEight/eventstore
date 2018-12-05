@@ -1,6 +1,7 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE GADTs             #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Operation.Catchup
@@ -13,9 +14,7 @@
 --
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Operation.Catchup
-    ( catchupRegular
-    , catchupAll
-    ) where
+    ( catchup ) where
 
 --------------------------------------------------------------------------------
 import Data.Int
@@ -82,35 +81,27 @@ sourceStream seed iteratee = unfoldPlan seed go
             Nothing       -> stop
 
 --------------------------------------------------------------------------------
-catchupRegular :: Settings
-               -> Text
-               -> EventNumber
-               -> Bool        -- Resolve link tos.
-               -> Maybe Int32 -- Batch size.
-               -> Maybe Credentials
-               -> Operation SubAction
-catchupRegular setts stream from tos batchSiz cred =
-    sourceStream from (fetchStream setts stream batch tos cred)
-        <> volatile stream tos cred
+catchup :: forall t. Settings
+        -> StreamId t
+        -> t
+        -> Bool        -- Resolve link tos.
+        -> Maybe Int32 -- Batch size.
+        -> Maybe Credentials
+        -> Operation SubAction
+catchup setts streamId from tos batchSiz cred =
+    sourceStream from iteratee <> volatile streamId tos cred
   where
     batch = fromMaybe defaultBatchSize batchSiz
 
---------------------------------------------------------------------------------
-catchupAll :: Settings
-           -> Position
-           -> Bool        -- Resolve link tos.
-           -> Maybe Int32 -- Batch size.
-           -> Maybe Credentials
-           -> Operation SubAction
-catchupAll setts from tos batchSiz cred =
-    sourceStream from (fetchAll setts batch tos cred)
-        <> volatile "" tos cred
-  where
-    batch = fromMaybe defaultBatchSize batchSiz
+    iteratee :: t -> Code o (Slice t)
+    iteratee =
+        case streamId of
+            StreamName n -> fetchStream setts n batch tos cred
+            All          -> fetchAll setts batch tos cred
 
 --------------------------------------------------------------------------------
 fromReadResult :: Text
-               -> ReadResult 'RegularStream a
+               -> ReadResult EventNumber a
                -> (a -> Code o x)
                -> Code o x
 fromReadResult stream res k =

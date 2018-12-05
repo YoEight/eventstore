@@ -31,7 +31,8 @@ import Test.Tasty.Hspec
 import Database.EventStore
     ( SubscriptionClosed(..)
     , ReadResult(..)
-    , StreamName(..)
+    , StreamId(..)
+    , StreamName
     , Slice(..)
     , ConnectionType(..)
     , Connection
@@ -51,10 +52,8 @@ import Database.EventStore
     , waitUnsubscribeConfirmed
     , subscribeFrom
     , waitTillCatchup
-    , readAllEventsBackward
-    , readAllEventsForward
-    , readStreamEventsBackward
-    , readStreamEventsForward
+    , readEventsBackward
+    , readEventsForward
     , subscribe
     , connect
     , waitTillClosed
@@ -205,7 +204,7 @@ readStreamEventForwardTest conn = do
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     _  <- sendEvents conn stream anyVersion evts Nothing >>= wait
-    rs <- readStreamEventsForward conn stream streamStart 10 NoResolveLink Nothing >>= wait
+    rs <- readEventsForward conn stream streamStart 10 NoResolveLink Nothing >>= wait
     case rs of
         ReadSuccess sl -> do
             let jss_evts = catMaybes $ fmap resolvedEventDataAsJson
@@ -221,9 +220,9 @@ readStreamEventBackwardTest conn = do
               , object [ "bar" .= True]
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-    _  <- sendEvents conn "read-backward-test" anyVersion evts Nothing >>= wait
+    _  <- sendEvents conn (StreamName "read-backward-test") anyVersion evts Nothing >>= wait
     let startFrom = eventNumber 2
-    rs <- readStreamEventsBackward conn "read-backward-test" startFrom 10 NoResolveLink Nothing >>= wait
+    rs <- readEventsBackward conn (StreamName "read-backward-test") startFrom 10 NoResolveLink Nothing >>= wait
     case rs of
         ReadSuccess sl -> do
             let jss_evts = catMaybes $ fmap resolvedEventDataAsJson
@@ -234,13 +233,13 @@ readStreamEventBackwardTest conn = do
 --------------------------------------------------------------------------------
 readAllEventsForwardTest :: Connection -> IO ()
 readAllEventsForwardTest conn = do
-    sl <- readAllEventsForward conn positionStart 3 NoResolveLink Nothing >>= wait
+    sl <- readEventsForward conn All positionStart 3 NoResolveLink Nothing >>= wait
     assertEqual "Events is not empty" False (null $ sliceEvents sl)
 
 --------------------------------------------------------------------------------
 readAllEventsBackwardTest :: Connection -> IO ()
 readAllEventsBackwardTest conn = do
-    sl <- readAllEventsBackward conn positionEnd 3 NoResolveLink Nothing >>= wait
+    sl <- readEventsBackward conn All positionEnd 3 NoResolveLink Nothing >>= wait
     assertEqual "Events is not empty" False (null $ sliceEvents sl)
 
 --------------------------------------------------------------------------------
@@ -478,7 +477,7 @@ streamRegularStreamForwardTest conn = do
 
     let jss  = generateEvents 10
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-        src = readStreamThroughForward conn stream NoResolveLink streamStart (Just 1) Nothing
+        src = throwOnError $ readThroughForward conn stream NoResolveLink streamStart (Just 1) Nothing
 
     _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
     rest <- Streaming.foldM_ check (pure [1..10]) pure src
@@ -497,7 +496,7 @@ streamRegularStreamBackwardTest conn = do
 
     let jss  = generateEvents 10
         evts = fmap (createEvent "foo" Nothing . withJson) jss
-        src = readStreamThroughBackward conn stream NoResolveLink streamEnd (Just 1) Nothing
+        src = throwOnError $ readThroughBackward conn stream NoResolveLink streamEnd (Just 1) Nothing
 
     _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
     rest <- Streaming.foldM_ check (pure $ reverse [1..10]) pure src

@@ -9,9 +9,9 @@ More information about the GetEventStore database can be found there: https://ev
 Requirements
 ============
   * 64bits system
-  * GHC        >= 7.8.3
+  * GHC        >= 8.0.3
   * Cabal      >= 1.18
-  * EventStore >= 3.0.0 (>= 3.1.0 if you want competing consumers).
+  * EventStore >= 4
 
 *Note: If you use this client version >= to `1.1`, it will only supports EventStore >= 4.0.0.*
 
@@ -45,8 +45,6 @@ $ cabal test
 How to use
 ==========
 
-This code snippet showcases client version >= `1.1`.
-
 ```haskell
 {-# LANGUAGE OverloadedStrings #-} -- That library uses `Text` pervasively. This pragma permits to use
                                    -- String literal when a Text is needed.
@@ -74,7 +72,7 @@ main = do
         evt = createEvent "programming" Nothing (withJson js)
 
     -- Appends an event to a stream named `languages`.
-    as <- sendEvent conn "languages" anyVersion evt Nothing
+    as <- sendEvent conn (StreamName "languages") anyVersion evt Nothing
 
     -- EventStore interactions are fundamentally asynchronous. Nothing requires you to wait
     -- for the completion of an operation, but it's good to know if something went wrong.

@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs               #-}
+{-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -40,57 +41,24 @@ data Phase
   | Closed (Either SomeException SubDropReason)
 
 --------------------------------------------------------------------------------
-class Track t where
-    receivedAlready :: t -> ResolvedEvent -> Bool
-    nextTarget      :: ResolvedEvent -> t
+receivedAlready :: StreamId t -> t -> ResolvedEvent -> Bool
+receivedAlready StreamName{} old e =
+    EventNumber (resolvedEventOriginalEventNumber e) < old
+receivedAlready All old e =
+    let pos =
+            fromJustNote
+                "Position is always defined when reading events from $all stream"
+                $ resolvedEventPosition e in
+    pos < old
 
 --------------------------------------------------------------------------------
-instance Track EventNumber where
-    receivedAlready old e =
-        EventNumber (resolvedEventOriginalEventNumber e) < old
-
-    nextTarget e = EventNumber (resolvedEventOriginalEventNumber e)
-
---------------------------------------------------------------------------------
-instance Track Position where
-    receivedAlready old e =
-        let pos =
-                fromJustNote
-                    "Position is always defined when reading events from $all stream"
-                    $ resolvedEventPosition e in
-        pos < old
-
-    nextTarget e =
-        fromJustNote
-            "Position is always defined when reading events from $all stream"
-            $ resolvedEventPosition e
-
---------------------------------------------------------------------------------
-data Kind t where
-  RegularKind :: Text -> Kind EventNumber
-  AllKind     :: Kind Position
-
---------------------------------------------------------------------------------
-kindStreamName :: Kind t -> StreamName
-kindStreamName (RegularKind n) = StreamName n
-kindStreamName AllKind         = AllStream
-
---------------------------------------------------------------------------------
-kindTrack :: Kind t -> Maybe t
-kindTrack _ = Nothing
-
---------------------------------------------------------------------------------
-kindCatchup :: Settings
-            -> Bool
-            -> Maybe Int32
-            -> Maybe Credentials
-            -> Kind t
-            -> t
-            -> Operation SubAction
-kindCatchup setts tos batch cred kind start =
-    case kind of
-        RegularKind n -> catchupRegular setts n start tos batch cred
-        AllKind       -> catchupAll setts start tos batch cred
+nextTarget :: StreamId t -> ResolvedEvent -> t
+nextTarget StreamName{} e =
+    EventNumber (resolvedEventOriginalEventNumber e)
+nextTarget All e =
+    fromJustNote
+        "Position is always defined when reading events from $all stream"
+        $ resolvedEventPosition e
 
 --------------------------------------------------------------------------------
 -- | This kind of subscription specifies a starting point, in the form of an
@@ -104,7 +72,7 @@ kindCatchup setts tos batch cred kind start =
 --   dropped or closed.
 data CatchupSubscription t =
   CatchupSubscription { _catchupExec   :: Exec
-                      , _catchupStream :: StreamName
+                      , _catchupStream :: StreamId t
                       , _catchupPhase  :: TVar Phase
                       , _catchupTrack  :: TVar t
                       , _catchupNext   :: STM (Maybe ResolvedEvent)
@@ -121,31 +89,27 @@ instance Subscription (CatchupSubscription t) where
       Closed r        -> throwClosed r
       _               -> retrySTM
 
-  subscriptionStream = _catchupStream
-
   unsubscribe s = subUnsubscribe (_catchupExec s) s
 
 --------------------------------------------------------------------------------
-streamText :: StreamName -> Text
-streamText (StreamName s) = s
-streamText _              = ""
+instance SubscriptionStream (CatchupSubscription t) t where
+    subscriptionStream = _catchupStream
 
 --------------------------------------------------------------------------------
-newCatchupSubscription :: Track t
-                       => Exec
+newCatchupSubscription :: Exec
                        -> Bool
                        -> Maybe Int32
                        -> Maybe Credentials
-                       -> Kind t
+                       -> StreamId t
                        -> t
                        -> IO (CatchupSubscription t)
-newCatchupSubscription exec tos batch cred kind seed = do
+newCatchupSubscription exec tos batch cred streamId seed = do
   phaseVar <- newTVarIO CatchingUp
   queue    <- newTQueueIO
   track    <- newTVarIO seed
 
-  let stream = kindStreamName kind
-      sub = CatchupSubscription exec stream phaseVar track $ do
+  let stream = streamIdRaw streamId
+      sub = CatchupSubscription exec streamId phaseVar track $ do
         p       <- readTVar phaseVar
         isEmpty <- isEmptyTQueue queue
         if isEmpty
@@ -160,7 +124,7 @@ newCatchupSubscription exec tos batch cred kind seed = do
           Just opE ->
             case opE of
               StreamNotFound{} -> do
-                let op = volatile (streamText stream) tos cred
+                let op = volatile streamId tos cred
                 publishWith exec (SubmitOperation cb op)
               _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
           _ -> atomically $ writeTVar phaseVar (Closed $ Left e)
@@ -171,18 +135,18 @@ newCatchupSubscription exec tos batch cred kind seed = do
             atomically $ writeTVar phaseVar (Closed $ Right r)
           Submit e -> atomically $ do
             tracker <- readTVar track
-            unless (receivedAlready tracker e) $ do
-              writeTVar track (nextTarget e)
+            unless (receivedAlready streamId tracker e) $ do
+              writeTVar track (nextTarget streamId e)
               writeTQueue queue e
           ConnectionReset -> do
             chk <- readTVarIO track
-            let newOp = kindCatchup (execSettings exec) tos batch cred kind chk
+            let newOp = catchup (execSettings exec) streamId chk tos batch cred
 
             newCb <- mfix $ \self -> newCallback (callback self)
             publishWith exec (SubmitOperation newCb newOp)
 
   cb <- mfix $ \self -> newCallback (callback self)
-  let op = kindCatchup (execSettings exec) tos batch cred kind seed
+  let op = catchup (execSettings exec) streamId seed tos batch cred
   publishWith exec (SubmitOperation cb op)
   return sub
 

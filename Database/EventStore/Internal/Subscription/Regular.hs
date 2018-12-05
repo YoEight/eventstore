@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Subscription.Regular
@@ -34,15 +35,15 @@ data Phase
 --   events in it when a subscriber connects, the subscriber can expect to see
 --   event number 101 onwards until the time the subscription is closed or
 --   dropped.
-data RegularSubscription =
+data RegularSubscription t =
   RegularSubscription { _regExec   :: Exec
-                      , _regStream :: StreamName
+                      , _regStream :: StreamId t
                       , _regPhase  :: TVar Phase
                       , _regNext   :: STM (Maybe ResolvedEvent)
                       }
 
 --------------------------------------------------------------------------------
-instance Subscription RegularSubscription where
+instance Subscription (RegularSubscription t) where
   nextEventMaybeSTM = _regNext
 
   getSubscriptionDetailsSTM s = do
@@ -55,22 +56,23 @@ instance Subscription RegularSubscription where
           Right r -> throwSTM (SubscriptionClosed $ Just r)
           Left e  -> throwSTM e
 
-  subscriptionStream = _regStream
-
   unsubscribe s = subUnsubscribe (_regExec s) s
 
 --------------------------------------------------------------------------------
+instance SubscriptionStream (RegularSubscription t) t where
+    subscriptionStream = _regStream
+
+--------------------------------------------------------------------------------
 newRegularSubscription :: Exec
-                       -> StreamName
+                       -> StreamId t
                        -> Bool
                        -> Maybe Credentials
-                       -> IO RegularSubscription
-newRegularSubscription exec stream tos cred = do
+                       -> IO (RegularSubscription t)
+newRegularSubscription exec streamId tos cred = do
   phaseVar <- newTVarIO Pending
   queue    <- newTQueueIO
 
-  let name = streamNameRaw stream
-      sub  = RegularSubscription exec stream phaseVar $ do
+  let sub = RegularSubscription exec streamId phaseVar $ do
         p       <- readTVar phaseVar
         isEmpty <- isEmptyTQueue queue
         if isEmpty
@@ -99,5 +101,5 @@ newRegularSubscription exec stream tos cred = do
             writeTVar phaseVar (Closed $ Right SubAborted)
 
   cb <- newCallback callback
-  publishWith exec (SubmitOperation cb (volatile name tos cred))
+  publishWith exec (SubmitOperation cb (volatile streamId tos cred))
   return sub

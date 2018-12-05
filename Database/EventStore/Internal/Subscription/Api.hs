@@ -1,5 +1,6 @@
-{-# LANGUAGE DeriveDataTypeable  #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveDataTypeable     #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ScopedTypeVariables    #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Subscription.Api
@@ -46,11 +47,13 @@ class Subscription s where
   -- | Returns the runtime details of a subscription.
   getSubscriptionDetailsSTM :: s -> STM SubDetails
 
-  -- | Get subscription stream.
-  subscriptionStream :: s -> StreamName
-
   -- | Asynchronously unsubscribe from the the stream.
   unsubscribe :: s -> IO ()
+
+--------------------------------------------------------------------------------
+-- | Returns the stream of a subscription.
+class SubscriptionStream s t | t -> s where
+    subscriptionStream :: s -> StreamId t
 
 --------------------------------------------------------------------------------
 -- | Awaits for the next event.
@@ -105,14 +108,6 @@ subUnsubscribe pub s = do
   for_ outcome $ \details -> do
     let pkg = createUnsubscribePackage (subId details)
     publishWith pub (SendPackage pkg)
-
---------------------------------------------------------------------------------
--- | If the subscription is on the $all stream.
-isSubscribedToAll :: Subscription s => s -> Bool
-isSubscribedToAll s =
-  case subscriptionStream s of
-    StreamName{} -> False
-    _            -> True
 
 --------------------------------------------------------------------------------
 -- | Gets the ID of the subscription.

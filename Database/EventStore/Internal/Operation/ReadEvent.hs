@@ -52,7 +52,7 @@ readEvent :: Settings
           -> Int64
           -> Bool
           -> Maybe Credentials
-          -> Operation (ReadResult 'RegularStream ReadEvent)
+          -> Operation (ReadResult EventNumber ReadEvent)
 readEvent Settings{..} s evtn tos cred = construct $ do
     let msg = newRequest s evtn tos s_requireMaster
     resp <- send readEventCmd readEventCompletedCmd cred msg

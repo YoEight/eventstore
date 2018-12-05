@@ -1,4 +1,5 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards   #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Subscription.Persistent
@@ -62,9 +63,11 @@ instance Subscription PersistentSubscription where
           Right r -> throwSTM (SubscriptionClosed $ Just r)
           Left e  -> throwSTM e
 
-  subscriptionStream = _perStream
-
   unsubscribe s = subUnsubscribe (_perExec s) s
+
+--------------------------------------------------------------------------------
+instance SubscriptionStream PersistentSubscription EventNumber where
+    subscriptionStream = _perStream
 
 --------------------------------------------------------------------------------
 newPersistentSubscription :: Exec
@@ -77,7 +80,7 @@ newPersistentSubscription exec grp stream bufSize cred = do
   phaseVar <- newTVarIO Pending
   queue    <- newTQueueIO
 
-  let name = streamNameRaw stream
+  let name = streamIdRaw stream
       sub  = PersistentSubscription exec stream cred phaseVar $ do
         p       <- readTVar phaseVar
         isEmpty <- isEmptyTQueue queue

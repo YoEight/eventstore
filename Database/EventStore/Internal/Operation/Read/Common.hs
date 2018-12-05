@@ -33,13 +33,13 @@ import Prelude
 
 --------------------------------------------------------------------------------
 -- | Enumeration detailing the possible outcomes of reading a stream.
-data ReadResult       :: StreamType -> * -> * where
+data ReadResult t a where
     ReadSuccess       :: a -> ReadResult t a
-    ReadNoStream      :: ReadResult 'RegularStream a
-    ReadStreamDeleted :: StreamName -> ReadResult 'RegularStream a
+    ReadNoStream      :: ReadResult EventNumber a
+    ReadStreamDeleted :: StreamName -> ReadResult EventNumber a
     ReadNotModified   :: ReadResult t a
     ReadError         :: Maybe Text -> ReadResult t a
-    ReadAccessDenied  :: StreamName -> ReadResult t a
+    ReadAccessDenied  :: StreamId t -> ReadResult t a
 
 --------------------------------------------------------------------------------
 instance Eq a => Eq (ReadResult t a) where

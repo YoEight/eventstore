@@ -39,7 +39,7 @@ readStreamEvents :: Settings
                  -> Int32
                  -> Bool
                  -> Maybe Credentials
-                 -> Operation (ReadResult 'RegularStream StreamSlice)
+                 -> Operation (ReadResult EventNumber StreamSlice)
 readStreamEvents Settings{..} dir s st cnt tos cred = construct $ do
     let req_cmd =
             case dir of
