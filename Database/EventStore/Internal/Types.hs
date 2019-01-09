@@ -36,6 +36,7 @@ import           Data.ProtocolBuffers
 import           Data.Time (NominalDiffTime)
 import           Data.Time.Clock.POSIX
 import           Data.UUID (UUID, fromByteString, toByteString)
+import qualified Data.Vector as Vector
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
@@ -666,17 +667,17 @@ heartbeatResponsePackage uuid =
 -- | Represents an access control list for a stream.
 data StreamACL
     = StreamACL
-      { streamACLReadRoles :: ![Text]
+      { streamACLReadRoles :: !(Maybe [Text])
         -- ^ Roles and users permitted to read the stream.
-      , streamACLWriteRoles :: ![Text]
+      , streamACLWriteRoles :: !(Maybe [Text])
         -- ^ Roles and users permitted to write to the stream.
-      , streamACLDeleteRoles :: ![Text]
+      , streamACLDeleteRoles :: !(Maybe [Text])
         -- ^ Roles and users permitted to delete to the stream.
-      , streamACLMetaReadRoles :: ![Text]
+      , streamACLMetaReadRoles :: !(Maybe [Text])
         -- ^ Roles and users permitted to read stream metadata.
-      , streamACLMetaWriteRoles :: ![Text]
+      , streamACLMetaWriteRoles :: !(Maybe [Text])
         -- ^ Roles and users permitted to write stream metadata.
-      } deriving Show
+      } deriving (Show, Eq)
 
 -------------------------------------------------------------------------------
 instance A.FromJSON StreamACL where
@@ -690,11 +691,11 @@ instance A.ToJSON StreamACL where
 -- | 'StreamACL' with no role or users whatsoever.
 emptyStreamACL :: StreamACL
 emptyStreamACL = StreamACL
-                 { streamACLReadRoles      = []
-                 , streamACLWriteRoles     = []
-                 , streamACLDeleteRoles    = []
-                 , streamACLMetaReadRoles  = []
-                 , streamACLMetaWriteRoles = []
+                 { streamACLReadRoles      = Nothing
+                 , streamACLWriteRoles     = Nothing
+                 , streamACLDeleteRoles    = Nothing
+                 , streamACLMetaReadRoles  = Nothing
+                 , streamACLMetaWriteRoles = Nothing
                  }
 
 --------------------------------------------------------------------------------
@@ -711,12 +712,12 @@ data StreamMetadata
         --   is used to implement soft-deletion of streams.
       , streamMetadataCacheControl :: !(Maybe TimeSpan)
         -- ^ The amount of time for which the stream head is cachable.
-      , streamMetadataACL :: !StreamACL
+      , streamMetadataACL :: !(Maybe StreamACL)
         -- ^ The access control list for the stream.
       , streamMetadataCustom :: !Object
         -- ^ An enumerable of key-value pairs of keys to JSON text for
         --   user-provider metadata.
-      } deriving Show
+      } deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
 -- | Gets a custom property value from metadata.
@@ -751,7 +752,7 @@ emptyStreamMetadata = StreamMetadata
                       , streamMetadataMaxAge         = Nothing
                       , streamMetadataTruncateBefore = Nothing
                       , streamMetadataCacheControl   = Nothing
-                      , streamMetadataACL            = emptyStreamACL
+                      , streamMetadataACL            = Nothing
                       , streamMetadataCustom         = mempty
                       }
 
@@ -763,26 +764,45 @@ customMetaToPairs = fmap go . mapToList
     go (k,v) = k .= v
 
 --------------------------------------------------------------------------------
+-- | Gets rid of null-ed properties. If a value is an array and that array only
+--   has one element, that function simplifies that array of JSON to a single
+--   JSON value.
+cleanPairs :: [Pair] -> [Pair]
+cleanPairs xs = xs >>= go
+  where
+    go (_, A.Null) = []
+    go (name, obj) = [(name, deeper obj)]
+
+    deeper cur@(A.Array xs)
+      | Vector.length xs == 1 = Vector.head xs
+      | otherwise             = cur
+    deeper cur = cur
+
+--------------------------------------------------------------------------------
 -- | Serialized a 'StreamACL' to 'Value' for serialization purpose.
 streamACLJSON :: StreamACL -> A.Value
 streamACLJSON StreamACL{..} =
-    A.object [ p_readRoles      .= streamACLReadRoles
-             , p_writeRoles     .= streamACLWriteRoles
-             , p_deleteRoles    .= streamACLDeleteRoles
-             , p_metaReadRoles  .= streamACLMetaReadRoles
-             , p_metaWriteRoles .= streamACLMetaWriteRoles
-             ]
+    A.object $
+        cleanPairs
+        [ p_readRoles      .= streamACLReadRoles
+        , p_writeRoles     .= streamACLWriteRoles
+        , p_deleteRoles    .= streamACLDeleteRoles
+        , p_metaReadRoles  .= streamACLMetaReadRoles
+        , p_metaWriteRoles .= streamACLMetaWriteRoles
+        ]
 
 --------------------------------------------------------------------------------
 -- | Serialized a 'StreamMetadata' to 'Value' for serialization purpose.
 streamMetadataJSON :: StreamMetadata -> A.Value
 streamMetadataJSON StreamMetadata{..} =
-    A.object $ [ p_maxAge         .= fmap toInt64 streamMetadataMaxAge
-               , p_maxCount       .= streamMetadataMaxCount
-               , p_truncateBefore .= streamMetadataTruncateBefore
-               , p_cacheControl   .= fmap toInt64 streamMetadataCacheControl
-               , p_acl            .= streamACLJSON streamMetadataACL
-               ] <> custPairs
+    A.object $
+        cleanPairs
+        [ p_maxAge         .= fmap toInt64 streamMetadataMaxAge
+        , p_maxCount       .= streamMetadataMaxCount
+        , p_truncateBefore .= streamMetadataTruncateBefore
+        , p_cacheControl   .= fmap toInt64 streamMetadataCacheControl
+        , p_acl            .= fmap streamACLJSON streamMetadataACL
+        ] <> custPairs
   where
     custPairs = customMetaToPairs streamMetadataCustom
 
@@ -873,25 +893,35 @@ parseNominalDiffTime k m = fmap (fmap go) (m A..: k)
 -- | Parses 'StreamACL'.
 parseStreamACL :: A.Value -> Parser StreamACL
 parseStreamACL (A.Object m) =
-    StreamACL              <$>
-    m A..: p_readRoles     <*>
-    m A..: p_writeRoles    <*>
-    m A..: p_deleteRoles   <*>
-    m A..: p_metaReadRoles <*>
-    m A..: p_metaWriteRoles
+    StreamACL
+        <$> parseSingleOrMultiple m p_readRoles
+        <*> parseSingleOrMultiple m p_writeRoles
+        <*> parseSingleOrMultiple m p_deleteRoles
+        <*> parseSingleOrMultiple m p_metaReadRoles
+        <*> parseSingleOrMultiple m p_metaWriteRoles
 parseStreamACL _ = mzero
+
+--------------------------------------------------------------------------------
+parseSingleOrMultiple :: A.Object -> Text -> Parser (Maybe [Text])
+parseSingleOrMultiple obj name = multiple <|> single
+  where
+    single = do
+        mV <- obj A..: name <|> pure Nothing
+        pure $ fmap (\v -> [v]) mV
+
+    multiple = obj A..: name
 
 --------------------------------------------------------------------------------
 -- | Parses 'StreamMetadata'.
 parseStreamMetadata :: A.Value -> Parser StreamMetadata
 parseStreamMetadata (A.Object m) =
-    StreamMetadata                    <$>
-    m A..: p_maxCount                 <*>
-    parseTimeSpan p_maxAge            <*>
-    m A..: p_truncateBefore           <*>
-    parseTimeSpan p_cacheControl      <*>
-    (m A..: p_acl >>= parseStreamACL) <*>
-    pure (keepUserProperties m)
+    StreamMetadata
+        <$> (m A..: p_maxCount <|> pure Nothing)
+        <*> (parseTimeSpan p_maxAge <|> pure Nothing)
+        <*> (m A..: p_truncateBefore <|> pure Nothing)
+        <*> (parseTimeSpan p_cacheControl <|> pure Nothing)
+        <*> ((m A..: p_acl >>= traverse parseStreamACL) <|> pure Nothing)
+        <*> pure (keepUserProperties m)
   where
     parseTimeSpan ::  Text -> Parser (Maybe TimeSpan)
     parseTimeSpan prop = do
@@ -917,7 +947,7 @@ type StreamACLBuilder = Builder StreamACL
 --------------------------------------------------------------------------------
 -- | Sets role names with read permission for the stream.
 setReadRoles :: [Text] -> StreamACLBuilder
-setReadRoles xs = Endo $ \s -> s { streamACLReadRoles = xs }
+setReadRoles xs = Endo $ \s -> s { streamACLReadRoles = Just xs }
 
 --------------------------------------------------------------------------------
 -- | Sets a single role name with read permission for the stream.
@@ -927,7 +957,7 @@ setReadRole x = setReadRoles [x]
 --------------------------------------------------------------------------------
 -- | Sets role names with write permission for the stream.
 setWriteRoles :: [Text] -> StreamACLBuilder
-setWriteRoles xs = Endo $ \s -> s { streamACLWriteRoles = xs }
+setWriteRoles xs = Endo $ \s -> s { streamACLWriteRoles = Just xs }
 
 --------------------------------------------------------------------------------
 -- | Sets a single role name with write permission for the stream.
@@ -937,7 +967,7 @@ setWriteRole x = setWriteRoles [x]
 --------------------------------------------------------------------------------
 -- | Sets role names with delete permission for the stream.
 setDeleteRoles :: [Text] -> StreamACLBuilder
-setDeleteRoles xs = Endo $ \s -> s { streamACLDeleteRoles = xs }
+setDeleteRoles xs = Endo $ \s -> s { streamACLDeleteRoles = Just xs }
 
 --------------------------------------------------------------------------------
 -- | Sets a single role name with delete permission for the stream.
@@ -947,7 +977,7 @@ setDeleteRole x = setDeleteRoles [x]
 --------------------------------------------------------------------------------
 -- | Sets role names with metadata read permission for the stream.
 setMetaReadRoles :: [Text] -> StreamACLBuilder
-setMetaReadRoles xs = Endo $ \s -> s { streamACLMetaReadRoles = xs }
+setMetaReadRoles xs = Endo $ \s -> s { streamACLMetaReadRoles = Just xs }
 
 --------------------------------------------------------------------------------
 -- | Sets a single role name with metadata read permission for the stream.
@@ -957,7 +987,7 @@ setMetaReadRole x = setMetaReadRoles [x]
 --------------------------------------------------------------------------------
 -- | Sets role names with metadata write permission for the stream.
 setMetaWriteRoles :: [Text] -> StreamACLBuilder
-setMetaWriteRoles xs = Endo $ \s -> s { streamACLMetaWriteRoles = xs }
+setMetaWriteRoles xs = Endo $ \s -> s { streamACLMetaWriteRoles = Just xs }
 
 --------------------------------------------------------------------------------
 -- | Sets a single role name with metadata write permission for the stream.
@@ -1002,14 +1032,14 @@ setCacheControl d = Endo $ \s -> s { streamMetadataCacheControl = Just d }
 -- | Overwrites any previous 'StreamACL' by the given one in a
 --   'StreamMetadataBuilder'.
 setACL :: StreamACL -> StreamMetadataBuilder
-setACL a = Endo $ \s -> s { streamMetadataACL = a }
+setACL a = Endo $ \s -> s { streamMetadataACL = Just a }
 
 --------------------------------------------------------------------------------
 -- | Updates a 'StreamMetadata''s 'StreamACL' given a 'StreamACLBuilder'.
 modifyACL :: StreamACLBuilder -> StreamMetadataBuilder
 modifyACL b = Endo $ \s ->
-    let old = streamMetadataACL s
-    in s { streamMetadataACL = modifyStreamACL b old }
+    let old = fromMaybe emptyStreamACL $ streamMetadataACL s
+    in s { streamMetadataACL = Just $ modifyStreamACL b old }
 
 --------------------------------------------------------------------------------
 -- | Sets a custom metadata property.
