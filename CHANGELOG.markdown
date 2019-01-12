@@ -1,3 +1,7 @@
+1.2.1
+-----
+* Bump `http-client` version.
+
 1.2.0
 -----
 * Introduce a type-safe `EventNumber` setting.

@@ -4,10 +4,10 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 397c16fc115765cfccc8c21c8b7133555d40e98546632200395b77c3551720c8
+-- hash: 89315b698f4d189670b511052a2a9867110322bf62663f0462d64a2bc314e65b
 
 name:           eventstore
-version:        1.2.0
+version:        1.2.1
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
@@ -103,7 +103,7 @@ library
     , exceptions
     , fast-logger
     , hashable
-    , http-client ==0.5.*
+    , http-client >=0.5
     , interpolate
     , lifted-async
     , lifted-base
