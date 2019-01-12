@@ -1,5 +1,5 @@
 name: eventstore
-version: 1.2.0
+version: 1.2.1
 homepage: https://gitlab.com/YoEight/eventstore-hs
 tested-with: GHC >= 7.8 && <= 8.6
 synopsis: EventStore TCP Client
@@ -69,7 +69,7 @@ library:
     - semigroups >=0.5
     - dns >= 3.0.1
     - array
-    - http-client == 0.5.*
+    - http-client >=0.5
     - mtl
     - fast-logger
     - monad-logger >= 0.3.20
