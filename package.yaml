@@ -37,6 +37,7 @@ dependencies:
   - transformers-base
   - safe
   - streaming
+  - vector
 
 extra-source-files:
   - README.md
@@ -96,3 +97,4 @@ tests:
       - uuid
       - fast-logger
       - async
+      - file-embed

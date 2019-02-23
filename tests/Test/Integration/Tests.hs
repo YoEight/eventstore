@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Test.Integration.Tests
@@ -19,6 +20,7 @@ module Test.Integration.Tests (spec) where
 import Control.Concurrent.Async (wait)
 import Data.Aeson
 import Data.DotNet.TimeSpan
+import Data.FileEmbed (embedFile)
 import Data.Maybe (fromMaybe)
 import Data.UUID hiding (null)
 import Data.UUID.V4
@@ -111,6 +113,11 @@ spec = beforeAll createConnection $ afterAll shuttingDown $ describe "Features" 
     it "creates a volatile subscription" subscribeTest
     it "creates a catchup subscription" subscribeFromTest
     it "proves catchup subscriptions don't deadlock on non existant streams" subscribeFromNoStreamTest
+    it "parses empty stream acl" emptyAclParsing
+    it "parses single ACL property" aclSingleReadParsing
+    it "parses multiple ACL property" aclMultipleReadParsing
+    it "parses empty stream meta" emptyStreamMetaParsing
+    it "parses stream meta property" metaPropParsing
     it "sets stream metadata" setStreamMetadataTest
     it "gets stream metadata" getStreamMetadataTest
     it "creates a persistent subscription" createPersistentTest
@@ -376,6 +383,61 @@ getStreamMetadataTest conn = do
                 Just i -> assertEqual "Should have equal value" (1 :: Int) i
                 _      -> fail "Can't find foo property"
         _ -> fail $ "Stream " <> show stream <> " doesn't exist"
+
+--------------------------------------------------------------------------------
+emptyAclBytes :: ByteString
+emptyAclBytes = $(embedFile "tests/fixtures/empty_acl.json")
+
+--------------------------------------------------------------------------------
+emptyMetaBytes :: ByteString
+emptyMetaBytes = $(embedFile "tests/fixtures/empty_meta.json")
+
+--------------------------------------------------------------------------------
+aclSingleReadBytes :: ByteString
+aclSingleReadBytes = $(embedFile "tests/fixtures/acl_single_read.json")
+
+--------------------------------------------------------------------------------
+aclMultipleReadBytes :: ByteString
+aclMultipleReadBytes = $(embedFile "tests/fixtures/acl_multiple_read.json")
+
+--------------------------------------------------------------------------------
+metaPropBytes :: ByteString
+metaPropBytes = $(embedFile "tests/fixtures/meta_prop.json")
+
+--------------------------------------------------------------------------------
+emptyAclParsing :: a -> IO ()
+emptyAclParsing _ =
+    assertEqual "should parse empty ACL"
+        (Just emptyStreamACL)
+        (decode $ fromStrict emptyAclBytes)
+
+--------------------------------------------------------------------------------
+aclSingleReadParsing :: a -> IO ()
+aclSingleReadParsing _ =
+    assertEqual "should parse single ACL property"
+        (Just $ buildStreamACL $ setReadRole "iron")
+        (decode $ fromStrict aclSingleReadBytes)
+
+--------------------------------------------------------------------------------
+aclMultipleReadParsing :: a -> IO ()
+aclMultipleReadParsing _ =
+    assertEqual "should parse multiple ACL property"
+        (Just $ buildStreamACL $ setReadRoles ["iron", "game"])
+        (decode $ fromStrict aclMultipleReadBytes)
+
+--------------------------------------------------------------------------------
+emptyStreamMetaParsing :: a -> IO ()
+emptyStreamMetaParsing _ =
+    assertEqual "should parse empty stream metadata"
+        (Just emptyStreamMetadata)
+        (decode $ fromStrict emptyMetaBytes)
+
+--------------------------------------------------------------------------------
+metaPropParsing :: a -> IO ()
+metaPropParsing _ =
+    assertEqual "should parse stream metadata property"
+        (Just $ buildStreamMetadata $ setMaxCount 777)
+        (decode $ fromStrict metaPropBytes)
 
 --------------------------------------------------------------------------------
 createPersistentTest :: Connection -> IO ()

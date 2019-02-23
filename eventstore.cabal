@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 89315b698f4d189670b511052a2a9867110322bf62663f0462d64a2bc314e65b
+-- hash: 157d70b5a592cf7f79c78e18af982a64adef718502ad3fa96c993332ddd0f469
 
 name:           eventstore
 version:        1.2.1
@@ -125,6 +125,7 @@ library
     , transformers-base
     , unordered-containers
     , uuid ==1.3.*
+    , vector
   default-language: Haskell2010
 
 test-suite eventstore-tests
@@ -155,6 +156,7 @@ test-suite eventstore-tests
     , eventstore
     , exceptions
     , fast-logger
+    , file-embed
     , hashable
     , lifted-async
     , lifted-base
@@ -175,4 +177,5 @@ test-suite eventstore-tests
     , transformers-base
     , unordered-containers
     , uuid
+    , vector
   default-language: Haskell2010
