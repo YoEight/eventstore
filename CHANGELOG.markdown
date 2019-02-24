@@ -1,6 +1,8 @@
 1.2.2
 -----
 * Fix ACL JSON (de)serialization.
+* Fix rare situation where the user send a command before the connection with the
+  server is available, causing that operation to be sent only after `s_operationTimeout` milliseconds.
 
 1.2.1
 -----

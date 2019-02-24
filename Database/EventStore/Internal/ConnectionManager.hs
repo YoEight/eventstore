@@ -300,6 +300,13 @@ clientIdentified self@Internal{..} =
       $logDebug [i|TCP connection identified: #{conn}.|]
       atomicWriteIORef _stage (Connected conn)
       initHeartbeatTracker self
+
+      -- HACK: It can happen the user submitted operations before the connection was
+      -- available. Those operations are only check on every 's_operationTimeout'
+      -- ms. This could lead the first operation to take time before gettings.
+      -- FIXME: We might consider doing that hack only if it's the first time
+      -- we connect with the server.
+      Operation.check _opMgr
     _ -> pure ()
 
 --------------------------------------------------------------------------------
