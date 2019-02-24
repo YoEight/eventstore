@@ -1,3 +1,7 @@
+1.2.2
+-----
+* Fix ACL JSON (de)serialization.
+
 1.2.1
 -----
 * Bump `http-client` version.
