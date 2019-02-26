@@ -34,10 +34,11 @@ module Database.EventStore.Internal.Discovery
     ) where
 
 --------------------------------------------------------------------------------
-import Prelude (String)
+import Prelude (String, putStrLn)
 import Data.Maybe
 
 --------------------------------------------------------------------------------
+import Control.Exception.Safe (SomeException, tryAny)
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Array.IO
@@ -322,8 +323,10 @@ tryGetGossipFrom ClusterSettings{..} mgr seed = do
     init_req <- httpRequest (gossipEndpoint seed) "/gossip?format=json"
     let timeout = truncate (totalMillis clusterGossipTimeout * 1000)
         req     = init_req { responseTimeout = responseTimeoutMicro timeout }
-    resp <- httpLbs req mgr
-    return $ decode $ responseBody resp
+    eithResp <- tryAny $ httpLbs req mgr
+    case eithResp of
+        Right resp -> return $ decode $ responseBody resp
+        Left err   -> pure Nothing -- FIXME Notify of the failed attempt somehow
 
 --------------------------------------------------------------------------------
 tryDetermineBestNode :: [MemberInfo] -> Maybe EndPoint
