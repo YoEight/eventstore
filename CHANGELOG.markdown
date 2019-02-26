@@ -3,6 +3,8 @@
 * Fix ACL JSON (de)serialization.
 * Fix rare situation where the user send a command before the connection with the
   server is available, causing that operation to be sent only after `s_operationTimeout` milliseconds.
+* Fix "thread blocked indefinitely in an STM transaction" error when failed to create a
+  connection with the server and exceeded the maximun attempt count.
 
 1.2.1
 -----

@@ -179,6 +179,11 @@ rejectPending :: Exception e => Pending -> e -> EventStore ()
 rejectPending Pending{..} = rejectSession _pendingSession
 
 --------------------------------------------------------------------------------
+rejectAwaiting :: Exception e => Awaiting -> e -> EventStore ()
+rejectAwaiting (Awaiting s) = rejectSession s
+rejectAwaiting (AwaitingRequest s _) = rejectSession s
+
+--------------------------------------------------------------------------------
 applyResponse :: Registry -> Pending -> Package -> EventStore ()
 applyResponse reg Pending{..} = resumeSession reg _pendingSession
 
@@ -300,8 +305,10 @@ register reg op cb = do
 abortPendingRequests :: Registry -> EventStore ()
 abortPendingRequests Registry{..} = do
   m <- atomicModifyIORef' _regPendings $ \pendings -> (mempty, pendings)
+  ws <- atomicModifyIORef' _regAwaitings $ \aw -> (mempty, aw)
 
   for_ m $ \p -> rejectPending p Aborted
+  for_ ws $ \a -> rejectAwaiting a Aborted
 
 --------------------------------------------------------------------------------
 data Decision
