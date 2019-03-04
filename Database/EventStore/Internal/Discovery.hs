@@ -34,7 +34,7 @@ module Database.EventStore.Internal.Discovery
     ) where
 
 --------------------------------------------------------------------------------
-import Prelude (String, putStrLn)
+import Prelude (String)
 import Data.Maybe
 
 --------------------------------------------------------------------------------
@@ -50,7 +50,9 @@ import Network.DNS hiding (decode)
 import System.Random
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.EndPoint
+import Database.EventStore.Internal.Logger
 import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
@@ -108,7 +110,7 @@ emptyGossipSeed = GossipSeed emptyEndPoint ""
 --------------------------------------------------------------------------------
 -- | Procedure used to discover an network 'EndPoint'.
 newtype Discovery =
-    Discovery { runDiscovery :: Maybe EndPoint -> IO (Maybe EndPoint) }
+    Discovery { runDiscovery :: Maybe EndPoint -> EventStore (Maybe EndPoint) }
 
 --------------------------------------------------------------------------------
 staticEndPointDiscovery :: String -> Int -> Discovery
@@ -128,8 +130,8 @@ simpleDnsEndPointDiscovery domain srv port = Discovery $ \_ -> do
                                 DnsHostName h   -> RCHostName h
                                 DnsHostPort h p -> RCHostPort h (fromIntegral p)
                     in defaultResolvConf { resolvInfo = rc }
-    dnsSeed <- makeResolvSeed conf
-    res     <- withResolver dnsSeed $ \resv -> lookupA resv domain
+    dnsSeed <- liftIO $ makeResolvSeed conf
+    res     <- liftIO $ withResolver dnsSeed $ \resv -> lookupA resv domain
     case res of
         Left e    -> throwIO $ DNSDiscoveryError e
         Right ips -> do
@@ -293,17 +295,16 @@ discoverEndPoint :: Manager
                  -> IORef (Maybe [MemberInfo])
                  -> Maybe EndPoint
                  -> ClusterSettings
-                 -> IO (Maybe EndPoint)
+                 -> EventStore (Maybe EndPoint)
 discoverEndPoint mgr ref fend settings = do
     old_m <- readIORef ref
     writeIORef ref Nothing
     candidates <- case old_m of
         Nothing  -> gossipCandidatesFromDns settings
-        Just old -> gossipCandidatesFromOldGossip fend old
+        Just old -> liftIO $ gossipCandidatesFromOldGossip fend old
     forArrayFirst candidates $ \i -> do
-        c   <- readArray candidates i
+        c   <- liftIO $ readArray candidates i
         res <- tryGetGossipFrom settings mgr c
-        print (i, res)
         let fin_end = do
                 info <- res
                 best <- tryDetermineBestNode $ members info
@@ -318,15 +319,17 @@ discoverEndPoint mgr ref fend settings = do
 tryGetGossipFrom :: ClusterSettings
                  -> Manager
                  -> GossipSeed
-                 -> IO (Maybe ClusterInfo)
+                 -> EventStore (Maybe ClusterInfo)
 tryGetGossipFrom ClusterSettings{..} mgr seed = do
-    init_req <- httpRequest (gossipEndpoint seed) "/gossip?format=json"
+    init_req <- liftIO $ httpRequest (gossipEndpoint seed) "/gossip?format=json"
     let timeout = truncate (totalMillis clusterGossipTimeout * 1000)
         req     = init_req { responseTimeout = responseTimeoutMicro timeout }
-    eithResp <- tryAny $ httpLbs req mgr
+    eithResp <- tryAny $ liftIO $ httpLbs req mgr
     case eithResp of
         Right resp -> return $ decode $ responseBody resp
-        Left err   -> pure Nothing -- FIXME Notify of the failed attempt somehow
+        Left err   -> do
+            $logInfo [i|Failed to get cluster info from [#{seed}], error: #{err}.|]
+            pure Nothing
 
 --------------------------------------------------------------------------------
 tryDetermineBestNode :: [MemberInfo] -> Maybe EndPoint
@@ -394,10 +397,10 @@ arrangeGossipCandidates members = do
         seed = GossipSeed end ""
 
 --------------------------------------------------------------------------------
-gossipCandidatesFromDns :: ClusterSettings -> IO (IOArray Int GossipSeed)
+gossipCandidatesFromDns :: ClusterSettings -> EventStore (IOArray Int GossipSeed)
 gossipCandidatesFromDns settings@ClusterSettings{..} = do
     arr <- endpoints
-    shuffleAll arr
+    liftIO $ shuffleAll arr
     return arr
   where
     endpoints =
@@ -405,10 +408,10 @@ gossipCandidatesFromDns settings@ClusterSettings{..} = do
             Nothing -> resolveDns settings
             Just ss -> let ls  = toList ss
                            len = length ls
-                  in newListArray (0, len - 1) ls
+                  in liftIO $ newListArray (0, len - 1) ls
 
 --------------------------------------------------------------------------------
-resolveDns :: ClusterSettings -> IO (IOArray Int GossipSeed)
+resolveDns :: ClusterSettings -> EventStore (IOArray Int GossipSeed)
 resolveDns ClusterSettings{..} = do
     let timeoutMicros = totalMillis clusterGossipTimeout * 1000
         conf =
@@ -421,11 +424,11 @@ resolveDns ClusterSettings{..} = do
                                 DnsHostName h   -> RCHostName h
                                 DnsHostPort h p -> RCHostPort h (fromIntegral p)
                     in defaultResolvConf { resolvInfo = rc  }
-    dnsSeed <- makeResolvSeed conf
+    dnsSeed <- liftIO $ makeResolvSeed conf
                { resolvTimeout = truncate timeoutMicros
                , resolvRetry   = clusterMaxDiscoverAttempts
                }
-    withResolver dnsSeed $ \resv -> do
+    liftIO $ withResolver dnsSeed $ \resv -> do
         result <- lookupA resv clusterDns
         case result of
             Left e    -> throwIO $ DNSDiscoveryError e
@@ -466,17 +469,17 @@ forRange_ from to k = do
 
 --------------------------------------------------------------------------------
 forArrayFirst :: IOArray Int a
-              -> (Int -> IO (Maybe b))
-              -> IO (Maybe b)
+              -> (Int -> EventStore (Maybe b))
+              -> EventStore (Maybe b)
 forArrayFirst arr k = do
-    (low, hig) <- getBounds arr
+    (low, hig) <- liftIO $ getBounds arr
     forRangeFirst low hig k
 
 --------------------------------------------------------------------------------
 forRangeFirst :: Int
               -> Int
-              -> (Int -> IO (Maybe b))
-              -> IO (Maybe b)
+              -> (Int -> EventStore (Maybe b))
+              -> EventStore (Maybe b)
 forRangeFirst from to k = do
     if from <= to then loop (to + 1) from else return Nothing
   where
