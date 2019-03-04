@@ -217,7 +217,7 @@ discover Internal{..} =
           atomicWriteIORef _stage (Connecting att EndpointDiscovery)
           old <- readIORef _last
           _   <- fork $
-              tryAny (liftIO $ runDiscovery _disc old) >>= \case
+              tryAny (runDiscovery _disc old) >>= \case
                 Left e -> do
                   $logError
                     [i| Failed to resolve TCP endpoint to which to connect #{e}.|]

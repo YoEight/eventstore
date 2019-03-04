@@ -5,6 +5,7 @@
   server is available, causing that operation to be sent only after `s_operationTimeout` milliseconds.
 * Fix "thread blocked indefinitely in an STM transaction" error when failed to create a
   connection with the server and exceeded the maximun attempt count.
+* Fix: Cluster connection, in the discovery process using gossip seed, we try for the next seed if the current one is unreachable.
 
 1.2.1
 -----
