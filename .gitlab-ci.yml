@@ -89,7 +89,7 @@ Upload on hackage:
   script:
     - apt update
     - apt install -y curl
-    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD $(ls dist-newstyle/sdist/eventstore*)
+    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD dist-newstyle/sdist/eventstore-${CI_COMMIT_TAG}.tar.gz
   image: haskell:8.6
   dependencies:
     - GHC 8.6
@@ -101,7 +101,7 @@ Publish on hackage:
   script:
     - apt update
     - apt install -y curl
-    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD --publish $(ls dist-newstyle/sdist/eventstore*)
+    - cabal upload --username=$HACKAGE_LOGIN --password=$HACKAGE_PASSWORD --publish dist-newstyle/sdist/eventstore-${CI_COMMIT_TAG}.tar.gz
   image: haskell:8.6
   when: manual
   only:
