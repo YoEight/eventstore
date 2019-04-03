@@ -1,3 +1,7 @@
+1.2.3
+-----
+* No longer terminate the connection in case of `IdentificationTimeout`.
+
 1.2.2
 -----
 * Fix ACL JSON (de)serialization.
