@@ -400,7 +400,10 @@ onTick self@Internal{..} _ = do
     (pendingIdentification -> Just started) -> do
       elapsed <- stopwatchElapsed _stopwatch
       when (elapsed - started >= s_operationTimeout setts) $
-        closeConnection self IdentificationTimeout
+        -- We close the current connection and let the reconnection process
+        -- to take over.
+        traverse_ (closeTcpConnection self IdentificationTimeout)
+            =<< lookupConnection self
 
     (defaultConnecting -> True) -> manageHeartbeats self
 
