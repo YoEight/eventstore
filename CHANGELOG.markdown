@@ -1,3 +1,7 @@
+1.2.4
+-----
+* Fix possible connection issues if Authentication or Identification processes takes too long to complete.
+
 1.2.3
 -----
 * No longer terminate the connection in case of `IdentificationTimeout`.

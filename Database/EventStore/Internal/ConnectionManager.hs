@@ -523,6 +523,8 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) =
     onAuthentication _ = Nothing
 
     runningConnection (Connecting _ (ConnectionEstablishing c)) = conn == c
+    runningConnection (Connecting _ (Authentication _ _ c)) = conn == c
+    runningConnection (Connecting _ (Identification _ _ c)) = conn == c
     runningConnection (Connected c) = conn == c
     runningConnection _ = False
 
