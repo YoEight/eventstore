@@ -21,16 +21,17 @@ module Database.EventStore.Internal.Operation
   ( OpResult(..)
   , OperationError(..)
   , Operation
-  , Need(..)
   , Code
+  , Need(..)
   , Execution(..)
   , Expect(..)
+  , Coroutine(..)
+  , Payload(..)
   , freshId
   , failure
   , retry
   , send
   , request
-  , waitFor
   , waitForOr
   , wrongVersion
   , streamDeleted
@@ -39,24 +40,36 @@ module Database.EventStore.Internal.Operation
   , protobufDecodingError
   , serverError
   , invalidServerResponse
-  , module Data.Machine
+  , construct
+  , yield
+  , traversing
+  , stop
+  , (<~)
+  , unfolding
+  , append
+  , Stream(..)
   ) where
 
 --------------------------------------------------------------------------------
 import Prelude (String)
+import Control.Category
 
 --------------------------------------------------------------------------------
-import Data.Machine
 import Data.ProtocolBuffers
 import Data.Serialize
 import Data.UUID
+import Data.Void (Void, absurd)
+import Streaming.Internal
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
-import Database.EventStore.Internal.Prelude
+import Database.EventStore.Internal.Prelude hiding ((.), id)
 import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+infixr 9 <~
 
 --------------------------------------------------------------------------------
 -- | Operation result sent by the server.
@@ -97,6 +110,41 @@ deriving instance Show OperationError
 instance Exception OperationError
 
 --------------------------------------------------------------------------------
+data Payload =
+  Payload
+  { payloadCmd :: !Command
+  , payloadData :: !ByteString
+  , payloadCreds :: !(Maybe Credentials)
+  }
+
+--------------------------------------------------------------------------------
+data Coroutine k o a where
+  Yield :: o -> a -> Coroutine k o a
+  Await :: (i -> a) -> k i -> a -> Coroutine k o a
+  Stop  :: Coroutine k o a
+
+--------------------------------------------------------------------------------
+instance Functor (Coroutine k o) where
+  fmap f (Yield o a)   = Yield o (f a)
+  fmap f (Await k n a) = Await (f . k) n (f a)
+  fmap _ Stop          = Stop
+
+--------------------------------------------------------------------------------
+data Is a b where
+  Same :: Is a a
+
+--------------------------------------------------------------------------------
+instance Category Is where
+  id = Same
+  Same . Same = Same
+
+--------------------------------------------------------------------------------
+data Need a where
+  NeedUUID   :: Need UUID
+  NeedRemote :: Payload -> Need Package
+  WaitRemote :: UUID -> Need (Maybe Package)
+
+--------------------------------------------------------------------------------
 data Execution a
   = Proceed a
   | Retry
@@ -122,22 +170,111 @@ instance Monad Execution where
   Failed e  >>= _ = Failed e
 
 --------------------------------------------------------------------------------
-type Operation output = MachineT Execution Need output
+type Machine k o m r  = Stream (Coroutine k o) m r
+type Code output a    = Machine Need output Execution a
+type Operation output = Code output Void
+type Process m a b    = Stream (Coroutine (Is a) b) m Void
 
 --------------------------------------------------------------------------------
-data Need a where
-  NeedUUID   :: Need UUID
-  NeedRemote :: Command -> ByteString -> Maybe Credentials -> Need Package
-  WaitRemote :: UUID -> Need (Maybe Package)
+awaits :: Monad m => k i -> Machine k o m i
+awaits instr = Step (Await pure instr (Step Stop))
 
 --------------------------------------------------------------------------------
--- | Instruction that composed an 'Operation'.
-type Code o a = PlanT Need o Execution a
+await :: (Monad m, Category k) => Machine (k i) o m i
+await = awaits id
+
+--------------------------------------------------------------------------------
+stop :: Machine k o m a
+stop = Step Stop
+
+--------------------------------------------------------------------------------
+yield :: Monad m => o -> Machine k o m ()
+yield o = Step (Yield o (pure ()))
+
+--------------------------------------------------------------------------------
+traversing :: Monad m => (a -> m b) -> Process m a b
+traversing k = repeatedly $ do
+  a <- await
+  b <- lift (k a)
+  yield b
+
+--------------------------------------------------------------------------------
+append :: Operation o -> Operation o -> Operation o
+append start right = go start
+  where
+    go cur =
+      case cur of
+        Return x  -> absurd x
+        Effect m  -> Effect (fmap go m)
+        Step step ->
+          case step of
+            Yield o next ->
+              Step $ Yield o (append next right)
+            Await k instr failed ->
+              Step $ Await (\i -> append (k i) right) instr (append failed right)
+            Stop ->
+              right
+
+--------------------------------------------------------------------------------
+stepping :: Operation a -> Code o (a, Operation a)
+stepping = go
+  where
+    go cur =
+      case cur of
+        Return x  -> absurd x
+        Effect m  -> Effect (fmap go m)
+        Step step ->
+          case step of
+            Yield a next         -> pure (a, next)
+            Await k instr failed -> Step $ Await (go . k) instr (go failed)
+            Stop                 -> stop
+
+--------------------------------------------------------------------------------
+unfolding :: (Maybe a -> Code o (Operation a)) -> Operation o
+unfolding k = k Nothing >>= go
+  where
+    go cur = do
+      (a, next) <- stepping cur
+      newState  <- k (Just a)
+      go (append next newState)
+
+--------------------------------------------------------------------------------
+repeatedly :: Functor m => Machine k o m x -> Machine k o m r
+repeatedly start = go start
+  where
+    go (Return _)  = go start
+    go (Effect m)  = Effect (fmap go m)
+    go (Step step) =
+      case step of
+        Yield o next         -> Step $ Yield o (go next)
+        Await k instr failed -> Step $ Await (go . k) instr (go failed)
+        Stop                 -> stop
+
+--------------------------------------------------------------------------------
+(<~) :: Monad m => Process m a b -> Machine k a m r -> Machine k b m r
+mp <~ mb =
+  case mp of
+    Return x  -> absurd x
+    Effect m  -> Effect (fmap (<~ mb) m)
+    Step consumer ->
+      case consumer of
+        Yield c next        -> Step $ Yield c (next <~ mb)
+        Stop                -> stop
+        Await k Same failed ->
+          case mb of
+            Return _      -> failed <~ stop
+            Effect m      ->  Effect (fmap (Step consumer <~) m)
+            Step producer ->
+              case producer of
+                Yield b next -> k b <~ next
+                Await kb instr kfailed ->
+                  Step (Await ((mp <~) . kb) instr (mp <~ kfailed))
+                Stop -> failed <~ stop
 
 --------------------------------------------------------------------------------
 -- | Asks for a unused 'UUID'.
 freshId :: Code o UUID
-freshId = awaits NeedUUID
+freshId = Step $ Await pure NeedUUID (Step Stop)
 
 --------------------------------------------------------------------------------
 -- | Raises an 'OperationError'.
@@ -150,6 +287,20 @@ retry :: Code o a
 retry = lift Retry
 
 --------------------------------------------------------------------------------
+-- | Sends a package to the server and wait for a response.
+sendRemote :: Payload -> Code o Package
+sendRemote p = Step $ Await pure (NeedRemote p) (Step Stop)
+
+--------------------------------------------------------------------------------
+-- | Waits package from the server.
+waitRemote :: UUID -> Code o (Maybe Package)
+waitRemote c = Step $ Await pure (WaitRemote c) (Step Stop)
+
+--------------------------------------------------------------------------------
+construct :: Code o a -> Operation o
+construct m = m >> stop
+
+--------------------------------------------------------------------------------
 -- | Like 'request' except it discards the correlation id of the network
 --   exchange.
 send :: (Encode req, Decode resp)
@@ -159,8 +310,9 @@ send :: (Encode req, Decode resp)
      -> req
      -> Code o resp
 send reqCmd expCmd cred req = do
-  let payload = runPut $ encodeMessage req
-  pkg <- awaits $ NeedRemote reqCmd payload cred
+  let dat     = runPut $ encodeMessage req
+      payload = Payload reqCmd dat cred
+  pkg <- sendRemote payload
   let gotCmd = packageCmd pkg
 
   when (gotCmd /= expCmd)
@@ -195,22 +347,18 @@ request :: Encode req
         -> [Expect o]
         -> Code o ()
 request reqCmd cred rq exps = do
-  let payload = runPut $ encodeMessage rq
-  pkg <- awaits $ NeedRemote reqCmd payload cred
+  let dat = runPut $ encodeMessage rq
+      payload = Payload reqCmd dat cred
+  pkg <- sendRemote payload
   runFirstMatch pkg exps
-
---------------------------------------------------------------------------------
--- | Like 'waitForOr' but will 'stop' if the connection reset.
-waitFor :: UUID -> [Expect o] -> Code o ()
-waitFor pid exps = waitForOr pid stop exps
 
 --------------------------------------------------------------------------------
 -- | @waitForElse uuid alternative expects@ Waits for a message from the server
 --   at the given /uuid/. If the connection has been reset in the meantime, it
 --   will use /alternative/.
-waitForOr :: UUID -> (Code o ()) -> [Expect o] -> Code o ()
+waitForOr :: UUID -> Code o () -> [Expect o] -> Code o ()
 waitForOr pid alt exps =
-  awaits (WaitRemote pid) >>= \case
+  waitRemote pid >>= \case
     Nothing  -> alt
     Just pkg ->
       runFirstMatch pkg exps
@@ -249,6 +397,7 @@ serverError = failure . ServerError
 -- | Raises 'InvalidServerResponse' exception.
 invalidServerResponse :: Command -> Command -> Code o a
 invalidServerResponse expe got = failure $ InvalidServerResponse expe got
+
 
 --------------------------------------------------------------------------------
 invalidOperation :: Text -> Code o a

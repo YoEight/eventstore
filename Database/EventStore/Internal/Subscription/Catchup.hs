@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS -Wno-orphans #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Database.EventStore.Internal.Subscription.Catchup
@@ -108,8 +109,7 @@ newCatchupSubscription exec tos batch cred streamId seed = do
   queue    <- newTQueueIO
   track    <- newTVarIO seed
 
-  let stream = streamIdRaw streamId
-      sub = CatchupSubscription exec streamId phaseVar track $ do
+  let sub = CatchupSubscription exec streamId phaseVar track $ do
         p       <- readTVar phaseVar
         isEmpty <- isEmptyTQueue queue
         if isEmpty

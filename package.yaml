@@ -75,7 +75,6 @@ library:
     - fast-logger
     - monad-logger >= 0.3.20
     - clock
-    - machines >= 0.6
     - bifunctors
     - interpolate
     - ekg-core

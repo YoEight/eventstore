@@ -47,13 +47,12 @@ fetchStream :: Settings
             -> Bool -- Resolve link tos.
             -> Maybe Credentials
             -> EventNumber
-            -> Code o (Slice EventNumber)
-fetchStream setts stream batch tos cred (EventNumber n) = do
-    outcome <-
-        deconstruct $ fmap Left $
-            readStreamEvents setts Forward stream n batch tos cred
-
-    fromReadResult stream outcome pure
+            -> Operation (Slice EventNumber)
+fetchStream setts stream batch tos cred (EventNumber n) =
+    traversing go <~ readStreamEvents setts Forward stream n batch tos cred
+  where
+    go outcome =
+        fromReadResult stream outcome pure
 
 --------------------------------------------------------------------------------
 fetchAll :: Settings
@@ -61,24 +60,24 @@ fetchAll :: Settings
          -> Bool -- Resolve link tos.
          -> Maybe Credentials
          -> Position
-         -> Code o (Slice Position)
+         -> Operation (Slice Position)
 fetchAll setts batch tos cred (Position com pre) =
-    deconstruct $ fmap Left $
-        readAllEvents setts com pre batch tos Forward cred
+    traversing pure <~ readAllEvents setts com pre batch tos Forward cred
 
 --------------------------------------------------------------------------------
-sourceStream :: t
-             -> (forall o. t -> Code o (Slice t))
+sourceStream :: (t -> Operation (Slice t))
+             -> t
              -> Operation SubAction
-sourceStream seed iteratee = unfoldPlan seed go
+sourceStream fetch start = unfolding go
   where
-    go state = do
-        s <- iteratee state
+    go Nothing =
+        pure (fetch start)
+    go (Just s) = do
         traverse_ (yield . Submit) (sliceEvents s)
 
         case sliceNext s of
-            Just newState -> pure newState
-            Nothing       -> stop
+            Just next -> pure (fetch next)
+            Nothing   -> stop
 
 --------------------------------------------------------------------------------
 catchup :: forall t. Settings
@@ -89,11 +88,11 @@ catchup :: forall t. Settings
         -> Maybe Credentials
         -> Operation SubAction
 catchup setts streamId from tos batchSiz cred =
-    sourceStream from iteratee <> volatile streamId tos cred
+    append (sourceStream iteratee from) (volatile streamId tos cred)
   where
     batch = fromMaybe defaultBatchSize batchSiz
 
-    iteratee :: t -> Code o (Slice t)
+    iteratee :: t -> Operation (Slice t)
     iteratee =
         case streamId of
             StreamName n -> fetchStream setts n batch tos cred
@@ -102,13 +101,13 @@ catchup setts streamId from tos batchSiz cred =
 --------------------------------------------------------------------------------
 fromReadResult :: Text
                -> ReadResult EventNumber a
-               -> (a -> Code o x)
-               -> Code o x
+               -> (a -> Execution x)
+               -> Execution x
 fromReadResult stream res k =
     case res of
-        ReadNoStream        -> failure $ streamNotFound stream
-        ReadStreamDeleted s -> failure $ StreamDeleted s
-        ReadNotModified     -> failure $ ServerError Nothing
-        ReadError e         -> failure $ ServerError e
-        ReadAccessDenied s  -> failure $ AccessDenied s
+        ReadNoStream        -> Failed $ streamNotFound stream
+        ReadStreamDeleted s -> Failed $ StreamDeleted s
+        ReadNotModified     -> Failed $ ServerError Nothing
+        ReadError e         -> Failed $ ServerError e
+        ReadAccessDenied s  -> Failed $ AccessDenied s
         ReadSuccess ss      -> k ss

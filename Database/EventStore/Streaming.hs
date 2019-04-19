@@ -32,8 +32,6 @@ import qualified Streaming.Prelude as Streaming
 
 --------------------------------------------------------------------------------
 import qualified Database.EventStore as ES
-import           Database.EventStore.Internal.Operation.Read.Common (emptySlice)
-import           Database.EventStore.Internal.Types (EventNumber(..))
 
 --------------------------------------------------------------------------------
 data ReadError t

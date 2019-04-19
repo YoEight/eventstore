@@ -32,6 +32,7 @@ import Data.Serialize
 import Data.Time
 import Data.UUID
 import Data.UUID.V4
+import Data.Void (absurd)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Callback
@@ -221,16 +222,21 @@ execute self@Registry{..} session@Session{..} =
     Resolved action -> loop action
     _               -> return ()
   where
-    loop (MachineT m) =
-      case m of
-        Failed e -> do
-          destroySession _sessions session
-          rejectSession session e
-        Retry -> do
-          reinitSession session
-          execute self session
-        Proceed s ->
-          case s of
+    loop stream =
+      case stream of
+        Return x -> absurd x
+        Effect m ->
+          case m of
+            Failed e -> do
+              destroySession _sessions session
+              rejectSession session e
+            Retry -> do
+              reinitSession session
+              execute self session
+            Proceed inner ->
+              loop inner
+        Step step ->
+          case step of
             Stop  -> destroySession _sessions session
             Yield a next -> do
               fulfill sessionCallback a
@@ -238,10 +244,10 @@ execute self@Registry{..} session@Session{..} =
             Await k tpe _ ->
               case tpe of
                 NeedUUID  -> loop . k =<< freshUUID
-                NeedRemote cmd payload cred -> do
-                  let req = Request { _requestCmd     = cmd
-                                    , _requestPayload = payload
-                                    , _requestCred    = cred
+                NeedRemote p -> do
+                  let req = Request { _requestCmd     = payloadCmd p
+                                    , _requestPayload = payloadData p
+                                    , _requestCred    = payloadCreds p
                                     }
                   atomicWriteIORef sessionStack (Required k)
                   maybeConnection _regConnRef >>= \case

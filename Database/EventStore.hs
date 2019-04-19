@@ -56,7 +56,7 @@ module Database.EventStore
     , OperationMaxAttemptReached(..)
      -- * Read Operations
     , StreamMetadataResult(..)
-    , BatchResult(..)
+    , BatchResult
     , ResolveLink(..)
     , readEvent
     , readEventsBackward
@@ -169,7 +169,7 @@ module Database.EventStore
     , ResolvedEvent(..)
     , OperationError(..)
     , StreamId(..)
-    , StreamName(..)
+    , StreamName
     , isAllStream
     , isEventResolvedLink
     , resolvedEventOriginal
@@ -210,7 +210,6 @@ import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal
-import           Database.EventStore.Internal.Callback
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Discovery
 import           Database.EventStore.Internal.Logger

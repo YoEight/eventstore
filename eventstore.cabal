@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: c9911a422246a5be440ff6488ce51535e4428fcd8bb1514a94970f10f9ef698d
+-- hash: b27c0d53395bf339fd7f40135a69a325c095afa1472bb906a341349172d11e0d
 
 name:           eventstore
 version:        1.2.4
@@ -108,7 +108,6 @@ library
     , interpolate
     , lifted-async
     , lifted-base
-    , machines >=0.6
     , monad-control
     , monad-logger >=0.3.20
     , mono-traversable ==1.*

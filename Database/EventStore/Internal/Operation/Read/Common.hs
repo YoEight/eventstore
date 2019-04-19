@@ -21,7 +21,6 @@ import Data.Foldable
 import Data.Maybe (isNothing)
 import Data.Monoid
 import Data.Traversable
-import Data.Int
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Prelude
@@ -97,7 +96,7 @@ emptySlice = SliceEndOfStream
 
 --------------------------------------------------------------------------------
 instance Functor Slice where
-    fmap f SliceEndOfStream = SliceEndOfStream
+    fmap _ SliceEndOfStream = SliceEndOfStream
     fmap f (Slice xs next)  = Slice xs (fmap f next)
 
 --------------------------------------------------------------------------------

@@ -33,7 +33,6 @@ import Database.EventStore.Internal.Operation.Write.Common
 import Database.EventStore.Internal.Operation.WriteEvents
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Settings
-import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
@@ -47,13 +46,14 @@ readMetaStream :: Settings
                -> Maybe Credentials
                -> Operation StreamMetadataResult
 readMetaStream setts s cred = construct $ do
-    let op = readEvent setts (metaStream s) (-1) False cred
-    tmp <- deconstruct (fmap Left op)
-    onReadResult tmp $ \n e_num evt -> do
-        let bytes = recordedEventData $ resolvedEventOriginal evt
-        case decode $ fromStrict bytes of
-            Just pv -> yield $ StreamMetadataResult n e_num pv
-            Nothing -> failure invalidFormat
+    traversing go <~ readEvent setts (metaStream s) (-1) False cred
+  where
+    go tmp =
+        onReadResult tmp $ \n e_num evt -> do
+            let bytes = recordedEventData $ resolvedEventOriginal evt
+            case decode $ fromStrict bytes of
+                Just pv -> pure $ StreamMetadataResult n e_num pv
+                Nothing -> Failed invalidFormat
 
 --------------------------------------------------------------------------------
 -- | Set stream metadata operation.
@@ -79,14 +79,14 @@ streamNotFound = InvalidOperation "Read metadata on an inexistant stream"
 
 --------------------------------------------------------------------------------
 onReadResult :: ReadResult EventNumber ReadEvent
-             -> (Text -> Int64 -> ResolvedEvent -> Code o a)
-             -> Code o a
+             -> (Text -> Int64 -> ResolvedEvent -> Execution a)
+             -> Execution a
 onReadResult (ReadSuccess r) k =
     case r of
       ReadEvent s n e -> k s n e
-      _               -> failure streamNotFound
-onReadResult ReadNoStream _          = failure streamNotFound
-onReadResult (ReadStreamDeleted s) _ = failure $ StreamDeleted s
-onReadResult ReadNotModified _       = failure $ ServerError Nothing
-onReadResult (ReadError e) _         = failure $ ServerError e
-onReadResult (ReadAccessDenied s) _  = failure $ AccessDenied s
+      _               -> Failed streamNotFound
+onReadResult ReadNoStream _          = Failed streamNotFound
+onReadResult (ReadStreamDeleted s) _ = Failed $ StreamDeleted s
+onReadResult ReadNotModified _       = Failed $ ServerError Nothing
+onReadResult (ReadError e) _         = Failed $ ServerError e
+onReadResult (ReadAccessDenied s) _  = Failed $ AccessDenied s
