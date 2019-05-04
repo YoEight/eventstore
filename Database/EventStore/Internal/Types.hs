@@ -774,8 +774,8 @@ cleanPairs xs = xs >>= go
     go (_, A.Null) = []
     go (name, obj) = [(name, deeper obj)]
 
-    deeper cur@(A.Array xs)
-      | Vector.length xs == 1 = Vector.head xs
+    deeper cur@(A.Array as)
+      | Vector.length as == 1 = Vector.head as
       | otherwise             = cur
     deeper cur = cur
 

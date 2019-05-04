@@ -38,7 +38,7 @@ import Prelude (String)
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import Control.Exception.Safe (SomeException, tryAny)
+import Control.Exception.Safe (tryAny)
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Array.IO
@@ -302,8 +302,8 @@ discoverEndPoint mgr ref fend settings = do
     candidates <- case old_m of
         Nothing  -> gossipCandidatesFromDns settings
         Just old -> liftIO $ gossipCandidatesFromOldGossip fend old
-    forArrayFirst candidates $ \i -> do
-        c   <- liftIO $ readArray candidates i
+    forArrayFirst candidates $ \idx -> do
+        c   <- liftIO $ readArray candidates idx
         res <- tryGetGossipFrom settings mgr c
         let fin_end = do
                 info <- res
@@ -371,10 +371,10 @@ data AState = AState !Int !Int
 --------------------------------------------------------------------------------
 arrangeGossipCandidates :: [MemberInfo] -> IO (IOArray Int GossipSeed)
 arrangeGossipCandidates members = do
-    arr        <- newArray (0, len) emptyGossipSeed
-    AState i j <- foldM (go arr) (AState (-1) len) members
+    arr <- newArray (0, len) emptyGossipSeed
+    AState idx j <- foldM (go arr) (AState (-1) len) members
 
-    shuffle arr 0 i         -- shuffle nodes
+    shuffle arr 0 idx         -- shuffle nodes
     shuffle arr j (len - 1) -- shuffle managers
 
     return arr
@@ -382,14 +382,14 @@ arrangeGossipCandidates members = do
     len = length members
 
     go :: IOArray Int GossipSeed -> AState -> MemberInfo -> IO AState
-    go arr (AState i j) m =
+    go arr (AState idx j) m =
         case _state m of
             Manager -> do
                 let new_j = j - 1
                 writeArray arr new_j seed
-                return (AState i new_j)
+                return (AState idx new_j)
             _ -> do
-                let new_i = i + 1
+                let new_i = idx + 1
                 writeArray arr new_i seed
                 return (AState new_i j)
       where

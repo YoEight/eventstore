@@ -21,29 +21,19 @@ module Database.EventStore.Internal where
 import Prelude (String)
 import Data.Int
 import Data.Maybe
-import Data.Time (NominalDiffTime)
-
---------------------------------------------------------------------------------
-import Data.List.NonEmpty(NonEmpty(..), nonEmpty)
-import Network.Connection (TLSSettings)
 
 --------------------------------------------------------------------------------
 import           Database.EventStore.Internal.Callback
-import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Communication
 import           Database.EventStore.Internal.Connection (connectionBuilder)
 import           Database.EventStore.Internal.Control hiding (subscribe)
 import           Database.EventStore.Internal.Discovery
 import           Database.EventStore.Internal.Exec
-import           Database.EventStore.Internal.Subscription.Api
 import           Database.EventStore.Internal.Subscription.Catchup
-import           Database.EventStore.Internal.Subscription.Message
 import           Database.EventStore.Internal.Subscription.Persistent
 import           Database.EventStore.Internal.Subscription.Types
 import           Database.EventStore.Internal.Subscription.Regular
 import           Database.EventStore.Internal.Logger
-import           Database.EventStore.Internal.Manager.Operation.Registry
-import           Database.EventStore.Internal.Operation (OperationError(..))
 import qualified Database.EventStore.Internal.Operations as Op
 import           Database.EventStore.Internal.Operation.Read.Common
 import           Database.EventStore.Internal.Operation.Write.Common
