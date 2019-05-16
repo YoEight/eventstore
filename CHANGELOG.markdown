@@ -1,3 +1,8 @@
+1.3.0
+-----
+* Discard `machines` dependency.
+* Remove `connection` upper bound version.
+
 1.2.4
 -----
 * Fix possible connection issues if Authentication or Identification processes takes too long to complete.

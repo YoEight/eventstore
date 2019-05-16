@@ -4,10 +4,10 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: c44830c20978b07eab02d082d93017154481bcfed16045efa94f29619e72b47b
+-- hash: 663b08f5bc970725b2a57c47aa571a768636e650f33cdb9b1d1a1b3d0d351dd4
 
 name:           eventstore
-version:        1.2.5
+version:        1.3.0
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
