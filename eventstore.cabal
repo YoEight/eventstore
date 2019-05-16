@@ -1,13 +1,13 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.31.1.
+-- This file has been generated from package.yaml by hpack version 0.31.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: b27c0d53395bf339fd7f40135a69a325c095afa1472bb906a341349172d11e0d
+-- hash: c44830c20978b07eab02d082d93017154481bcfed16045efa94f29619e72b47b
 
 name:           eventstore
-version:        1.2.4
+version:        1.2.5
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
@@ -96,7 +96,7 @@ library
     , bytestring
     , cereal >=0.4 && <0.6
     , clock
-    , connection ==0.2.*
+    , connection >=0.2
     , containers
     , dns >=3.0.1
     , dotnet-timespan
@@ -150,7 +150,7 @@ test-suite eventstore-tests
     , base >=4.7 && <5
     , bytestring
     , cereal
-    , connection ==0.2.*
+    , connection >=0.2
     , containers
     , dotnet-timespan
     , eventstore
