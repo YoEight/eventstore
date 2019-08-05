@@ -5,3 +5,9 @@ ghc:
   - "8.2"
   - "8.4"
   - "8.6"
+
+install:
+  - echo "nothing"
+
+script:
+  - cabal new-build
