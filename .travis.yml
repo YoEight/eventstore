@@ -5,3 +5,14 @@ ghc:
   - "8.2"
   - "8.4"
   - "8.6"
+
+cache:
+  directories:
+    - $HOME/.cabal/store
+
+install:
+  - ghc --version
+  - cabal --version
+
+script:
+  - cabal new-build
