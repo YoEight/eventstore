@@ -41,6 +41,8 @@ library
       Database.EventStore.Internal.ConnectionManager
       Database.EventStore.Internal.Control
       Database.EventStore.Internal.Discovery
+      Database.EventStore.Internal.Driver
+      Database.EventStore.Internal.Effect.Driver
       Database.EventStore.Internal.EndPoint
       Database.EventStore.Internal.Exec
       Database.EventStore.Internal.Logger
@@ -87,7 +89,8 @@ library
       Paths_eventstore
   hs-source-dirs:
       ./.
-  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds DataKinds GADTs PolyKinds ScopedTypeVariables TypeApplications TypeOperators
+  ghc-options: -O2 -fplugin=Polysemy.Plugin -flate-specialise -fspecialise-aggressively
   build-depends:
       aeson >=0.8
     , array
@@ -112,6 +115,8 @@ library
     , monad-logger >=0.3.20
     , mono-traversable ==1.*
     , mtl
+    , polysemy >=1.0
+    , polysemy-plugin
     , protobuf >=0.2.1.1 && <0.3
     , random ==1.*
     , safe
@@ -142,8 +147,8 @@ test-suite eventstore-tests
       Paths_eventstore
   hs-source-dirs:
       tests
-  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds DataKinds GADTs PolyKinds ScopedTypeVariables TypeApplications TypeOperators
+  ghc-options: -O2 -fplugin=Polysemy.Plugin -flate-specialise -fspecialise-aggressively -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       aeson
     , async
@@ -162,6 +167,8 @@ test-suite eventstore-tests
     , lifted-base
     , monad-control
     , mono-traversable ==1.*
+    , polysemy >=1.0
+    , polysemy-plugin
     , protobuf
     , safe
     , safe-exceptions

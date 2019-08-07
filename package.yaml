@@ -38,10 +38,13 @@ dependencies:
   - safe
   - streaming
   - vector
+  - polysemy >= 1.0
+  - polysemy-plugin
 
 extra-source-files:
   - README.md
   - CHANGELOG.markdown
+ghc-options: -O2 -fplugin=Polysemy.Plugin -flate-specialise -fspecialise-aggressively
 
 default-extensions:
   - NoImplicitPrelude
@@ -55,7 +58,12 @@ default-extensions:
   - MultiParamTypeClasses
   - TypeFamilies
   - ConstraintKinds
-
+  - DataKinds
+  - GADTs
+  - PolyKinds
+  - ScopedTypeVariables
+  - TypeApplications
+  - TypeOperators
 library:
   source-dirs:  '.'
   exposed-modules:

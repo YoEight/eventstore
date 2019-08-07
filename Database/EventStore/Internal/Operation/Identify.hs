@@ -10,7 +10,10 @@
 -- Portability: non-portable
 --
 --------------------------------------------------------------------------------
-module Database.EventStore.Internal.Operation.Identify ( newIdentifyPkg ) where
+module Database.EventStore.Internal.Operation.Identify
+  ( newRequest
+  , newIdentifyPkg
+  ) where
 
 --------------------------------------------------------------------------------
 import Data.ProtocolBuffers
