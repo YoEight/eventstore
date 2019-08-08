@@ -44,7 +44,9 @@ dependencies:
 extra-source-files:
   - README.md
   - CHANGELOG.markdown
-ghc-options: -O2 -fplugin=Polysemy.Plugin -flate-specialise -fspecialise-aggressively
+ghc-options: -O2 -fplugin=Polysemy.Plugin
+# GHC >= 8.6
+# ghc-options: -O2 -fplugin=Polysemy.Plugin -flate-specialise -fspecialise-aggressively
 
 default-extensions:
   - NoImplicitPrelude
