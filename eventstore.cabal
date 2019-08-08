@@ -90,7 +90,7 @@ library
   hs-source-dirs:
       ./.
   default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds DataKinds GADTs PolyKinds ScopedTypeVariables TypeApplications TypeOperators
-  ghc-options: -O2 -fplugin=Polysemy.Plugin -flate-specialise -fspecialise-aggressively
+  ghc-options: -O2 -fplugin=Polysemy.Plugin
   build-depends:
       aeson >=0.8
     , array
@@ -148,7 +148,7 @@ test-suite eventstore-tests
   hs-source-dirs:
       tests
   default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase RecordWildCards RankNTypes TemplateHaskell QuasiQuotes FlexibleContexts MultiParamTypeClasses TypeFamilies ConstraintKinds DataKinds GADTs PolyKinds ScopedTypeVariables TypeApplications TypeOperators
-  ghc-options: -O2 -fplugin=Polysemy.Plugin -flate-specialise -fspecialise-aggressively -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -O2 -fplugin=Polysemy.Plugin -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       aeson
     , async

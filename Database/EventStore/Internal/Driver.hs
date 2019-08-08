@@ -35,6 +35,7 @@ import Data.String.Interpolate.IsString (i)
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Effect.Driver
+import Database.EventStore.Internal.Operation (Operation)
 import qualified Database.EventStore.Internal.Operation.Identify as Identify
 import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Types
@@ -51,6 +52,8 @@ data Msg
   = SystemInit
   | EstablishConnection EndPoint
   | ConnectionEstablished ConnectionId
+  | PackageArrived ConnectionId Package
+  | forall a. SubmitOperation (Operation a)
 
 --------------------------------------------------------------------------------
 data ConnectingState
@@ -80,6 +83,7 @@ react SystemInit = do
   discovery
 react (EstablishConnection ept) = establish ept
 react (ConnectionEstablished connId) = established connId
+react (PackageArrived connId pkg) = packageArrived connId pkg
 
 --------------------------------------------------------------------------------
 discovery :: Members '[State Stage, Driver] r => Sem r ()
@@ -172,3 +176,38 @@ createIdentifyPkg version name = do
                     }
 
   pure pkg
+
+--------------------------------------------------------------------------------
+clientIdentified :: Members '[State Stage, Driver] r
+                 => ConnectionId
+                 -> Sem r ()
+clientIdentified connId = get >>= \case
+  Connecting (Identification known _ _)
+    | known == connId -> do
+      put (Connected connId)
+      -- TODO - OperationCheck !!!!
+    | otherwise -> pure ()
+  _ -> pure ()
+
+--------------------------------------------------------------------------------
+packageArrived :: Members '[Reader Settings, State Stage, Driver] r
+               => ConnectionId
+               -> Package
+               -> Sem r ()
+packageArrived connId pkg = get >>= \case
+  Connecting state ->
+    case state of
+      Identification known pkgId _
+        | PackageId (packageCorrelation pkg) == pkgId
+            && packageCmd pkg == clientIdentifiedCmd
+            && known == connId -> clientIdentified connId
+        | otherwise -> ignored
+      Authentication known pkgId _
+        | PackageId (packageCorrelation pkg) == pkgId
+            && packageCmd pkg == authenticatedCmd
+            && packageCmd pkg == notAuthenticatedCmd
+            && known == connId -> identifyClient connId
+        | otherwise -> ignored
+  _ -> ignored
+  where
+    ignored = pure ()
