@@ -33,7 +33,8 @@ data Driver m a where
   GenerateId :: Driver m UUID
   Discover :: Driver m ()
   EnqueuePackage :: ConnectionId -> Package -> Driver r ()
-  GetElapsedTime :: Driver r NominalDiffTime
+  GetElapsedTime :: Driver m NominalDiffTime
+  Register :: Package -> Driver m ()
 
 --------------------------------------------------------------------------------
 makeSem ''Driver

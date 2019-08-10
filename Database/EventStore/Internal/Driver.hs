@@ -1,4 +1,5 @@
 {-# LANGUAGE QuasiQuotes                #-}
+{-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 --------------------------------------------------------------------------------
@@ -35,13 +36,26 @@ import Data.String.Interpolate.IsString (i)
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Effect.Driver
-import Database.EventStore.Internal.Operation (Operation)
+import Database.EventStore.Internal.Operation (Operation, OperationError(..))
 import qualified Database.EventStore.Internal.Operation.Identify as Identify
 import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 newtype PackageId = PackageId UUID deriving (Show, Ord, Eq, Hashable)
+
+--------------------------------------------------------------------------------
+data BadNews =
+  BadNews
+  { badNewsId :: UUID
+  , badNewsError :: OperationError
+  } deriving (Show)
+
+--------------------------------------------------------------------------------
+data Transmission
+  = Send Package
+  | Recv (Either BadNews Package)
+  deriving (Show)
 
 --------------------------------------------------------------------------------
 type ClientVersion = Int32
@@ -53,7 +67,7 @@ data Msg
   | EstablishConnection EndPoint
   | ConnectionEstablished ConnectionId
   | PackageArrived ConnectionId Package
-  | forall a. SubmitOperation (Operation a)
+  | SendPackage Package
 
 --------------------------------------------------------------------------------
 data ConnectingState
@@ -73,17 +87,18 @@ data Stage
   deriving Show
 
 --------------------------------------------------------------------------------
-process :: Members [Reader Settings, Input Msg, Output Package, State Stage, Driver] r => Sem r ()
+process :: Members [Reader Settings, Input Msg, Output Transmission, State Stage, Driver] r => Sem r ()
 process = forever (input >>= react)
 
 --------------------------------------------------------------------------------
-react :: Members [Reader Settings, State Stage, Output Package, Driver] r => Msg -> Sem r ()
+react :: Members [Reader Settings, State Stage, Output Transmission, Driver] r => Msg -> Sem r ()
 react SystemInit = do
   put (Connecting Reconnecting)
   discovery
 react (EstablishConnection ept) = establish ept
 react (ConnectionEstablished connId) = established connId
 react (PackageArrived connId pkg) = packageArrived connId pkg
+react (SendPackage pkg) = sendPackage pkg
 
 --------------------------------------------------------------------------------
 discovery :: Members '[State Stage, Driver] r => Sem r ()
@@ -194,20 +209,61 @@ packageArrived :: Members '[Reader Settings, State Stage, Driver] r
                => ConnectionId
                -> Package
                -> Sem r ()
-packageArrived connId pkg = get >>= \case
-  Connecting state ->
-    case state of
-      Identification known pkgId _
-        | PackageId (packageCorrelation pkg) == pkgId
-            && packageCmd pkg == clientIdentifiedCmd
-            && known == connId -> clientIdentified connId
-        | otherwise -> ignored
-      Authentication known pkgId _
-        | PackageId (packageCorrelation pkg) == pkgId
-            && packageCmd pkg == authenticatedCmd
-            && packageCmd pkg == notAuthenticatedCmd
-            && known == connId -> identifyClient connId
-        | otherwise -> ignored
-  _ -> ignored
+packageArrived connId pkg = do
+  stage <- get
+
+  case lookupConnectionId stage of
+    Just known
+      | connId /= known -> ignored
+      | otherwise -> go stage
+
   where
+    go = \case
+      Connecting state ->
+        case state of
+          Identification _ pkgId _
+            | PackageId (packageCorrelation pkg) == pkgId
+                && packageCmd pkg == clientIdentifiedCmd
+              -> clientIdentified connId
+            | otherwise -> ignored
+
+          Authentication _ pkgId _
+            | PackageId (packageCorrelation pkg) == pkgId
+                && authPkg -> identifyClient connId
+            | otherwise -> ignored
+
+          _ -> ignored
+
+      _ -> ignored
+
+    lookupConnectionId = \case
+      Connected cid -> Just cid
+      Connecting state ->
+        case state of
+          Authentication cid _ _ -> Just cid
+          Identification cid _ _ -> Just cid
+          _ -> Nothing
+      _ -> Nothing
+
+    authPkg =
+      packageCmd pkg == authenticatedCmd
+        || packageCmd pkg == notAuthenticatedCmd
+
     ignored = pure ()
+
+--------------------------------------------------------------------------------
+sendPackage :: Members '[State Stage, Driver, Output Transmission] r
+            => Package
+            -> Sem r ()
+sendPackage pkg = get >>= \case
+  Closed ->
+    let badNews =
+          BadNews
+          { badNewsId = packageCorrelation pkg
+          , badNewsError = Aborted
+          } in
+
+    output $ Recv (Left badNews)
+
+  _ -> register pkg
+
