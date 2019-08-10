@@ -35,6 +35,7 @@ data Driver m a where
   EnqueuePackage :: ConnectionId -> Package -> Driver r ()
   GetElapsedTime :: Driver m NominalDiffTime
   Register :: Package -> Driver m ()
+  IsMapped :: UUID -> Driver m Bool
 
 --------------------------------------------------------------------------------
 makeSem ''Driver

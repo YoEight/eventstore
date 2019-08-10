@@ -205,7 +205,7 @@ clientIdentified connId = get >>= \case
   _ -> pure ()
 
 --------------------------------------------------------------------------------
-packageArrived :: Members '[Reader Settings, State Stage, Driver] r
+packageArrived :: Members '[Reader Settings, State Stage, Output Transmission, Driver] r
                => ConnectionId
                -> Package
                -> Sem r ()
@@ -215,15 +215,27 @@ packageArrived connId pkg = do
   case lookupConnectionId stage of
     Just known
       | connId /= known -> ignored
-      | otherwise -> go stage
+      | otherwise ->
+        if cmd == heartbeatRequestCmd
+          then output (Send heartbeatResponse)
+          else if cmd == heartbeatResponseCmd
+            then pure ()
+            else go stage
+
+    Nothing -> ignored
 
   where
+    cmd = packageCmd pkg
+    correlation = packageCorrelation pkg
+
+    heartbeatResponse = heartbeatResponsePackage $ packageCorrelation pkg
+
     go = \case
       Connecting state ->
         case state of
           Identification _ pkgId _
             | PackageId (packageCorrelation pkg) == pkgId
-                && packageCmd pkg == clientIdentifiedCmd
+                && cmd == clientIdentifiedCmd
               -> clientIdentified connId
             | otherwise -> ignored
 
@@ -233,6 +245,17 @@ packageArrived connId pkg = do
             | otherwise -> ignored
 
           _ -> ignored
+
+      Connected{} -> do
+        mapped <- isMapped correlation
+        if mapped
+          then
+            case cmd of
+              _ | cmd == badRequestCmd -> undefined
+                | cmd == notAuthenticatedCmd -> undefined
+                | cmd == notHandledCmd -> undefined
+                | otherwise -> undefined
+          else ignored
 
       _ -> ignored
 
@@ -245,9 +268,7 @@ packageArrived connId pkg = do
           _ -> Nothing
       _ -> Nothing
 
-    authPkg =
-      packageCmd pkg == authenticatedCmd
-        || packageCmd pkg == notAuthenticatedCmd
+    authPkg = cmd == authenticatedCmd || cmd == notAuthenticatedCmd
 
     ignored = pure ()
 
