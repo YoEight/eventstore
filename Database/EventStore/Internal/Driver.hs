@@ -43,9 +43,6 @@ import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-newtype PackageId = PackageId UUID deriving (Show, Ord, Eq, Hashable)
-
---------------------------------------------------------------------------------
 data BadNews =
   BadNews
   { badNewsId :: UUID
@@ -55,6 +52,7 @@ data BadNews =
 --------------------------------------------------------------------------------
 data Transmission
   = Send Package
+  | Ignored Package
   | Recv (Either BadNews Package)
   deriving (Show)
 
@@ -71,30 +69,13 @@ data Msg
   | SendPackage Package
 
 --------------------------------------------------------------------------------
-data ConnectingState
-  = Reconnecting
-  | EndpointDiscovery
-  | ConnectionEstablishing ConnectionId
-  | Authentication ConnectionId PackageId NominalDiffTime
-  | Identification ConnectionId PackageId NominalDiffTime
-  deriving Show
-
---------------------------------------------------------------------------------
-data Stage
-  = Init
-  | Connecting ConnectingState
-  | Connected ConnectionId
-  | Closed
-  deriving Show
-
---------------------------------------------------------------------------------
-process :: Members [Reader Settings, Input Msg, Output Transmission, State Stage, Driver] r => Sem r ()
+process :: Members [Reader Settings, Input Msg, Output Transmission, Driver] r => Sem r ()
 process = forever (input >>= react)
 
 --------------------------------------------------------------------------------
-react :: Members [Reader Settings, State Stage, Output Transmission, Driver] r => Msg -> Sem r ()
+react :: Members [Reader Settings, Output Transmission, Driver] r => Msg -> Sem r ()
 react SystemInit = do
-  put (Connecting Reconnecting)
+  setStage (Connecting Reconnecting)
   discovery
 react (EstablishConnection ept) = establish ept
 react (ConnectionEstablished connId) = established connId
@@ -102,8 +83,8 @@ react (PackageArrived connId pkg) = packageArrived connId pkg
 react (SendPackage pkg) = sendPackage pkg
 
 --------------------------------------------------------------------------------
-discovery :: Members '[State Stage, Driver] r => Sem r ()
-discovery = get >>= \case
+discovery :: Members '[Driver] r => Sem r ()
+discovery = getStage >>= \case
   Connecting state ->
     case state of
       Reconnecting{} -> discover
@@ -111,21 +92,21 @@ discovery = get >>= \case
   _ -> pure ()
 
 --------------------------------------------------------------------------------
-establish :: Members '[State Stage, Driver] r => EndPoint -> Sem r ()
-establish ept = get >>= \case
+establish :: Members '[Driver] r => EndPoint -> Sem r ()
+establish ept = getStage >>= \case
   Connecting state ->
     case state of
       EndpointDiscovery -> do
         cid <- connect ept
-        put $ Connecting (ConnectionEstablishing cid)
+        setStage $ Connecting (ConnectionEstablishing cid)
       _ -> pure ()
   _ -> pure ()
 
 --------------------------------------------------------------------------------
-established :: Members '[Reader Settings, State Stage, Driver] r
+established :: Members '[Reader Settings, Driver] r
             => ConnectionId
             -> Sem r ()
-established connId = get >>= \case
+established connId = getStage >>= \case
   Connecting (ConnectionEstablishing known) ->
     when (connId == known) $ do
       setts <- ask
@@ -135,7 +116,7 @@ established connId = get >>= \case
   _ -> pure ()
 
 --------------------------------------------------------------------------------
-authenticate :: Members '[State Stage, Driver] r
+authenticate :: Members '[Driver] r
              => Credentials
              -> ConnectionId
              -> Sem r ()
@@ -144,11 +125,11 @@ authenticate cred connId = do
   pkg <- createAuthenticatePkg cred
   let pkgId = PackageId $ packageCorrelation pkg
 
-  put $ Connecting (Authentication connId pkgId elapsed)
+  setStage $ Connecting (Authentication connId pkgId elapsed)
   enqueuePackage connId pkg
 
 --------------------------------------------------------------------------------
-identifyClient :: Members '[Reader Settings, State Stage, Driver] r
+identifyClient :: Members '[Reader Settings, Driver] r
                => ConnectionId
                -> Sem r ()
 identifyClient connId = do
@@ -161,7 +142,7 @@ identifyClient connId = do
   pkg <- createIdentifyPkg clientVersion connName
   let pkgId = PackageId $ packageCorrelation pkg
 
-  put $ Connecting (Identification connId pkgId elapsed)
+  setStage $ Connecting (Identification connId pkgId elapsed)
   enqueuePackage connId pkg
   where
     clientVersion = 1
@@ -194,24 +175,24 @@ createIdentifyPkg version name = do
   pure pkg
 
 --------------------------------------------------------------------------------
-clientIdentified :: Members '[State Stage, Driver] r
+clientIdentified :: Members '[Driver] r
                  => ConnectionId
                  -> Sem r ()
-clientIdentified connId = get >>= \case
+clientIdentified connId = getStage >>= \case
   Connecting (Identification known _ _)
     | known == connId -> do
-      put (Connected connId)
+      setStage (Connected connId)
       -- TODO - OperationCheck !!!!
     | otherwise -> pure ()
   _ -> pure ()
 
 --------------------------------------------------------------------------------
-packageArrived :: Members '[Reader Settings, State Stage, Output Transmission, Driver] r
+packageArrived :: Members '[Reader Settings, Output Transmission, Driver] r
                => ConnectionId
                -> Package
                -> Sem r ()
 packageArrived connId pkg = do
-  stage <- get
+  stage <- getStage
 
   case lookupConnectionId stage of
     Just known
@@ -252,7 +233,16 @@ packageArrived connId pkg = do
         if mapped
           then
             case cmd of
-              _ | cmd == badRequestCmd -> undefined
+              _ | cmd == badRequestCmd -> do
+                  let reason = packageDataAsText pkg
+                      badNews =
+                        BadNews
+                        { badNewsId = correlation
+                        , badNewsError = ServerError reason
+                        }
+
+                  output $ Recv (Left badNews)
+
                 | cmd == notAuthenticatedCmd -> do
                   let badNews =
                         BadNews
@@ -272,12 +262,12 @@ packageArrived connId pkg = do
                           info         = masterInfo details
                           node         = masterInfoNodeEndPoints info
 
-                      put . Connecting . ConnectionEstablishing =<<
+                      setStage . Connecting . ConnectionEstablishing =<<
                         forceReconnect correlation node
 
                     -- In this case with just retry the operation.
                     _ -> restart correlation
-                | otherwise -> undefined
+                | otherwise -> output $ Recv (Right pkg)
           else ignored
 
       _ -> ignored
@@ -293,13 +283,13 @@ packageArrived connId pkg = do
 
     authPkg = cmd == authenticatedCmd || cmd == notAuthenticatedCmd
 
-    ignored = pure ()
+    ignored = output (Ignored pkg)
 
 --------------------------------------------------------------------------------
-sendPackage :: Members '[State Stage, Driver, Output Transmission] r
+sendPackage :: Members '[Driver, Output Transmission] r
             => Package
             -> Sem r ()
-sendPackage pkg = get >>= \case
+sendPackage pkg = getStage >>= \case
   Closed ->
     let badNews =
           BadNews

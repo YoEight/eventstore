@@ -24,7 +24,27 @@ import Database.EventStore.Internal.EndPoint
 import Database.EventStore.Internal.Types (Package)
 
 --------------------------------------------------------------------------------
+newtype PackageId = PackageId UUID deriving (Show, Ord, Eq, Hashable)
+
+--------------------------------------------------------------------------------
 newtype ConnectionId = ConnectionId UUID deriving (Show, Ord, Eq, Hashable)
+
+--------------------------------------------------------------------------------
+data ConnectingState
+  = Reconnecting
+  | EndpointDiscovery
+  | ConnectionEstablishing ConnectionId
+  | Authentication ConnectionId PackageId NominalDiffTime
+  | Identification ConnectionId PackageId NominalDiffTime
+  deriving Show
+
+--------------------------------------------------------------------------------
+data Stage
+  = Init
+  | Connecting ConnectingState
+  | Connected ConnectionId
+  | Closed
+  deriving Show
 
 --------------------------------------------------------------------------------
 data Driver m a where
@@ -38,6 +58,8 @@ data Driver m a where
   Register :: Package -> Driver m ()
   IsMapped :: UUID -> Driver m Bool
   Restart :: UUID -> Driver m ()
+  SetStage :: Stage -> Driver m ()
+  GetStage :: Driver m Stage
 
 --------------------------------------------------------------------------------
 makeSem ''Driver
