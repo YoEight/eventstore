@@ -29,6 +29,7 @@ newtype ConnectionId = ConnectionId UUID deriving (Show, Ord, Eq, Hashable)
 --------------------------------------------------------------------------------
 data Driver m a where
   Connect :: EndPoint -> Driver m ConnectionId
+  ForceReconnect :: UUID -> NodeEndPoints -> Driver m ConnectionId
   CloseConnection :: ConnectionId -> Driver m ()
   GenerateId :: Driver m UUID
   Discover :: Driver m ()
@@ -36,6 +37,7 @@ data Driver m a where
   GetElapsedTime :: Driver m NominalDiffTime
   Register :: Package -> Driver m ()
   IsMapped :: UUID -> Driver m Bool
+  Restart :: UUID -> Driver m ()
 
 --------------------------------------------------------------------------------
 makeSem ''Driver

@@ -16,11 +16,12 @@ module Database.EventStore.Internal.Driver where
 
 --------------------------------------------------------------------------------
 import Control.Monad (forever, when)
+import Data.ByteString (ByteString)
 import Data.Hashable (Hashable)
 import Data.Int (Int32)
 import Data.Maybe (fromMaybe)
-import Data.ProtocolBuffers (encodeMessage)
-import Data.Serialize (runPut)
+import Data.ProtocolBuffers (Decode, encodeMessage, decodeMessage, getField)
+import Data.Serialize (runPut, runGet)
 import Data.Text (Text)
 import Data.Time (NominalDiffTime)
 import Data.UUID (UUID)
@@ -252,8 +253,30 @@ packageArrived connId pkg = do
           then
             case cmd of
               _ | cmd == badRequestCmd -> undefined
-                | cmd == notAuthenticatedCmd -> undefined
-                | cmd == notHandledCmd -> undefined
+                | cmd == notAuthenticatedCmd -> do
+                  let badNews =
+                        BadNews
+                        { badNewsId = correlation
+                        , badNewsError = NotAuthenticatedOp
+                        }
+
+                  output $ Recv (Left badNews)
+
+                | cmd == notHandledCmd -> do
+                  let Just msg = maybeDecodeMessage (packageData pkg)
+                      reason   = getField $ notHandledReason msg
+
+                  case reason of
+                    N_NotMaster -> do
+                      let Just details = getField $ notHandledAdditionalInfo msg
+                          info         = masterInfo details
+                          node         = masterInfoNodeEndPoints info
+
+                      put . Connecting . ConnectionEstablishing =<<
+                        forceReconnect correlation node
+
+                    -- In this case with just retry the operation.
+                    _ -> restart correlation
                 | otherwise -> undefined
           else ignored
 
@@ -288,3 +311,9 @@ sendPackage pkg = get >>= \case
 
   _ -> register pkg
 
+--------------------------------------------------------------------------------
+maybeDecodeMessage :: Decode a => ByteString -> Maybe a
+maybeDecodeMessage bytes =
+    case runGet decodeMessage bytes of
+        Right a -> Just a
+        _       -> Nothing
