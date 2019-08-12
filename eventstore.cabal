@@ -72,6 +72,7 @@ library
       Database.EventStore.Internal.OperationManager
       Database.EventStore.Internal.Operations
       Database.EventStore.Internal.Prelude
+      Database.EventStore.Internal.Run.Driver
       Database.EventStore.Internal.Settings
       Database.EventStore.Internal.Stopwatch
       Database.EventStore.Internal.Stream
