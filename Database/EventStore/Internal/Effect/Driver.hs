@@ -40,8 +40,7 @@ data ConnectingState
 
 --------------------------------------------------------------------------------
 data Stage
-  = Init
-  | Connecting ConnectingState
+  = Connecting ConnectingState
   | Connected ConnectionId
   | Closed
   deriving Show

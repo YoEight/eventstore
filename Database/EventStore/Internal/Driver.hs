@@ -17,6 +17,8 @@ module Database.EventStore.Internal.Driver where
 --------------------------------------------------------------------------------
 import Control.Monad (forever, when)
 import Data.ByteString (ByteString)
+import           Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
 import Data.Int (Int32)
 import Data.Maybe (fromMaybe)
@@ -48,6 +50,23 @@ data BadNews =
   { badNewsId :: UUID
   , badNewsError :: OperationError
   } deriving (Show)
+
+--------------------------------------------------------------------------------
+data Exchange =
+  Exchange
+  { exchangeCount :: Int
+  , exchangeRequest :: Package
+  }
+
+--------------------------------------------------------------------------------
+type Reg = HashMap UUID Exchange
+
+--------------------------------------------------------------------------------
+data DriverState
+  = Init
+  | Awaiting [Package] ConnectingState
+  | Active ConnectionId Reg
+  | Closed
 
 --------------------------------------------------------------------------------
 data Transmission
@@ -83,6 +102,15 @@ react (PackageArrived connId pkg) = packageArrived connId pkg
 react (SendPackage pkg) = sendPackage pkg
 
 --------------------------------------------------------------------------------
+react' :: Members '[Reader Settings, Output Transmission, Driver] r
+       => DriverState
+       -> Msg
+       -> Sem r DriverState
+react' s SystemInit = discovery' s
+react' s (EstablishConnection ept) = establish' s ept
+react' s (ConnectionEstablished cid) = established' s cid
+
+--------------------------------------------------------------------------------
 discovery :: Members '[Driver] r => Sem r ()
 discovery = getStage >>= \case
   Connecting state ->
@@ -90,6 +118,19 @@ discovery = getStage >>= \case
       Reconnecting{} -> discover
       _ -> pure ()
   _ -> pure ()
+
+--------------------------------------------------------------------------------
+discovery' :: Members '[Driver] r
+           => DriverState
+           -> Sem r DriverState
+discovery' = \case
+  Init ->
+    discovery' (Awaiting [] Reconnecting)
+
+  Awaiting pkgs Reconnecting ->
+    Awaiting pkgs EndpointDiscovery <$ discover
+
+  s -> pure s
 
 --------------------------------------------------------------------------------
 establish :: Members '[Driver] r => EndPoint -> Sem r ()
@@ -103,6 +144,15 @@ establish ept = getStage >>= \case
   _ -> pure ()
 
 --------------------------------------------------------------------------------
+establish' :: Members '[Driver] r
+           => DriverState
+           -> EndPoint
+           -> Sem r DriverState
+establish' (Awaiting pkgs EndpointDiscovery) ept =
+  Awaiting pkgs . ConnectionEstablishing <$> connect ept
+establish' s _ = pure s
+
+--------------------------------------------------------------------------------
 established :: Members '[Reader Settings, Driver] r
             => ConnectionId
             -> Sem r ()
@@ -111,39 +161,51 @@ established connId = getStage >>= \case
     when (connId == known) $ do
       setts <- ask
       case s_defaultUserCredentials setts of
-        Just cred -> authenticate cred known
-        Nothing   -> identifyClient known
+        Just cred -> undefined --authenticate cred known
+        Nothing   -> undefined --identifyClient known
   _ -> pure ()
 
 --------------------------------------------------------------------------------
-authenticate :: Members '[Driver] r
-             => Credentials
+established' :: Members '[Reader Settings, Driver, Output Transmission] r
+             => DriverState
              -> ConnectionId
-             -> Sem r ()
-authenticate cred connId = do
-  elapsed <- getElapsedTime
-  pkg <- createAuthenticatePkg cred
-  let pkgId = PackageId $ packageCorrelation pkg
+             -> Sem r DriverState
+established' s@(Awaiting pkgs (ConnectionEstablishing known)) cid
+  | cid == known = do
+    setts <- ask
+    elapsed <- getElapsedTime
 
-  setStage $ Connecting (Authentication connId pkgId elapsed)
-  enqueuePackage connId pkg
+    case s_defaultUserCredentials setts of
+      Just cred -> do
+        pkg <- createAuthenticatePkg cred
+
+        let uuid = packageCorrelation pkg
+
+        output (Send pkg)
+        pure (Awaiting pkgs (Authentication cid (PackageId uuid) elapsed))
+
+      Nothing -> do
+        pkg <- identifyClient setts
+
+        let uuid = packageCorrelation pkg
+
+        output (Send pkg)
+        pure (Awaiting pkgs (Identification cid (PackageId uuid) elapsed))
+
+  | otherwise = pure s
+established' s _ = pure s
 
 --------------------------------------------------------------------------------
-identifyClient :: Members '[Reader Settings, Driver] r
-               => ConnectionId
-               -> Sem r ()
-identifyClient connId = do
-  setts <- ask
-  elapsed <- getElapsedTime
+identifyClient :: Members '[Output Transmission, Driver] r
+               => Settings
+               -> Sem r Package
+identifyClient setts = do
   uuid <- generateId
   let defName = [i|ES-#{uuid}|]
       connName = fromMaybe defName (s_defaultConnectionName setts)
 
-  pkg <- createIdentifyPkg clientVersion connName
-  let pkgId = PackageId $ packageCorrelation pkg
+  createIdentifyPkg clientVersion connName
 
-  setStage $ Connecting (Identification connId pkgId elapsed)
-  enqueuePackage connId pkg
   where
     clientVersion = 1
 
@@ -223,7 +285,7 @@ packageArrived connId pkg = do
 
           Authentication _ pkgId _
             | PackageId (packageCorrelation pkg) == pkgId
-                && authPkg -> identifyClient connId
+                && authPkg -> undefined --identifyClient connId
             | otherwise -> ignored
 
           _ -> ignored
@@ -290,14 +352,14 @@ sendPackage :: Members '[Driver, Output Transmission] r
             => Package
             -> Sem r ()
 sendPackage pkg = getStage >>= \case
-  Closed ->
-    let badNews =
-          BadNews
-          { badNewsId = packageCorrelation pkg
-          , badNewsError = Aborted
-          } in
+  -- Closed ->
+  --   let badNews =
+  --         BadNews
+  --         { badNewsId = packageCorrelation pkg
+  --         , badNewsError = Aborted
+  --         } in
 
-    output $ Recv (Left badNews)
+  --   output $ Recv (Left badNews)
 
   _ -> register pkg
 

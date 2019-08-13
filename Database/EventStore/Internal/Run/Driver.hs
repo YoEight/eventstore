@@ -47,7 +47,7 @@ data DriverState =
 initial :: DriverState
 initial =
   DriverState
-  { driverStateStage = Init
+  { driverStateStage = undefined
   , driverStateReg = Awaiting []
   }
 
