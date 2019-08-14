@@ -34,14 +34,12 @@ data ConnectingState
   = Reconnecting
   | EndpointDiscovery
   | ConnectionEstablishing ConnectionId
-  | Authentication ConnectionId PackageId NominalDiffTime
-  | Identification ConnectionId PackageId NominalDiffTime
   deriving Show
 
 --------------------------------------------------------------------------------
 data Stage
   = Connecting ConnectingState
-  | Connected ConnectionId
+  -- | Connected ConnectionId
   | Closed
   deriving Show
 
@@ -52,13 +50,7 @@ data Driver m a where
   CloseConnection :: ConnectionId -> Driver m ()
   GenerateId :: Driver m UUID
   Discover :: Driver m ()
-  EnqueuePackage :: ConnectionId -> Package -> Driver r ()
   GetElapsedTime :: Driver m NominalDiffTime
-  Register :: Package -> Driver m ()
-  IsMapped :: UUID -> Driver m Bool
-  Restart :: UUID -> Driver m ()
-  SetStage :: Stage -> Driver m ()
-  GetStage :: Driver m Stage
 
 --------------------------------------------------------------------------------
 makeSem ''Driver
