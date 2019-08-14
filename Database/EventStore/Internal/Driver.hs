@@ -304,6 +304,8 @@ packageArrived s@(Connected known stage) connId pkg
 
                             newCid <- forceReconnect correlation node
                             let newState =
+                                  -- TODO - Do we put current ongoing requests on
+                                  -- the awaiting package list?
                                   Awaiting [exchangeRequest exc]
                                     (ConnectionEstablishing newCid)
 
