@@ -15,7 +15,7 @@
 module Database.EventStore.Internal.Driver where
 
 --------------------------------------------------------------------------------
-import Control.Monad (forever, when, foldM)
+import Control.Monad (forever, when, foldM, filterM)
 import Data.ByteString (ByteString)
 import           Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -303,10 +303,13 @@ packageArrived s@(Connected known stage) connId pkg
                                 node         = masterInfoNodeEndPoints info
 
                             newCid <- forceReconnect correlation node
+                            setts <- ask
+
+                            -- TODO - We should be better at figuring out what
+                            -- operation we should keep.
+                            aws <- makeAwaitings setts reg
                             let newState =
-                                  -- TODO - Do we put current ongoing requests on
-                                  -- the awaiting package list?
-                                  Awaiting [exchangeRequest exc]
+                                  Awaiting (exchangeRequest exc : aws)
                                     (ConnectionEstablishing newCid)
 
                             pure newState
@@ -354,6 +357,34 @@ sendAwaitingPkgs = foldM go HashMap.empty
 
       HashMap.insert (packageCorrelation pkg) exc reg
         <$ output (Send pkg)
+
+--------------------------------------------------------------------------------
+makeAwaitings :: Member (Output Transmission) r
+              => Settings
+              -> Reg
+              -> Sem r [Package]
+makeAwaitings setts reg =
+  fmap exchangeRequest
+    <$> filterM go (HashMap.elems reg)
+  where
+    retry = s_operationRetry setts
+    seed = fmap exchangeRequest $ HashMap.elems reg
+
+    go exc
+      | maxRetryReached retry (exchangeCount exc)
+        = let badNews =
+                BadNews
+                { badNewsId = packageCorrelation (exchangeRequest exc)
+                , badNewsError = Aborted
+                } in
+          False <$ output (Recv $ Left badNews)
+
+      | otherwise = pure True
+
+--------------------------------------------------------------------------------
+maxRetryReached :: Retry -> Int -> Bool
+maxRetryReached (AtMost n) i = i + 1 >= n
+maxRetryReached KeepRetrying _ = False
 
 --------------------------------------------------------------------------------
 maybeDecodeMessage :: Decode a => ByteString -> Maybe a
