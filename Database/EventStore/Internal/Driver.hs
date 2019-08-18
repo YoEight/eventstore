@@ -54,9 +54,24 @@ data BadNews =
 --------------------------------------------------------------------------------
 data Exchange =
   Exchange
-  { exchangeCount :: Int
+  { exchangeRetry :: Int
   , exchangeStarted :: NominalDiffTime
   , exchangeRequest :: Package
+  }
+
+--------------------------------------------------------------------------------
+data Await =
+  Await
+  { awaitRetry :: Int
+  , awaitPackage :: Package
+  }
+
+--------------------------------------------------------------------------------
+exchangeToAwait :: Exchange -> Await
+exchangeToAwait e =
+  Await
+  { awaitRetry = exchangeRetry e
+  , awaitPackage = exchangeRequest e
   }
 
 --------------------------------------------------------------------------------
@@ -69,13 +84,13 @@ data ConfirmationState
 
 --------------------------------------------------------------------------------
 data ConnectedStage
-  = Confirming [Package] NominalDiffTime UUID ConfirmationState
+  = Confirming [Await] NominalDiffTime UUID ConfirmationState
   | Active Reg
 
 --------------------------------------------------------------------------------
 data DriverState
   = Init
-  | Awaiting [Package] ConnectingState
+  | Awaiting [Await] ConnectingState
   | Connected ConnectionId ConnectedStage
   | Closed
 
@@ -309,7 +324,7 @@ packageArrived s@(Connected known stage) connId pkg
                             -- operation we should keep.
                             aws <- makeAwaitings setts reg
                             let newState =
-                                  Awaiting (exchangeRequest exc : aws)
+                                  Awaiting (exchangeToAwait exc : aws)
                                     (ConnectionEstablishing newCid)
 
                             pure newState
@@ -337,20 +352,21 @@ ignored = pure
 
 --------------------------------------------------------------------------------
 sendAwaitingPkgs :: forall r. Members [Output Transmission, Driver] r
-                 => [Package]
+                 => [Await]
                  -> Sem r Reg
 sendAwaitingPkgs = foldM go HashMap.empty
   where
     go :: Members [Output Transmission, Driver] r
        => Reg
-       -> Package
+       -> Await
        -> Sem r Reg
-    go reg pkg = do
+    go reg a = do
       elapsed <- getElapsedTime
 
-      let exc =
+      let pkg = awaitPackage a
+          exc =
             Exchange
-            { exchangeCount = 0
+            { exchangeRetry = awaitRetry a
             , exchangeStarted = elapsed
             , exchangeRequest = pkg
             }
@@ -362,16 +378,15 @@ sendAwaitingPkgs = foldM go HashMap.empty
 makeAwaitings :: Member (Output Transmission) r
               => Settings
               -> Reg
-              -> Sem r [Package]
+              -> Sem r [Await]
 makeAwaitings setts reg =
-  fmap exchangeRequest
+  fmap exchangeToAwait
     <$> filterM go (HashMap.elems reg)
   where
     retry = s_operationRetry setts
-    seed = fmap exchangeRequest $ HashMap.elems reg
 
     go exc
-      | maxRetryReached retry (exchangeCount exc)
+      | maxRetryReached retry (exchangeRetry exc)
         = let badNews =
                 BadNews
                 { badNewsId = packageCorrelation (exchangeRequest exc)
