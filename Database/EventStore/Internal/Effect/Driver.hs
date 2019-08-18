@@ -34,23 +34,33 @@ data ConnectingState
   = Reconnecting
   | EndpointDiscovery
   | ConnectionEstablishing ConnectionId
-  deriving Show
+  deriving (Show, Eq, Ord)
 
 --------------------------------------------------------------------------------
-data Stage
-  = Connecting ConnectingState
-  -- | Connected ConnectionId
-  | Closed
-  deriving Show
+data StopReason
+  = OfflineError OfflineError
+  | OnlineError ConnectionId OnlineError
+
+--------------------------------------------------------------------------------
+data OfflineError
+  = ConnectionMaxAttemptReached Int
+
+--------------------------------------------------------------------------------
+data OnlineError
+
+--------------------------------------------------------------------------------
+data ConnectionError
+  = IdentificationFailure
 
 --------------------------------------------------------------------------------
 data Driver m a where
   Connect :: EndPoint -> Driver m ConnectionId
   ForceReconnect :: UUID -> NodeEndPoints -> Driver m ConnectionId
-  CloseConnection :: ConnectionId -> Driver m ()
   GenerateId :: Driver m UUID
   Discover :: Driver m ()
   GetElapsedTime :: Driver m NominalDiffTime
+  Stop :: StopReason -> Driver m ()
+  CloseConnection :: ConnectionId -> ConnectionError -> Driver m ()
 
 --------------------------------------------------------------------------------
 makeSem ''Driver

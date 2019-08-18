@@ -67,6 +67,25 @@ data Await =
   }
 
 --------------------------------------------------------------------------------
+data ConnectionAttempt =
+  ConnectionAttempt
+  { connectionAttemptRetry :: Int
+  , connectionAttemptStarted :: NominalDiffTime
+  }
+
+--------------------------------------------------------------------------------
+createConnectionAttempt :: Member Driver r => Sem r ConnectionAttempt
+createConnectionAttempt = do
+  started <- getElapsedTime
+  let att =
+        ConnectionAttempt
+        { connectionAttemptRetry = 0
+        , connectionAttemptStarted = started
+        }
+
+  pure att
+
+--------------------------------------------------------------------------------
 exchangeToAwait :: Exchange -> Await
 exchangeToAwait e =
   Await
@@ -90,7 +109,7 @@ data ConnectedStage
 --------------------------------------------------------------------------------
 data DriverState
   = Init
-  | Awaiting [Await] ConnectingState
+  | Awaiting [Await] ConnectionAttempt ConnectingState
   | Connected ConnectionId ConnectedStage
   | Closed
 
@@ -112,6 +131,7 @@ data Msg
   | ConnectionEstablished ConnectionId
   | PackageArrived ConnectionId Package
   | SendPackage Package
+  | Tick
 
 ----------------------------------------------------------------------------------
 process :: forall r. Members [Reader Settings, Input Msg, Output Transmission, Driver] r
@@ -133,17 +153,19 @@ react s SystemInit = discovery s
 react s (EstablishConnection ept) = establish s ept
 react s (ConnectionEstablished cid) = established s cid
 react s (PackageArrived connId pkg) = packageArrived s connId pkg
+react s Tick = tick s
 
 --------------------------------------------------------------------------------
 discovery :: Members '[Driver] r
           => DriverState
           -> Sem r DriverState
 discovery = \case
-  Init ->
-    discovery (Awaiting [] Reconnecting)
+  Init -> do
+    att <- createConnectionAttempt
+    discovery (Awaiting [] att Reconnecting)
 
-  Awaiting pkgs Reconnecting ->
-    Awaiting pkgs EndpointDiscovery <$ discover
+  Awaiting pkgs started Reconnecting ->
+    Awaiting pkgs started EndpointDiscovery <$ discover
 
   s -> pure s
 
@@ -152,8 +174,8 @@ establish :: Members '[Driver] r
           => DriverState
           -> EndPoint
           -> Sem r DriverState
-establish (Awaiting pkgs EndpointDiscovery) ept =
-  Awaiting pkgs . ConnectionEstablishing <$> connect ept
+establish (Awaiting pkgs started EndpointDiscovery) ept =
+  Awaiting pkgs started . ConnectionEstablishing <$> connect ept
 establish s _ = pure s
 
 --------------------------------------------------------------------------------
@@ -161,7 +183,7 @@ established :: Members '[Reader Settings, Driver, Output Transmission] r
             => DriverState
             -> ConnectionId
             -> Sem r DriverState
-established s@(Awaiting pkgs (ConnectionEstablishing known)) cid
+established s@(Awaiting pkgs _ (ConnectionEstablishing known)) cid
   | cid == known = do
     setts <- ask
     elapsed <- getElapsedTime
@@ -264,14 +286,7 @@ packageArrived s@(Connected known stage) connId pkg
                 case state of
                   Authentication
                     | cmd == authenticatedCmd || cmd == notAuthenticatedCmd
-                      -> do setts <- ask
-                            idPkg <- identifyClient setts
-                            elapsed <- getElapsedTime
-
-                            let uuid = packageCorrelation idPkg
-
-                            output (Send idPkg)
-                            pure $ Connected known (Confirming pkgs elapsed uuid Identification)
+                      -> switchToIdentification known pkgs
                     | otherwise -> pure s
 
                   Identification
@@ -319,12 +334,11 @@ packageArrived s@(Connected known stage) connId pkg
 
                             newCid <- forceReconnect correlation node
                             setts <- ask
-
-                            -- TODO - We should be better at figuring out what
-                            -- operation we should keep.
                             aws <- makeAwaitings setts reg
+                            att <- createConnectionAttempt
+
                             let newState =
-                                  Awaiting (exchangeToAwait exc : aws)
+                                  Awaiting (exchangeToAwait exc : aws) att
                                     (ConnectionEstablishing newCid)
 
                             pure newState
@@ -347,6 +361,105 @@ packageArrived s@(Connected known stage) connId pkg
 packageArrived s _ _ = ignored s
 
 --------------------------------------------------------------------------------
+tick :: forall r.  Members '[Reader Settings, Driver, Output Transmission] r
+     => DriverState
+     -> Sem r DriverState
+tick Init = pure Init
+tick Closed = pure Closed
+tick cur@(Awaiting aws att _) = do
+  setts <- ask
+  elapsed <- getElapsedTime
+
+  if elapsed - connectionAttemptStarted att >= s_reconnect_delay setts
+    then
+      case s_retry setts of
+        AtMost n
+          | connectionAttemptRetry att <= n -> reconnect att aws
+          | otherwise -> maxReconnectReached n
+        KeepRetrying -> reconnect att aws
+    else pure cur
+tick cur@(Connected cid state) = do
+  setts <- ask
+
+  case state of
+    Confirming aws started _ state -> do
+      elapsed <- getElapsedTime
+
+      if elapsed - started >= s_operationTimeout setts
+        then
+          case state of
+            Authentication ->
+              switchToIdentification cid aws
+            Identification ->
+              close cid (PendingConfirmation aws) IdentificationFailure
+        else
+          pure cur
+    Active _ -> do
+      undefined
+
+--------------------------------------------------------------------------------
+reconnect :: Members '[Driver] r
+          => ConnectionAttempt
+          -> [Await]
+          -> Sem r DriverState
+reconnect att aws = do
+  started <- getElapsedTime
+
+  let newAtt =
+        ConnectionAttempt
+        { connectionAttemptRetry = connectionAttemptRetry att + 1
+        , connectionAttemptStarted = started
+        }
+
+  discovery (Awaiting aws newAtt Reconnecting)
+
+--------------------------------------------------------------------------------
+maxReconnectReached :: Member Driver r => Int -> Sem r DriverState
+maxReconnectReached count = do
+  let reason =
+        ConnectionMaxAttemptReached count
+
+  stop (OfflineError reason)
+  pure Closed
+
+--------------------------------------------------------------------------------
+switchToIdentification :: Members '[Reader Settings, Driver, Output Transmission] r
+                       => ConnectionId
+                       -> [Await]
+                       -> Sem r DriverState
+switchToIdentification connId aws = do
+  setts <- ask
+  pkg <- identifyClient setts
+  elapsed <- getElapsedTime
+
+  let pkgId = packageCorrelation pkg
+
+  output (Send pkg)
+  pure $ Connected connId (Confirming aws elapsed pkgId Identification)
+
+--------------------------------------------------------------------------------
+data ClosingContext
+  = PendingConfirmation [Await]
+  | ConnectionWasActive Reg
+
+--------------------------------------------------------------------------------
+close :: Members '[Reader Settings, Driver] r
+      => ConnectionId
+      -> ClosingContext
+      -> ConnectionError
+      -> Sem r DriverState
+close cid ctx e = do
+  closeConnection cid e
+  case ctx of
+    PendingConfirmation aws -> do
+      att <- createConnectionAttempt
+      reconnect att aws
+    ConnectionWasActive reg -> do
+      -- TODO - Perform registry cleanup!
+      att <- createConnectionAttempt
+      reconnect att []
+
+--------------------------------------------------------------------------------
 ignored :: s -> Sem r s
 ignored = pure
 
@@ -356,10 +469,7 @@ sendAwaitingPkgs :: forall r. Members [Output Transmission, Driver] r
                  -> Sem r Reg
 sendAwaitingPkgs = foldM go HashMap.empty
   where
-    go :: Members [Output Transmission, Driver] r
-       => Reg
-       -> Await
-       -> Sem r Reg
+    go :: Reg -> Await -> Sem r Reg
     go reg a = do
       elapsed <- getElapsedTime
 
