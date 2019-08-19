@@ -102,9 +102,64 @@ data ConfirmationState
   | Identification
 
 --------------------------------------------------------------------------------
+data Registry =
+  Registry
+  { registryReg :: Reg
+  , registryLastCheck :: NominalDiffTime
+  }
+
+--------------------------------------------------------------------------------
+newRegistry :: Member Driver r => Sem r Registry
+newRegistry = Registry HashMap.empty <$> getElapsedTime
+
+--------------------------------------------------------------------------------
+retryMaxReached :: Retry -> Int -> Bool
+retryMaxReached (AtMost n) i = i > n
+retryMaxReached KeepRetrying _ = False
+
+--------------------------------------------------------------------------------
+checkAndRetry :: forall r. Member (Output Transmission) r
+              => Settings
+              -> NominalDiffTime
+              -> Registry
+              -> Sem r Registry
+checkAndRetry setts elapsed reg =
+  make <$> foldM go pendings (HashMap.toList pendings)
+  where
+    pendings = registryReg reg
+
+    make newReg =
+      Registry
+      { registryReg = newReg
+      , registryLastCheck = elapsed
+      }
+
+    go :: Reg -> (UUID, Exchange) -> Sem r Reg
+    go cur (key, exc)
+      | elapsed - exchangeStarted exc >= s_operationTimeout setts =
+        if retryMaxReached (s_operationRetry setts) (exchangeRetry exc)
+          then
+            let pkgId = packageCorrelation $ exchangeRequest exc
+                cmd = packageCmd $ exchangeRequest exc
+                next = HashMap.delete pkgId cur
+                badNews =
+                  BadNews
+                  { badNewsId = pkgId
+                    -- FIXME - We should use a different error type for
+                    -- Exchange. Those are lower level than operation
+                    -- after all.
+                  , badNewsError = Aborted
+                  } in
+
+            next <$ output (Recv $ Left badNews)
+          else pure cur
+      | otherwise =
+        pure cur
+
+--------------------------------------------------------------------------------
 data ConnectedStage
   = Confirming [Await] NominalDiffTime UUID ConfirmationState
-  | Active Reg
+  | Active Registry
 
 --------------------------------------------------------------------------------
 data DriverState
@@ -259,9 +314,11 @@ instance Functor (Blob a) where
   fmap f (Blob a b) = Blob a (f b)
 
 --------------------------------------------------------------------------------
-removeExchange :: UUID -> Reg -> (Maybe Exchange, Reg)
+removeExchange :: UUID -> Registry -> (Maybe Exchange, Registry)
 removeExchange key reg =
-  let Blob result newReg = HashMap.alterF go key reg in (result, newReg)
+  let Blob result newMap =
+        HashMap.alterF go key (registryReg reg) in
+        (result, reg { registryReg = newMap })
   where
     go Nothing  = Blob Nothing Nothing
     go (Just e) = Blob (Just e) Nothing
@@ -394,8 +451,12 @@ tick cur@(Connected cid state) = do
               close cid (PendingConfirmation aws) IdentificationFailure
         else
           pure cur
-    Active _ -> do
-      undefined
+    Active reg -> do
+      setts <- ask
+      elapsed <- getElapsedTime
+      if elapsed - registryLastCheck reg >= s_operationTimeout setts
+        then Connected cid . Active <$> checkAndRetry setts elapsed reg
+        else pure cur
 
 --------------------------------------------------------------------------------
 reconnect :: Members '[Driver] r
@@ -466,8 +527,10 @@ ignored = pure
 --------------------------------------------------------------------------------
 sendAwaitingPkgs :: forall r. Members [Output Transmission, Driver] r
                  => [Await]
-                 -> Sem r Reg
-sendAwaitingPkgs = foldM go HashMap.empty
+                 -> Sem r Registry
+sendAwaitingPkgs aws =
+  foldM go HashMap.empty aws >>= \reg ->
+    Registry reg <$> getElapsedTime
   where
     go :: Reg -> Await -> Sem r Reg
     go reg a = do
@@ -487,11 +550,11 @@ sendAwaitingPkgs = foldM go HashMap.empty
 --------------------------------------------------------------------------------
 makeAwaitings :: Member (Output Transmission) r
               => Settings
-              -> Reg
+              -> Registry
               -> Sem r [Await]
 makeAwaitings setts reg =
   fmap exchangeToAwait
-    <$> filterM go (HashMap.elems reg)
+    <$> filterM go (HashMap.elems $ registryReg reg)
   where
     retry = s_operationRetry setts
 
