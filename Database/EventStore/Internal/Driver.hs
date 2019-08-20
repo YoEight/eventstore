@@ -45,10 +45,18 @@ import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
+data TransmissionError
+  = ConnectionDropped
+  | MaxRetriesReached
+  | BadRequest (Maybe Text)
+  | AuthenticationNeeded
+  deriving (Eq, Show)
+
+--------------------------------------------------------------------------------
 data BadNews =
   BadNews
   { badNewsId :: UUID
-  , badNewsError :: OperationError
+  , badNewsError :: TransmissionError
   } deriving (Show)
 
 --------------------------------------------------------------------------------
@@ -145,10 +153,7 @@ checkAndRetry setts elapsed reg =
                 badNews =
                   BadNews
                   { badNewsId = pkgId
-                    -- FIXME - We should use a different error type for
-                    -- Exchange. Those are lower level than operation
-                    -- after all.
-                  , badNewsError = Aborted
+                  , badNewsError = MaxRetriesReached
                   } in
 
             next <$ output (Recv $ Left badNews)
@@ -363,7 +368,7 @@ packageArrived s@(Connected known stage) connId pkg
                             badNews =
                               BadNews
                               { badNewsId = correlation
-                              , badNewsError = ServerError reason
+                              , badNewsError = BadRequest reason
                               }
 
                         output $ Recv (Left badNews)
@@ -373,7 +378,7 @@ packageArrived s@(Connected known stage) connId pkg
                         let badNews =
                               BadNews
                               { badNewsId = correlation
-                              , badNewsError = NotAuthenticatedOp
+                              , badNewsError = AuthenticationNeeded
                               }
 
                         output $ Recv (Left badNews)
@@ -563,7 +568,7 @@ makeAwaitings setts reg =
         = let badNews =
                 BadNews
                 { badNewsId = packageCorrelation (exchangeRequest exc)
-                , badNewsError = Aborted
+                , badNewsError = MaxRetriesReached
                 } in
           False <$ output (Recv $ Left badNews)
 
