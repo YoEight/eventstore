@@ -16,7 +16,9 @@ module Database.EventStore.Internal.Driver where
 
 --------------------------------------------------------------------------------
 import Control.Monad (forever, when, foldM, filterM)
+import Control.Monad.Loops (iterateM_)
 import Data.ByteString (ByteString)
+import Data.Foldable (traverse_)
 import           Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
@@ -162,6 +164,22 @@ checkAndRetry setts elapsed reg =
         pure cur
 
 --------------------------------------------------------------------------------
+cleanup :: forall r. Member (Output Transmission) r
+        => Registry
+        -> Sem r ()
+cleanup = traverse_ go . registryReg
+  where
+    go :: Exchange -> Sem r ()
+    go exc =
+      let pkgId = packageCorrelation $ exchangeRequest exc
+          badNews =
+            BadNews
+            { badNewsId = pkgId
+            , badNewsError = ConnectionDropped
+            } in
+      output (Recv $ Left badNews)
+
+--------------------------------------------------------------------------------
 data ConnectedStage
   = Confirming [Await] NominalDiffTime UUID ConfirmationState
   | Active Registry
@@ -196,13 +214,12 @@ data Msg
 ----------------------------------------------------------------------------------
 process :: forall r. Members [Reader Settings, Input Msg, Output Transmission, Driver] r
         => Sem r ()
-process = go Init
+process = iterateM_ go Init
   where
-    go :: Members [Reader Settings, Input Msg, Output Transmission, Driver] r
-       => DriverState
-       -> Sem r ()
-    go cur = do msg <- input
-                go =<< react cur msg
+    go :: DriverState -> Sem r DriverState
+    go cur =
+      do msg <- input
+         react cur msg
 
 --------------------------------------------------------------------------------
 react :: Members '[Reader Settings, Output Transmission, Driver] r
@@ -506,10 +523,10 @@ switchToIdentification connId aws = do
 --------------------------------------------------------------------------------
 data ClosingContext
   = PendingConfirmation [Await]
-  | ConnectionWasActive Reg
+  | ConnectionWasActive Registry
 
 --------------------------------------------------------------------------------
-close :: Members '[Reader Settings, Driver] r
+close :: Members '[Reader Settings, Output Transmission, Driver] r
       => ConnectionId
       -> ClosingContext
       -> ConnectionError
@@ -521,7 +538,7 @@ close cid ctx e = do
       att <- createConnectionAttempt
       reconnect att aws
     ConnectionWasActive reg -> do
-      -- TODO - Perform registry cleanup!
+      cleanup reg
       att <- createConnectionAttempt
       reconnect att []
 

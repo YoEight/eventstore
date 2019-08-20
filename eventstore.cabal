@@ -113,6 +113,7 @@ library
     , lifted-base
     , monad-control
     , monad-logger >=0.3.20
+    , monad-loops
     , mono-traversable ==1.*
     , mtl
     , polysemy >=1.0
@@ -166,6 +167,7 @@ test-suite eventstore-tests
     , lifted-async
     , lifted-base
     , monad-control
+    , monad-loops
     , mono-traversable ==1.*
     , polysemy >=1.0
     , polysemy-plugin
