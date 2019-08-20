@@ -62,6 +62,40 @@ data BadNews =
   } deriving (Show)
 
 --------------------------------------------------------------------------------
+makeBadNews :: TransmissionError -> Exchange -> BadNews
+makeBadNews e exc =
+  BadNews
+  { badNewsId = packageCorrelation $ exchangeRequest exc
+  , badNewsError = e
+  }
+
+--------------------------------------------------------------------------------
+reportBadNews :: Member (Output Transmission) r
+              => TransmissionError
+              -> Exchange
+              -> Sem r ()
+reportBadNews e =
+  output . Recv . Left . makeBadNews e
+
+--------------------------------------------------------------------------------
+reportResponse :: Member (Output Transmission) r
+               => Package
+               -> Sem r ()
+reportResponse = output . Recv . Right
+
+--------------------------------------------------------------------------------
+sendPkg :: Member (Output Transmission) r
+        => Package
+        -> Sem r ()
+sendPkg = output . Send
+
+--------------------------------------------------------------------------------
+ignorePkg :: Member (Output Transmission) r
+          => Package
+          -> Sem r ()
+ignorePkg = output . Ignored
+
+--------------------------------------------------------------------------------
 data Exchange =
   Exchange
   { exchangeRetry :: Int
@@ -150,15 +184,9 @@ checkAndRetry setts elapsed reg =
         if retryMaxReached (s_operationRetry setts) (exchangeRetry exc)
           then
             let pkgId = packageCorrelation $ exchangeRequest exc
-                cmd = packageCmd $ exchangeRequest exc
-                next = HashMap.delete pkgId cur
-                badNews =
-                  BadNews
-                  { badNewsId = pkgId
-                  , badNewsError = MaxRetriesReached
-                  } in
+                next = HashMap.delete pkgId cur in
 
-            next <$ output (Recv $ Left badNews)
+            next <$ reportBadNews MaxRetriesReached exc
           else pure cur
       | otherwise =
         pure cur
@@ -167,17 +195,7 @@ checkAndRetry setts elapsed reg =
 cleanup :: forall r. Member (Output Transmission) r
         => Registry
         -> Sem r ()
-cleanup = traverse_ go . registryReg
-  where
-    go :: Exchange -> Sem r ()
-    go exc =
-      let pkgId = packageCorrelation $ exchangeRequest exc
-          badNews =
-            BadNews
-            { badNewsId = pkgId
-            , badNewsError = ConnectionDropped
-            } in
-      output (Recv $ Left badNews)
+cleanup = traverse_ (reportBadNews ConnectionDropped) . registryReg
 
 --------------------------------------------------------------------------------
 data ConnectedStage
@@ -271,7 +289,7 @@ established s@(Awaiting pkgs _ (ConnectionEstablishing known)) cid
 
         let uuid = packageCorrelation pkg
 
-        output (Send pkg)
+        sendPkg pkg
         pure $ Connected cid (Confirming pkgs elapsed uuid Authentication)
 
       Nothing -> do
@@ -279,7 +297,7 @@ established s@(Awaiting pkgs _ (ConnectionEstablishing known)) cid
 
         let uuid = packageCorrelation pkg
 
-        output (Send pkg)
+        sendPkg pkg
         pure $ Connected cid (Confirming pkgs elapsed uuid Identification)
 
   | otherwise = pure s
@@ -356,7 +374,7 @@ packageArrived s@(Connected known stage) connId pkg
   | otherwise =
     case () of
       _ | cmd == heartbeatResponseCmd -> pure s
-        | cmd == heartbeatRequestCmd -> s <$ output (Send heartbeatResponse)
+        | cmd == heartbeatRequestCmd -> s <$ sendPkg heartbeatResponse
         | otherwise ->
           case stage of
             Confirming pkgs started pkgId state
@@ -382,23 +400,12 @@ packageArrived s@(Connected known stage) connId pkg
                   case () of
                     _ | cmd == badRequestCmd -> do
                         let reason = packageDataAsText pkg
-                            badNews =
-                              BadNews
-                              { badNewsId = correlation
-                              , badNewsError = BadRequest reason
-                              }
 
-                        output $ Recv (Left badNews)
+                        reportBadNews (BadRequest reason) exc
                         pure (Connected known (Active newReg))
 
                       | cmd == notAuthenticatedCmd -> do
-                        let badNews =
-                              BadNews
-                              { badNewsId = correlation
-                              , badNewsError = AuthenticationNeeded
-                              }
-
-                        output $ Recv (Left badNews)
+                        reportBadNews AuthenticationNeeded exc
                         pure (Connected known (Active newReg))
 
                       | cmd == notHandledCmd -> do
@@ -427,9 +434,8 @@ packageArrived s@(Connected known stage) connId pkg
                             output (Send $ exchangeRequest exc)
                             pure s
 
-                      | otherwise -> do
-                        output (Recv $ Right pkg)
-                        pure $ Connected known (Active newReg)
+                      | otherwise ->
+                        Connected known (Active newReg) <$ reportResponse pkg
 
   where
     cmd = packageCmd pkg
@@ -451,11 +457,9 @@ tick cur@(Awaiting aws att _) = do
 
   if elapsed - connectionAttemptStarted att >= s_reconnect_delay setts
     then
-      case s_retry setts of
-        AtMost n
-          | connectionAttemptRetry att <= n -> reconnect att aws
-          | otherwise -> maxReconnectReached n
-        KeepRetrying -> reconnect att aws
+      if maxRetryReached (s_retry setts) (connectionAttemptRetry att)
+        then maxReconnectReached
+        else reconnect att aws
     else pure cur
 tick cur@(Connected cid state) = do
   setts <- ask
@@ -474,7 +478,6 @@ tick cur@(Connected cid state) = do
         else
           pure cur
     Active reg -> do
-      setts <- ask
       elapsed <- getElapsedTime
       if elapsed - registryLastCheck reg >= s_operationTimeout setts
         then Connected cid . Active <$> checkAndRetry setts elapsed reg
@@ -497,13 +500,8 @@ reconnect att aws = do
   discovery (Awaiting aws newAtt Reconnecting)
 
 --------------------------------------------------------------------------------
-maxReconnectReached :: Member Driver r => Int -> Sem r DriverState
-maxReconnectReached count = do
-  let reason =
-        ConnectionMaxAttemptReached count
-
-  stop (OfflineError reason)
-  pure Closed
+maxReconnectReached :: Member Driver r => Sem r DriverState
+maxReconnectReached = Closed <$ stop (OfflineError ConnectionMaxAttemptReached)
 
 --------------------------------------------------------------------------------
 switchToIdentification :: Members '[Reader Settings, Driver, Output Transmission] r
@@ -517,8 +515,8 @@ switchToIdentification connId aws = do
 
   let pkgId = packageCorrelation pkg
 
-  output (Send pkg)
-  pure $ Connected connId (Confirming aws elapsed pkgId Identification)
+  Connected connId (Confirming aws elapsed pkgId Identification)
+    <$ sendPkg pkg
 
 --------------------------------------------------------------------------------
 data ClosingContext
@@ -581,14 +579,8 @@ makeAwaitings setts reg =
     retry = s_operationRetry setts
 
     go exc
-      | maxRetryReached retry (exchangeRetry exc)
-        = let badNews =
-                BadNews
-                { badNewsId = packageCorrelation (exchangeRequest exc)
-                , badNewsError = MaxRetriesReached
-                } in
-          False <$ output (Recv $ Left badNews)
-
+      | maxRetryReached retry (exchangeRetry exc) =
+        False <$ reportBadNews MaxRetriesReached exc
       | otherwise = pure True
 
 --------------------------------------------------------------------------------

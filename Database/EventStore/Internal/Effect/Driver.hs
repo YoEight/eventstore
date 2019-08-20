@@ -43,7 +43,7 @@ data StopReason
 
 --------------------------------------------------------------------------------
 data OfflineError
-  = ConnectionMaxAttemptReached Int
+  = ConnectionMaxAttemptReached
 
 --------------------------------------------------------------------------------
 data OnlineError
