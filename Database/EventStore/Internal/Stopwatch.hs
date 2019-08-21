@@ -16,6 +16,9 @@ module Database.EventStore.Internal.Stopwatch
   ) where
 
 --------------------------------------------------------------------------------
+import qualified Data.IORef as IORef
+
+--------------------------------------------------------------------------------
 import Data.Time
 
 --------------------------------------------------------------------------------
@@ -38,17 +41,16 @@ update now (Internal before acc) = Internal now acc'
     acc' = acc + diffUTCTime now before
 
 --------------------------------------------------------------------------------
-newtype Stopwatch = Stopwatch (MVar Internal)
+newtype Stopwatch = Stopwatch (IORef.IORef Internal)
 
 --------------------------------------------------------------------------------
 newStopwatch :: MonadBase IO m => m Stopwatch
-newStopwatch =
-  fmap Stopwatch . newMVar . initInternal =<< liftBase getCurrentTime
+newStopwatch = liftBase $
+  fmap Stopwatch . IORef.newIORef . initInternal =<< getCurrentTime
 
 --------------------------------------------------------------------------------
-stopwatchElapsed :: MonadBaseControl IO m => Stopwatch -> m NominalDiffTime
-stopwatchElapsed (Stopwatch var) =
-  modifyMVar var $ \prev -> do
-    now <- liftBase getCurrentTime
-    let next = update now prev
-    return (next, _acc next)
+stopwatchElapsed :: MonadBase IO m => Stopwatch -> m NominalDiffTime
+stopwatchElapsed (Stopwatch ref) = liftBase $ do
+  now <- getCurrentTime
+  IORef.atomicModifyIORef ref $ \prev ->
+    let next = update now prev in (next, _acc next)

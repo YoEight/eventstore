@@ -35,6 +35,7 @@ library
   other-modules:
       Database.EventStore.Internal
       Database.EventStore.Internal.Callback
+      Database.EventStore.Internal.Combinator.Driver
       Database.EventStore.Internal.Command
       Database.EventStore.Internal.Communication
       Database.EventStore.Internal.Connection
