@@ -49,6 +49,7 @@ import Database.EventStore.Internal.Types
 --------------------------------------------------------------------------------
 data TransmissionError
   = ConnectionDropped
+  | ConnectionClosed
   | MaxRetriesReached
   | BadRequest (Maybe Text)
   | AuthenticationNeeded
@@ -62,10 +63,10 @@ data BadNews =
   } deriving (Show)
 
 --------------------------------------------------------------------------------
-makeBadNews :: TransmissionError -> Exchange -> BadNews
-makeBadNews e exc =
+makeBadNews :: TransmissionError -> Package -> BadNews
+makeBadNews e pkg =
   BadNews
-  { badNewsId = packageCorrelation $ exchangeRequest exc
+  { badNewsId = packageCorrelation pkg
   , badNewsError = e
   }
 
@@ -75,6 +76,14 @@ reportBadNews :: Member (Output Transmission) r
               -> Exchange
               -> Sem r ()
 reportBadNews e =
+  output . Recv . Left . makeBadNews e . exchangeRequest
+
+--------------------------------------------------------------------------------
+reportBadNews_ :: Member (Output Transmission) r
+               => TransmissionError
+               -> Package
+               -> Sem r ()
+reportBadNews_ e =
   output . Recv . Left . makeBadNews e
 
 --------------------------------------------------------------------------------
@@ -99,9 +108,17 @@ ignorePkg = output . Ignored
 data Exchange =
   Exchange
   { exchangeRetry :: Int
-  , exchangeStarted :: NominalDiffTime
   , exchangeRequest :: Package
+  , exchangeStarted :: NominalDiffTime
   }
+
+--------------------------------------------------------------------------------
+exchangePkgId :: Exchange -> UUID
+exchangePkgId = packageCorrelation . exchangeRequest
+
+--------------------------------------------------------------------------------
+makeExchange :: Member Driver r => Package -> Sem r Exchange
+makeExchange pkg = Exchange 0 pkg <$> getElapsedTime
 
 --------------------------------------------------------------------------------
 data Await =
@@ -138,6 +155,14 @@ exchangeToAwait e =
   }
 
 --------------------------------------------------------------------------------
+pkgToAwait :: Package -> Await
+pkgToAwait pkg =
+  Await
+  { awaitRetry = 0
+  , awaitPackage = pkg
+  }
+
+--------------------------------------------------------------------------------
 type Reg = HashMap UUID Exchange
 
 --------------------------------------------------------------------------------
@@ -160,6 +185,12 @@ newRegistry = Registry HashMap.empty <$> getElapsedTime
 retryMaxReached :: Retry -> Int -> Bool
 retryMaxReached (AtMost n) i = i > n
 retryMaxReached KeepRetrying _ = False
+
+--------------------------------------------------------------------------------
+registerExchange :: Exchange -> Registry -> Registry
+registerExchange exc reg =
+  let newMap = HashMap.insert (exchangePkgId exc) exc $ registryReg reg in
+  reg { registryReg = newMap }
 
 --------------------------------------------------------------------------------
 checkAndRetry :: forall r. Member (Output Transmission) r
@@ -248,6 +279,7 @@ react s SystemInit = discovery s
 react s (EstablishConnection ept) = establish s ept
 react s (ConnectionEstablished cid) = established s cid
 react s (PackageArrived connId pkg) = packageArrived s connId pkg
+react s (SendPackage pkg) = sendPackage s pkg
 react s Tick = tick s
 
 --------------------------------------------------------------------------------
@@ -444,6 +476,35 @@ packageArrived s@(Connected known stage) connId pkg
       heartbeatResponsePackage $ packageCorrelation pkg
 
 packageArrived s _ _ = ignored s
+
+--------------------------------------------------------------------------------
+sendPackage :: Members '[Reader Settings, Driver, Output Transmission] r
+            => DriverState
+            -> Package
+            -> Sem r DriverState
+sendPackage cur pkg =
+  case cur of
+    Init -> do
+      next <- react Init SystemInit
+      sendPackage next pkg
+
+    Awaiting aws att state ->
+      let aw = pkgToAwait pkg in
+      pure (Awaiting (aw:aws) att state)
+
+    Connected cid stage ->
+      case stage of
+        Confirming aws started pkgId state ->
+          let aw = pkgToAwait pkg in
+          pure (Connected cid $ Confirming (aw:aws) started pkgId state)
+
+        Active reg -> do
+          exc <- makeExchange pkg
+          Connected cid (Active (registerExchange exc reg))
+            <$ sendPkg pkg
+
+    Closed ->
+      cur <$ reportBadNews_ ConnectionClosed pkg
 
 --------------------------------------------------------------------------------
 tick :: forall r.  Members '[Reader Settings, Driver, Output Transmission] r
