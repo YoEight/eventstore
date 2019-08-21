@@ -462,9 +462,7 @@ packageArrived s@(Connected known stage) connId pkg
                             pure newState
 
                           -- In this case with just retry the operation.
-                          _ -> do
-                            output (Send $ exchangeRequest exc)
-                            pure s
+                          _ -> s <$ sendPkg (exchangeRequest exc)
 
                       | otherwise ->
                         Connected known (Active newReg) <$ reportResponse pkg
