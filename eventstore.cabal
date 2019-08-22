@@ -40,6 +40,7 @@ library
       Database.EventStore.Internal.Communication
       Database.EventStore.Internal.Connection
       Database.EventStore.Internal.ConnectionManager
+      Database.EventStore.Internal.ConnectionNew
       Database.EventStore.Internal.Control
       Database.EventStore.Internal.Discovery
       Database.EventStore.Internal.Driver

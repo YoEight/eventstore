@@ -19,6 +19,7 @@ import Polysemy
 import Polysemy.Internal.Combinators
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.ConnectionNew
 import Database.EventStore.Internal.Effect.Driver
 import Database.EventStore.Internal.Stopwatch
 
@@ -36,3 +37,5 @@ runDriver ref = interpret $ \case
   GenerateId -> embed nextRandom
 
   GetElapsedTime -> embed (stopwatchElapsed $ refStopwatch ref)
+
+  Connect edp -> undefined
