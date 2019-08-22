@@ -14,6 +14,7 @@
 module Database.EventStore.Internal.ConnectionNew
   ( ConnectionBuilder(..)
   , Connection(..)
+  , SubmitConnectionEvent(..)
   , connectionBuilder
   ) where
 
