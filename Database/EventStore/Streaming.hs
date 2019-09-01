@@ -1,4 +1,6 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE GADTs              #-}
+{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE StandaloneDeriving #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module    :  Database.EventStore.Streaming
@@ -34,11 +36,13 @@ import qualified Streaming.Prelude as Streaming
 import qualified Database.EventStore as ES
 
 --------------------------------------------------------------------------------
-data ReadError t
-    = StreamDeleted !ES.StreamName
-    | ReadError !(Maybe Text)
-    | AccessDenied !(ES.StreamId t)
-    deriving Show
+data ReadError t where
+    StreamDeleted :: ES.StreamName -> ReadError ES.EventNumber
+    ReadError :: Maybe Text -> ReadError t
+    AccessDenied :: ES.StreamId t -> ReadError t
+
+--------------------------------------------------------------------------------
+deriving instance Show (ReadError t)
 
 --------------------------------------------------------------------------------
 instance (Show t, Typeable t) => Exception (ReadError t)
