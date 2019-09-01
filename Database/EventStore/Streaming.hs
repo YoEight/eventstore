@@ -13,9 +13,14 @@
 --------------------------------------------------------------------------------
 module Database.EventStore.Streaming
     ( ReadError(..)
+    , Fetch(..)
+    , ReadResultHandler(..)
     , readThroughForward
     , readThroughBackward
     , throwOnError
+    , defaultReadResultHandler
+    , onRegularStream
+    , readThrough
     ) where
 
 --------------------------------------------------------------------------------
@@ -51,18 +56,33 @@ instance (Show t, Typeable t) => Exception (ReadError t)
 data Fetch t = FetchError !(ReadError t) | Fetch !(ES.Slice t)
 
 --------------------------------------------------------------------------------
-toFetch :: ES.ReadResult t (ES.Slice t) -> Fetch t
-toFetch ES.ReadNoStream          = Fetch ES.emptySlice
-toFetch ES.ReadNotModified       = Fetch ES.emptySlice
-toFetch (ES.ReadStreamDeleted n) = FetchError (StreamDeleted n)
-toFetch (ES.ReadError e)         = FetchError (ReadError e)
-toFetch (ES.ReadAccessDenied n)  = FetchError (AccessDenied n)
-toFetch (ES.ReadSuccess s)       = Fetch s
+newtype ReadResultHandler =
+  ReadResultHandler
+  { runReadResultHandler :: forall t. ES.StreamId t -> ES.BatchResult t -> Fetch t }
 
 --------------------------------------------------------------------------------
-handleBatchResult :: ES.StreamId t -> ES.BatchResult t -> Fetch t
-handleBatchResult ES.StreamName{} = toFetch
-handleBatchResult ES.All          = Fetch
+defaultReadResultHandler :: ReadResultHandler
+defaultReadResultHandler = ReadResultHandler go
+  where
+    go :: ES.StreamId t -> ES.BatchResult t -> Fetch t
+    go ES.StreamName{} = toFetch
+    go ES.All          = Fetch
+
+    toFetch ES.ReadNoStream          = Fetch ES.emptySlice
+    toFetch ES.ReadNotModified       = Fetch ES.emptySlice
+    toFetch (ES.ReadStreamDeleted n) = FetchError (StreamDeleted n)
+    toFetch (ES.ReadError e)         = FetchError (ReadError e)
+    toFetch (ES.ReadAccessDenied n)  = FetchError (AccessDenied n)
+    toFetch (ES.ReadSuccess s)       = Fetch s
+
+--------------------------------------------------------------------------------
+onRegularStream :: (ES.ReadResult ES.EventNumber (ES.Slice ES.EventNumber) -> Fetch ES.EventNumber)
+                -> ReadResultHandler
+onRegularStream callback = ReadResultHandler go
+  where
+    go :: ES.StreamId t -> ES.BatchResult t -> Fetch t
+    go ES.StreamName{} = callback
+    go ES.All          = Fetch
 
 --------------------------------------------------------------------------------
 data State t = Need t | Fetched ![ES.ResolvedEvent] !(Maybe t)
@@ -97,7 +117,7 @@ readThroughForward :: ES.Connection
                    -> Maybe Int32
                    -> Maybe ES.Credentials
                    -> Stream (Of ES.ResolvedEvent) (ExceptT (ReadError t) IO) ()
-readThroughForward conn = readThrough conn ES.Forward
+readThroughForward conn = readThrough conn defaultReadResultHandler ES.Forward
 
 --------------------------------------------------------------------------------
 -- | Returns an iterator able to consume a stream entirely. When reading backward,
@@ -109,7 +129,7 @@ readThroughBackward :: ES.Connection
                     -> Maybe Int32
                     -> Maybe ES.Credentials
                     -> Stream (Of ES.ResolvedEvent) (ExceptT (ReadError t) IO) ()
-readThroughBackward conn = readThrough conn ES.Backward
+readThroughBackward conn = readThrough conn defaultReadResultHandler ES.Backward
 
 --------------------------------------------------------------------------------
 -- | Throws an exception in case 'ExceptT' is a 'Left'.
@@ -124,7 +144,9 @@ throwOnError = hoist go
             Right a -> pure a
 
 --------------------------------------------------------------------------------
+-- | Returns an iterator able to consume a stream entirely.
 readThrough :: ES.Connection
+            -> ReadResultHandler
             -> ES.ReadDirection
             -> ES.StreamId t
             -> ES.ResolveLink
@@ -132,35 +154,37 @@ readThrough :: ES.Connection
             -> Maybe Int32
             -> Maybe ES.Credentials
             -> Stream (Of ES.ResolvedEvent) (ExceptT (ReadError t) IO) ()
-readThrough conn dir streamId lnk from sizMay cred = streaming iteratee from
+readThrough conn handler dir streamId lnk from sizMay cred = streaming iteratee from
   where
     batchSize = fromMaybe 500 sizMay
 
     iteratee =
         case dir of
-            ES.Forward  -> readForward conn streamId batchSize lnk cred
-            ES.Backward -> readBackward conn streamId batchSize lnk cred
+            ES.Forward  -> readForward conn handler streamId batchSize lnk cred
+            ES.Backward -> readBackward conn handler streamId batchSize lnk cred
 
 --------------------------------------------------------------------------------
 readForward :: ES.Connection
+            -> ReadResultHandler
             -> ES.StreamId t
             -> Int32
             -> ES.ResolveLink
             -> Maybe ES.Credentials
             -> t
             -> IO (Fetch t)
-readForward conn streamId siz lnk creds start =
-    fmap (handleBatchResult streamId) . wait =<<
+readForward conn handler streamId siz lnk creds start =
+    fmap (runReadResultHandler handler streamId) . wait =<<
         ES.readEventsForward conn streamId start siz lnk creds
 
 --------------------------------------------------------------------------------
 readBackward :: ES.Connection
+             -> ReadResultHandler
              -> ES.StreamId t
              -> Int32
              -> ES.ResolveLink
              -> Maybe ES.Credentials
              -> t
              -> IO (Fetch t)
-readBackward conn streamId siz lnk creds start =
-    fmap (handleBatchResult streamId) . wait =<<
+readBackward conn handler streamId siz lnk creds start =
+    fmap (runReadResultHandler handler streamId) . wait =<<
         ES.readEventsBackward conn streamId start siz lnk creds

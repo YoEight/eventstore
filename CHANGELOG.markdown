@@ -1,3 +1,8 @@
+1.4.0
+-----
+* Better encoding of streaming interface ReadError.
+* Expose more internal functions of the streaming interface.
+
 1.3.0
 -----
 * Discard `machines` dependency.
