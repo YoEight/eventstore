@@ -45,6 +45,7 @@ data ReadError t where
     StreamDeleted :: ES.StreamName -> ReadError ES.EventNumber
     ReadError :: Maybe Text -> ReadError t
     AccessDenied :: ES.StreamId t -> ReadError t
+    NoStream :: ReadError ES.EventNumber
 
 --------------------------------------------------------------------------------
 deriving instance Show (ReadError t)
