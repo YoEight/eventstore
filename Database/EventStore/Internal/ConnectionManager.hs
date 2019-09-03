@@ -65,6 +65,18 @@ data ConnectingState
   deriving Show
 
 --------------------------------------------------------------------------------
+atLeastEstablishingState :: Stage -> Bool
+atLeastEstablishingState = \case
+  Init -> False
+  Connected{} -> True
+  Closed -> True
+  Connecting a s ->
+    case s of
+      Reconnecting -> False
+      EndpointDiscovery -> False
+      _ -> True
+
+--------------------------------------------------------------------------------
 data Attempts =
   Attempts { attemptCount     :: !Int
            , attemptLastStart :: !NominalDiffTime
@@ -419,9 +431,13 @@ onTick self@Internal{..} _ = do
         Operation.check _opMgr
         atomicWriteIORef _lastCheck elapsed
 
-      manageHeartbeats self
-
     _ -> return ()
+
+  -- FIXME - This `readIORef` call can be merged into the previous one.
+  -- Done in 2019's refactoring code.
+  stage <- readIORef _stage
+  when (atLeastEstablishingState stage) $
+    manageHeartbeats self
   where
     onGoingConnection (Connecting att Reconnecting)             = Just att
     onGoingConnection (Connecting att ConnectionEstablishing{}) = Just att
