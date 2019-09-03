@@ -2,6 +2,7 @@
 -----
 * Better encoding of streaming interface ReadError.
 * Expose more internal functions of the streaming interface.
+* Reset heartbeat tracking on force reconnect request.
 
 1.3.0
 -----

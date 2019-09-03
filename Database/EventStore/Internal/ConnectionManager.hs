@@ -366,6 +366,10 @@ forceReconnect self@Internal{..} node = do
     monitorIncrForceReconnect
     closeTcpConnection self (ForceReconnect ept) conn
     att <- freshAttempt _stopwatch
+
+    -- We update the last pkg number to nullify the current heartbeat tracking.
+    atomicModifyIORef' _lastPkgNum $ \cur -> (cur + 1, ())
+
     atomicWriteIORef _stage (Connecting att EndpointDiscovery)
     $logInfo [i|#{conn}: going to reconnect to #{ept}.|]
     establish self ept
