@@ -465,7 +465,7 @@ manageHeartbeats self@Internal{..} = traverse_ go =<< lookupConnection self
       setts   <- getSettings
 
       let interval    = s_heartbeatInterval setts
-          timeout     = s_heartbeatInterval setts
+          timeout     = s_heartbeatTimeout setts
           initTracker = tracker
                         { _heartbeatStage = Interval
                         , _startedSince   = elapsed
@@ -497,7 +497,14 @@ manageHeartbeats self@Internal{..} = traverse_ go =<< lookupConnection self
 
 --------------------------------------------------------------------------------
 onArrived :: Internal -> PackageArrived -> EventStore ()
-onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) =
+onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
+  -- FIXME - We can merge those two `readIORef` calls into one.
+  -- It's done on 2019's refactoring.
+  cur <- readIORef _stage
+  unless (closedOrInit cur) $
+    incrPackageNumber self
+  -- /FIXME
+
   readIORef _stage >>= \case
     (onAuthentication -> Just att) -> do
       when (packageCmd == notAuthenticatedCmd) $
@@ -510,7 +517,6 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) =
 
     (runningConnection -> True) -> do
       $logDebug [i|Package received:  #{pkg}.|]
-      incrPackageNumber self
       handlePackage
 
     _ -> $logDebug [i|Package IGNORED: #{pkg}.|]
@@ -545,6 +551,11 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) =
             case decision of
               Operation.Handled        -> return ()
               Operation.Reconnect node -> forceReconnect self node
+
+    closedOrInit = \case
+      Init -> True
+      Closed -> True
+      _ -> False
 
 --------------------------------------------------------------------------------
 isSameConnection :: Internal -> Connection -> EventStore Bool

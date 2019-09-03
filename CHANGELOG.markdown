@@ -2,7 +2,9 @@
 -----
 * Better encoding of streaming interface ReadError.
 * Expose more internal functions of the streaming interface.
-* Reset heartbeat tracking on force reconnect request.
+* Internal: Reset heartbeat tracking on force reconnect request.
+* Bug fix: Increment package number unless connection is init or closed (prevent false heartbeat timeout).
+* Bug fix: Was also using `s_heartbeatInterval` value for `s_heartbeatTimeout` causing false heartbeat timeout exceptions.
 
 1.3.0
 -----
