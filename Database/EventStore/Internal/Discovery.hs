@@ -361,8 +361,7 @@ gossipCandidatesFromOldGossip fend_m oldGossip =
         case fend_m of
             Nothing   -> oldGossip
             Just fend -> [ c | c <- oldGossip
-                             , _externalTcpPort c == endPointPort fend
-                             , _externalTcpIp c   == endPointIp fend
+                             , EndPoint (_externalTcpIp c) (_externalTcpPort c) /= fend
                              ]
 
 --------------------------------------------------------------------------------

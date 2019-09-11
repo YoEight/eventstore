@@ -5,6 +5,7 @@
 * Internal: Reset heartbeat tracking on force reconnect request.
 * Bug fix: Increment package number unless connection is init or closed (prevent false heartbeat timeout).
 * Bug fix: Was also using `s_heartbeatInterval` value for `s_heartbeatTimeout` causing false heartbeat timeout exceptions.
+* Bug fix: Stop trying to reconnect to the most recent node that failed (cluster connection mode).
 
 1.3.0
 -----
