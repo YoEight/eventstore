@@ -4,13 +4,16 @@ on: [push]
 
 jobs:
   build:
-   
+
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v1
     - name: Install dependencies
-      run: cabal install --only-dependencies --enable-tests
+      run: |
+        cabal --version
+        cabal update
+        cabal install --only-dependencies --enable-tests
     - name: Build
       run: |
         cabal configure --enable-tests
