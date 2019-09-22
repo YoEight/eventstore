@@ -577,9 +577,14 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
 isSameConnection :: Internal -> Connection -> EventStore Bool
 isSameConnection Internal{..} conn = go <$> readIORef _stage
   where
-    go (Connected known)                             = known == conn
-    go (Connecting _ (ConnectionEstablishing known)) = known == conn
-    go _                                             = False
+    go (Connected known) = known == conn
+    go (Connecting _ state) =
+      case state of
+        ConnectionEstablishing known -> known == conn
+        Authentication _ _ known -> known == conn
+        Identification _ _ known -> known == conn
+        _ -> False
+    go _ = False
 
 --------------------------------------------------------------------------------
 onConnectionError :: Internal -> ConnectionError -> EventStore ()
@@ -624,9 +629,14 @@ lookupConnection Internal{..} = lookingUpConnection _stage
 lookingUpConnection :: IORef Stage -> EventStore (Maybe Connection)
 lookingUpConnection ref = go <$> readIORef ref
   where
-    go (Connected conn)                             = Just conn
-    go (Connecting _ (ConnectionEstablishing conn)) = Just conn
-    go _                                            = Nothing
+    go (Connected conn) = Just conn
+    go (Connecting _ state) =
+      case state of
+        ConnectionEstablishing conn -> Just conn
+        Authentication _ _ conn -> Just conn
+        Identification _ _ conn -> Just conn
+        _ -> Nothing
+    go _ = Nothing
 
 --------------------------------------------------------------------------------
 lookingUpConnectionWhenConnected :: IORef Stage -> EventStore (Maybe Connection)
