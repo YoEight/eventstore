@@ -47,10 +47,30 @@ newtype PackageId = PackageId UUID deriving (Show, Ord, Eq, Hashable)
 newtype ConnectionId = ConnectionId UUID deriving (Show, Ord, Eq, Hashable)
 
 --------------------------------------------------------------------------------
-data ConnectingState
+data Connection m =
+  Connection
+  { connectionId :: ConnectionId
+  , enqueuePackage :: Package -> m ()
+  , closeConnection :: ConnectionError -> m ()
+  }
+
+--------------------------------------------------------------------------------
+instance Eq (Connection m) where
+  a == b = connectionId a == connectionId b
+
+--------------------------------------------------------------------------------
+instance Ord (Connection m) where
+  compare a b = compare (connectionId a) (connectionId b)
+
+--------------------------------------------------------------------------------
+instance Show (Connection m) where
+  show a = show (connectionId a)
+
+--------------------------------------------------------------------------------
+data ConnectingState m
   = Reconnecting
   | EndpointDiscovery
-  | ConnectionEstablishing ConnectionId
+  | ConnectionEstablishing (Connection m)
   deriving (Show, Eq, Ord)
 
 --------------------------------------------------------------------------------
@@ -72,13 +92,12 @@ data ConnectionError
 --------------------------------------------------------------------------------
 data Driver m =
   Driver
-  { connect :: EndPoint -> m ConnectionId
-  , forceReconnect :: UUID -> NodeEndPoints -> m ConnectionId
+  { connect :: EndPoint -> m (Connection m)
+  , forceReconnect :: UUID -> NodeEndPoints -> m (Connection m)
   , generateId :: m UUID
   , discover :: m ()
   , getElapsedTime :: m NominalDiffTime
   , stop :: StopReason -> m ()
-  , closeConnection :: ConnectionId -> ConnectionError -> m ()
   , getSettings :: m Settings
   , output :: Transmission -> m ()
   }
@@ -128,8 +147,8 @@ reportResponse :: Driver m -> Package -> m ()
 reportResponse self = output self . Recv . Right
 
 --------------------------------------------------------------------------------
-sendPkg :: Driver m -> Package -> m ()
-sendPkg self = output self . Send
+sendPkg :: Connection m -> Package -> m ()
+sendPkg self = enqueuePackage self
 
 --------------------------------------------------------------------------------
 ignorePkg :: Driver m -> Package -> m ()
@@ -266,16 +285,15 @@ data ConnectedStage
   | Active Registry
 
 --------------------------------------------------------------------------------
-data DriverState
+data DriverState m
   = Init
-  | Awaiting [Await] ConnectionAttempt ConnectingState
-  | Connected ConnectionId ConnectedStage
+  | Awaiting [Await] ConnectionAttempt (ConnectingState m)
+  | Connected (Connection m) ConnectedStage
   | Closed
 
 --------------------------------------------------------------------------------
 data Transmission
-  = Send Package
-  | Ignored Package
+  = Ignored Package
   | Recv (Either BadNews Package)
   deriving (Show)
 
@@ -293,7 +311,7 @@ data Msg
   | Tick
 
 --------------------------------------------------------------------------------
-react :: Monad m => Driver m -> DriverState -> Msg -> m DriverState
+react :: Monad m => Driver m -> DriverState m -> Msg -> m (DriverState m)
 react self s SystemInit = discovery self s
 react self s (EstablishConnection ept) = establish self s ept
 react self s (ConnectionEstablished cid) = established self s cid
@@ -302,7 +320,7 @@ react self s (SendPackage pkg) = sendPackage self s pkg
 react self s Tick = tick self s
 
 --------------------------------------------------------------------------------
-discovery :: Monad m => Driver m -> DriverState -> m DriverState
+discovery :: Monad m => Driver m -> DriverState m -> m (DriverState m)
 discovery self = \case
   Init -> do
     att <- createConnectionAttempt self
@@ -314,15 +332,19 @@ discovery self = \case
   s -> pure s
 
 --------------------------------------------------------------------------------
-establish :: Monad m => Driver m -> DriverState -> EndPoint -> m DriverState
+establish :: Monad m => Driver m -> DriverState m -> EndPoint -> m (DriverState m)
 establish self (Awaiting pkgs started EndpointDiscovery) ept =
   Awaiting pkgs started . ConnectionEstablishing <$> connect self ept
 establish _ s _ = pure s
 
 --------------------------------------------------------------------------------
-established :: Monad m => Driver m -> DriverState -> ConnectionId -> m DriverState
+established :: Monad m
+            => Driver m
+            -> DriverState m
+            -> ConnectionId
+            -> m (DriverState m)
 established self s@(Awaiting pkgs _ (ConnectionEstablishing known)) cid
-  | cid == known = do
+  | cid == connectionId known = do
     setts <- getSettings self
     elapsed <- getElapsedTime self
 
@@ -332,16 +354,16 @@ established self s@(Awaiting pkgs _ (ConnectionEstablishing known)) cid
 
         let uuid = packageCorrelation pkg
 
-        sendPkg self pkg
-        pure $ Connected cid (Confirming pkgs elapsed uuid Authentication)
+        sendPkg known pkg
+        pure $ Connected known (Confirming pkgs elapsed uuid Authentication)
 
       Nothing -> do
         pkg <- identifyClient self
 
         let uuid = packageCorrelation pkg
 
-        sendPkg self pkg
-        pure $ Connected cid (Confirming pkgs elapsed uuid Identification)
+        sendPkg known pkg
+        pure $ Connected known (Confirming pkgs elapsed uuid Identification)
 
   | otherwise = pure s
 established _ s _ = pure s
@@ -409,16 +431,16 @@ removeExchange key reg =
 --------------------------------------------------------------------------------
 packageArrived :: Monad m
                => Driver m
-               -> DriverState
+               -> DriverState m
                -> ConnectionId
                -> Package
-               -> m DriverState
+               -> m (DriverState m)
 packageArrived self s@(Connected known stage) connId pkg
-  | known /= connId = s <$ ignorePkg self pkg
+  | connectionId known /= connId = s <$ ignorePkg self pkg
   | otherwise =
     case () of
       _ | cmd == heartbeatResponseCmd -> pure s
-        | cmd == heartbeatRequestCmd -> s <$ sendPkg self heartbeatResponse
+        | cmd == heartbeatRequestCmd -> s <$ sendPkg known heartbeatResponse
         | otherwise ->
           case stage of
             Confirming pkgs started pkgId state
@@ -432,7 +454,7 @@ packageArrived self s@(Connected known stage) connId pkg
 
                   Identification
                     | cmd == clientIdentifiedCmd -> do
-                      reg <- sendAwaitingPkgs self pkgs
+                      reg <- sendAwaitingPkgs self known pkgs
                       pure (Connected known (Active reg))
                     | otherwise -> pure s
             Active reg -> do
@@ -473,7 +495,7 @@ packageArrived self s@(Connected known stage) connId pkg
                             pure newState
 
                           -- In this case with just retry the operation.
-                          _ -> s <$ sendPkg self (exchangeRequest exc)
+                          _ -> s <$ sendPkg known (exchangeRequest exc)
 
                       | otherwise ->
                         Connected known (Active newReg) <$ reportResponse self pkg
@@ -487,7 +509,7 @@ packageArrived self s@(Connected known stage) connId pkg
 packageArrived self s _ pkg = s <$ ignorePkg self pkg
 
 --------------------------------------------------------------------------------
-sendPackage :: Monad m => Driver m -> DriverState -> Package -> m DriverState
+sendPackage :: Monad m => Driver m -> DriverState m -> Package -> m (DriverState m)
 sendPackage self cur pkg =
   case cur of
     Init -> do
@@ -498,22 +520,22 @@ sendPackage self cur pkg =
       let aw = pkgToAwait pkg in
       pure (Awaiting (aw:aws) att state)
 
-    Connected cid stage ->
+    Connected conn stage ->
       case stage of
         Confirming aws started pkgId state ->
           let aw = pkgToAwait pkg in
-          pure (Connected cid $ Confirming (aw:aws) started pkgId state)
+          pure (Connected conn $ Confirming (aw:aws) started pkgId state)
 
         Active reg -> do
           exc <- makeExchange self pkg
-          Connected cid (Active (registerExchange exc reg))
-            <$ sendPkg self pkg
+          Connected conn (Active (registerExchange exc reg))
+            <$ sendPkg conn pkg
 
     Closed ->
       cur <$ reportBadNews_ self ConnectionClosed pkg
 
 --------------------------------------------------------------------------------
-tick :: Monad m => Driver m -> DriverState -> m DriverState
+tick :: Monad m => Driver m -> DriverState m -> m (DriverState m)
 tick self Init = pure Init
 tick self Closed = pure Closed
 tick self cur@(Awaiting aws att _) = do
@@ -549,7 +571,7 @@ tick self cur@(Connected cid state) = do
         else pure cur
 
 --------------------------------------------------------------------------------
-reconnect :: Monad m => Driver m -> ConnectionAttempt -> [Await] -> m DriverState
+reconnect :: Monad m => Driver m -> ConnectionAttempt -> [Await] -> m (DriverState m)
 reconnect self att aws = do
   started <- getElapsedTime self
 
@@ -562,19 +584,23 @@ reconnect self att aws = do
   discovery self (Awaiting aws newAtt Reconnecting)
 
 --------------------------------------------------------------------------------
-maxReconnectReached :: Monad m => Driver m -> m DriverState
+maxReconnectReached :: Monad m => Driver m -> m (DriverState m)
 maxReconnectReached self = Closed <$ stop self (OfflineError ConnectionMaxAttemptReached)
 
 --------------------------------------------------------------------------------
-switchToIdentification :: Monad m => Driver m -> ConnectionId -> [Await] -> m DriverState
-switchToIdentification self connId aws = do
+switchToIdentification :: Monad m
+                       => Driver m
+                       -> Connection m
+                       -> [Await]
+                       -> m (DriverState m)
+switchToIdentification self conn aws = do
   pkg <- identifyClient self
   elapsed <- getElapsedTime self
 
   let pkgId = packageCorrelation pkg
 
-  Connected connId (Confirming aws elapsed pkgId Identification)
-    <$ sendPkg self pkg
+  Connected conn (Confirming aws elapsed pkgId Identification)
+    <$ sendPkg conn pkg
 
 --------------------------------------------------------------------------------
 data ClosingContext
@@ -582,9 +608,14 @@ data ClosingContext
   | ConnectionWasActive Registry
 
 --------------------------------------------------------------------------------
-close :: Monad m => Driver m -> ConnectionId -> ClosingContext -> ConnectionError -> m DriverState
-close self cid ctx e = do
-  closeConnection self cid e
+close :: Monad m
+      => Driver m
+      -> Connection m
+      -> ClosingContext
+      -> ConnectionError
+      -> m (DriverState m)
+close self conn ctx e = do
+  closeConnection conn e
   case ctx of
     PendingConfirmation aws -> do
       att <- createConnectionAttempt self
@@ -595,8 +626,8 @@ close self cid ctx e = do
       reconnect self att []
 
 --------------------------------------------------------------------------------
-sendAwaitingPkgs :: Monad m => Driver m -> [Await] -> m Registry
-sendAwaitingPkgs self aws =
+sendAwaitingPkgs :: Monad m => Driver m -> Connection m -> [Await] -> m Registry
+sendAwaitingPkgs self conn aws =
   foldM go HashMap.empty aws >>= \reg ->
     Registry reg <$> getElapsedTime self
   where
@@ -612,7 +643,7 @@ sendAwaitingPkgs self aws =
             }
 
       HashMap.insert (packageCorrelation pkg) exc reg
-        <$ output self (Send pkg)
+        <$ enqueuePackage conn pkg
 
 --------------------------------------------------------------------------------
 makeAwaitings :: Monad m => Driver m -> Registry -> m [Await]

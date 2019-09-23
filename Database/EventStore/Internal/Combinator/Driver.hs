@@ -10,18 +10,15 @@
 module Database.EventStore.Internal.Combinator.Driver where
 
 --------------------------------------------------------------------------------
-import Prelude
-
---------------------------------------------------------------------------------
 import Data.Time (getCurrentTime)
 import Data.UUID.V4 (nextRandom)
-import Polysemy
-import Polysemy.Internal.Combinators
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.ConnectionNew
-import Database.EventStore.Internal.Effect.Driver
+import Database.EventStore.Internal.Control
+import Database.EventStore.Internal.Connection
+import Database.EventStore.Internal.Driver
 import Database.EventStore.Internal.Stopwatch
+import Database.EventStore.Internal.Prelude
 
 --------------------------------------------------------------------------------
 data DriverRef =
@@ -29,13 +26,7 @@ data DriverRef =
   { refStopwatch :: Stopwatch }
 
 --------------------------------------------------------------------------------
-runDriver :: Member (Embed IO) r
-          => DriverRef
-          -> Sem (Driver ': r) a
-          -> Sem r a
-runDriver ref = interpret $ \case
-  GenerateId -> embed nextRandom
-
-  GetElapsedTime -> embed (stopwatchElapsed $ refStopwatch ref)
-
-  Connect edp -> undefined
+createDriverRef :: MonadIO m => Settings -> m (Driver m)
+createDriverRef setts = do
+  builder <- liftIO $ connectionBuilder setts
+  undefined
