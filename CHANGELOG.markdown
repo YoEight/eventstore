@@ -1,4 +1,11 @@
-1.4.0
+1.3.2
+-----
+* Bug fix: Driver could end in a situation where it receives a close-connection message during
+  Authentication/Identification phase. Close-connection message was wrongly ignored letting pending
+  operations unanwsered at call-site. If the user forced the result of an operation, it could have lead the
+  current thread to block indefinately. The client state-machine switched to a wrong state.
+
+1.3.1
 -----
 * Better encoding of streaming interface ReadError.
 * Expose more internal functions of the streaming interface.
