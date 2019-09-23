@@ -30,21 +30,58 @@ import Data.Text (Text)
 import Data.Time (NominalDiffTime)
 import Data.UUID (UUID)
 import Prelude
-import Polysemy
-import Polysemy.Input
-import Polysemy.Output
-import Polysemy.Reader
-import Polysemy.State
 import Data.String.Interpolate.IsString (i)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.EndPoint
-import Database.EventStore.Internal.Effect.Driver
 import Database.EventStore.Internal.Operation (Operation, OperationError(..))
 import qualified Database.EventStore.Internal.Operation.Identify as Identify
 import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Types
+
+--------------------------------------------------------------------------------
+newtype PackageId = PackageId UUID deriving (Show, Ord, Eq, Hashable)
+
+--------------------------------------------------------------------------------
+newtype ConnectionId = ConnectionId UUID deriving (Show, Ord, Eq, Hashable)
+
+--------------------------------------------------------------------------------
+data ConnectingState
+  = Reconnecting
+  | EndpointDiscovery
+  | ConnectionEstablishing ConnectionId
+  deriving (Show, Eq, Ord)
+
+--------------------------------------------------------------------------------
+data StopReason
+  = OfflineError OfflineError
+  | OnlineError ConnectionId OnlineError
+
+--------------------------------------------------------------------------------
+data OfflineError
+  = ConnectionMaxAttemptReached
+
+--------------------------------------------------------------------------------
+data OnlineError
+
+--------------------------------------------------------------------------------
+data ConnectionError
+  = IdentificationFailure
+
+--------------------------------------------------------------------------------
+data Driver m =
+  Driver
+  { connect :: EndPoint -> m ConnectionId
+  , forceReconnect :: UUID -> NodeEndPoints -> m ConnectionId
+  , generateId :: m UUID
+  , discover :: m ()
+  , getElapsedTime :: m NominalDiffTime
+  , stop :: StopReason -> m ()
+  , closeConnection :: ConnectionId -> ConnectionError -> m ()
+  , getSettings :: m Settings
+  , output :: Transmission -> m ()
+  }
 
 --------------------------------------------------------------------------------
 data TransmissionError
@@ -71,38 +108,32 @@ makeBadNews e pkg =
   }
 
 --------------------------------------------------------------------------------
-reportBadNews :: Member (Output Transmission) r
-              => TransmissionError
+reportBadNews :: Driver m
+              -> TransmissionError
               -> Exchange
-              -> Sem r ()
-reportBadNews e =
-  output . Recv . Left . makeBadNews e . exchangeRequest
+              -> m ()
+reportBadNews self e =
+  output self . Recv . Left . makeBadNews e . exchangeRequest
 
 --------------------------------------------------------------------------------
-reportBadNews_ :: Member (Output Transmission) r
-               => TransmissionError
+reportBadNews_ :: Driver m
+               -> TransmissionError
                -> Package
-               -> Sem r ()
-reportBadNews_ e =
-  output . Recv . Left . makeBadNews e
+               -> m ()
+reportBadNews_ self e =
+  output self . Recv . Left . makeBadNews e
 
 --------------------------------------------------------------------------------
-reportResponse :: Member (Output Transmission) r
-               => Package
-               -> Sem r ()
-reportResponse = output . Recv . Right
+reportResponse :: Driver m -> Package -> m ()
+reportResponse self = output self . Recv . Right
 
 --------------------------------------------------------------------------------
-sendPkg :: Member (Output Transmission) r
-        => Package
-        -> Sem r ()
-sendPkg = output . Send
+sendPkg :: Driver m -> Package -> m ()
+sendPkg self = output self . Send
 
 --------------------------------------------------------------------------------
-ignorePkg :: Member (Output Transmission) r
-          => Package
-          -> Sem r ()
-ignorePkg = output . Ignored
+ignorePkg :: Driver m -> Package -> m ()
+ignorePkg self = output self . Ignored
 
 --------------------------------------------------------------------------------
 data Exchange =
@@ -117,8 +148,8 @@ exchangePkgId :: Exchange -> UUID
 exchangePkgId = packageCorrelation . exchangeRequest
 
 --------------------------------------------------------------------------------
-makeExchange :: Member Driver r => Package -> Sem r Exchange
-makeExchange pkg = Exchange 0 pkg <$> getElapsedTime
+makeExchange :: Functor m => Driver m -> Package -> m Exchange
+makeExchange self pkg = Exchange 0 pkg <$> getElapsedTime self
 
 --------------------------------------------------------------------------------
 data Await =
@@ -135,9 +166,9 @@ data ConnectionAttempt =
   }
 
 --------------------------------------------------------------------------------
-createConnectionAttempt :: Member Driver r => Sem r ConnectionAttempt
-createConnectionAttempt = do
-  started <- getElapsedTime
+createConnectionAttempt :: Monad m => Driver m -> m ConnectionAttempt
+createConnectionAttempt self = do
+  started <- getElapsedTime self
   let att =
         ConnectionAttempt
         { connectionAttemptRetry = 0
@@ -178,8 +209,8 @@ data Registry =
   }
 
 --------------------------------------------------------------------------------
-newRegistry :: Member Driver r => Sem r Registry
-newRegistry = Registry HashMap.empty <$> getElapsedTime
+newRegistry :: Functor m => Driver m -> m Registry
+newRegistry self = Registry HashMap.empty <$> getElapsedTime self
 
 --------------------------------------------------------------------------------
 retryMaxReached :: Retry -> Int -> Bool
@@ -193,13 +224,14 @@ registerExchange exc reg =
   reg { registryReg = newMap }
 
 --------------------------------------------------------------------------------
-checkAndRetry :: forall r. Member (Output Transmission) r
-              => Settings
+checkAndRetry :: Monad m
+              => Driver m
               -> NominalDiffTime
               -> Registry
-              -> Sem r Registry
-checkAndRetry setts elapsed reg =
-  make <$> foldM go pendings (HashMap.toList pendings)
+              -> m Registry
+checkAndRetry self elapsed reg = do
+  setts <- getSettings self
+  make <$> foldM (go setts) pendings (HashMap.toList pendings)
   where
     pendings = registryReg reg
 
@@ -209,24 +241,24 @@ checkAndRetry setts elapsed reg =
       , registryLastCheck = elapsed
       }
 
-    go :: Reg -> (UUID, Exchange) -> Sem r Reg
-    go cur (key, exc)
+    go setts cur (key, exc)
       | elapsed - exchangeStarted exc >= s_operationTimeout setts =
         if retryMaxReached (s_operationRetry setts) (exchangeRetry exc)
           then
             let pkgId = packageCorrelation $ exchangeRequest exc
                 next = HashMap.delete pkgId cur in
 
-            next <$ reportBadNews MaxRetriesReached exc
+            next <$ reportBadNews self MaxRetriesReached exc
           else pure cur
       | otherwise =
         pure cur
 
 --------------------------------------------------------------------------------
-cleanup :: forall r. Member (Output Transmission) r
-        => Registry
-        -> Sem r ()
-cleanup = traverse_ (reportBadNews ConnectionDropped) . registryReg
+cleanup :: Monad m
+        => Driver m
+        -> Registry
+        -> m ()
+cleanup self = traverse_ (reportBadNews self ConnectionDropped) . registryReg
 
 --------------------------------------------------------------------------------
 data ConnectedStage
@@ -260,99 +292,77 @@ data Msg
   | SendPackage Package
   | Tick
 
-----------------------------------------------------------------------------------
-process :: forall r. Members [Reader Settings, Input Msg, Output Transmission, Driver] r
-        => Sem r ()
-process = iterateM_ go Init
-  where
-    go :: DriverState -> Sem r DriverState
-    go cur =
-      do msg <- input
-         react cur msg
+--------------------------------------------------------------------------------
+react :: Monad m => Driver m -> DriverState -> Msg -> m DriverState
+react self s SystemInit = discovery self s
+react self s (EstablishConnection ept) = establish self s ept
+react self s (ConnectionEstablished cid) = established self s cid
+react self s (PackageArrived connId pkg) = packageArrived self s connId pkg
+react self s (SendPackage pkg) = sendPackage self s pkg
+react self s Tick = tick self s
 
 --------------------------------------------------------------------------------
-react :: Members '[Reader Settings, Output Transmission, Driver] r
-      => DriverState
-      -> Msg
-      -> Sem r DriverState
-react s SystemInit = discovery s
-react s (EstablishConnection ept) = establish s ept
-react s (ConnectionEstablished cid) = established s cid
-react s (PackageArrived connId pkg) = packageArrived s connId pkg
-react s (SendPackage pkg) = sendPackage s pkg
-react s Tick = tick s
-
---------------------------------------------------------------------------------
-discovery :: Members '[Driver] r
-          => DriverState
-          -> Sem r DriverState
-discovery = \case
+discovery :: Monad m => Driver m -> DriverState -> m DriverState
+discovery self = \case
   Init -> do
-    att <- createConnectionAttempt
-    discovery (Awaiting [] att Reconnecting)
+    att <- createConnectionAttempt self
+    discovery self (Awaiting [] att Reconnecting)
 
   Awaiting pkgs started Reconnecting ->
-    Awaiting pkgs started EndpointDiscovery <$ discover
+    Awaiting pkgs started EndpointDiscovery <$ discover self
 
   s -> pure s
 
 --------------------------------------------------------------------------------
-establish :: Members '[Driver] r
-          => DriverState
-          -> EndPoint
-          -> Sem r DriverState
-establish (Awaiting pkgs started EndpointDiscovery) ept =
-  Awaiting pkgs started . ConnectionEstablishing <$> connect ept
-establish s _ = pure s
+establish :: Monad m => Driver m -> DriverState -> EndPoint -> m DriverState
+establish self (Awaiting pkgs started EndpointDiscovery) ept =
+  Awaiting pkgs started . ConnectionEstablishing <$> connect self ept
+establish _ s _ = pure s
 
 --------------------------------------------------------------------------------
-established :: Members '[Reader Settings, Driver, Output Transmission] r
-            => DriverState
-            -> ConnectionId
-            -> Sem r DriverState
-established s@(Awaiting pkgs _ (ConnectionEstablishing known)) cid
+established :: Monad m => Driver m -> DriverState -> ConnectionId -> m DriverState
+established self s@(Awaiting pkgs _ (ConnectionEstablishing known)) cid
   | cid == known = do
-    setts <- ask
-    elapsed <- getElapsedTime
+    setts <- getSettings self
+    elapsed <- getElapsedTime self
 
     case s_defaultUserCredentials setts of
       Just cred -> do
-        pkg <- createAuthenticatePkg cred
+        pkg <- createAuthenticatePkg self cred
 
         let uuid = packageCorrelation pkg
 
-        sendPkg pkg
+        sendPkg self pkg
         pure $ Connected cid (Confirming pkgs elapsed uuid Authentication)
 
       Nothing -> do
-        pkg <- identifyClient setts
+        pkg <- identifyClient self
 
         let uuid = packageCorrelation pkg
 
-        sendPkg pkg
+        sendPkg self pkg
         pure $ Connected cid (Confirming pkgs elapsed uuid Identification)
 
   | otherwise = pure s
-established s _ = pure s
+established _ s _ = pure s
 
 --------------------------------------------------------------------------------
-identifyClient :: Members '[Output Transmission, Driver] r
-               => Settings
-               -> Sem r Package
-identifyClient setts = do
-  uuid <- generateId
+identifyClient :: Monad m => Driver m -> m Package
+identifyClient self = do
+  uuid <- generateId self
+  setts <- getSettings self
   let defName = [i|ES-#{uuid}|]
       connName = fromMaybe defName (s_defaultConnectionName setts)
 
-  createIdentifyPkg clientVersion connName
+  createIdentifyPkg self clientVersion connName
 
   where
     clientVersion = 1
 
 --------------------------------------------------------------------------------
-createAuthenticatePkg :: Member Driver r => Credentials -> Sem r Package
-createAuthenticatePkg cred = do
-  uuid <- generateId
+createAuthenticatePkg :: Monad m => Driver m -> Credentials -> m Package
+createAuthenticatePkg self cred = do
+  uuid <- generateId self
   let pkg = Package { packageCmd         = authenticateCmd
                     , packageCorrelation = uuid
                     , packageData        = ""
@@ -361,12 +371,13 @@ createAuthenticatePkg cred = do
   pure pkg
 
 --------------------------------------------------------------------------------
-createIdentifyPkg :: Member Driver r
-                  => ClientVersion
+createIdentifyPkg :: Monad m
+                  => Driver m
+                  -> ClientVersion
                   -> ConnectionName
-                  -> Sem r Package
-createIdentifyPkg version name = do
-  uuid <- generateId
+                  -> m Package
+createIdentifyPkg self version name = do
+  uuid <- generateId self
   let msg = Identify.newRequest version name
       pkg = Package { packageCmd         = identifyClientCmd
                     , packageCorrelation = uuid
@@ -396,17 +407,18 @@ removeExchange key reg =
     go (Just e) = Blob (Just e) Nothing
 
 --------------------------------------------------------------------------------
-packageArrived :: Members '[Reader Settings, Output Transmission, Driver] r
-               => DriverState
+packageArrived :: Monad m
+               => Driver m
+               -> DriverState
                -> ConnectionId
                -> Package
-               -> Sem r DriverState
-packageArrived s@(Connected known stage) connId pkg
-  | known /= connId = ignored s
+               -> m DriverState
+packageArrived self s@(Connected known stage) connId pkg
+  | known /= connId = s <$ ignorePkg self pkg
   | otherwise =
     case () of
       _ | cmd == heartbeatResponseCmd -> pure s
-        | cmd == heartbeatRequestCmd -> s <$ sendPkg heartbeatResponse
+        | cmd == heartbeatRequestCmd -> s <$ sendPkg self heartbeatResponse
         | otherwise ->
           case stage of
             Confirming pkgs started pkgId state
@@ -415,29 +427,29 @@ packageArrived s@(Connected known stage) connId pkg
                 case state of
                   Authentication
                     | cmd == authenticatedCmd || cmd == notAuthenticatedCmd
-                      -> switchToIdentification known pkgs
+                      -> switchToIdentification self known pkgs
                     | otherwise -> pure s
 
                   Identification
                     | cmd == clientIdentifiedCmd -> do
-                      reg <- sendAwaitingPkgs pkgs
+                      reg <- sendAwaitingPkgs self pkgs
                       pure (Connected known (Active reg))
                     | otherwise -> pure s
             Active reg -> do
               let (excMaybe, newReg) = removeExchange correlation reg
 
               case excMaybe of
-                Nothing -> ignored s
+                Nothing -> s <$ ignorePkg self pkg
                 Just exc -> do
                   case () of
                     _ | cmd == badRequestCmd -> do
                         let reason = packageDataAsText pkg
 
-                        reportBadNews (BadRequest reason) exc
+                        reportBadNews self (BadRequest reason) exc
                         pure (Connected known (Active newReg))
 
                       | cmd == notAuthenticatedCmd -> do
-                        reportBadNews AuthenticationNeeded exc
+                        reportBadNews self AuthenticationNeeded exc
                         pure (Connected known (Active newReg))
 
                       | cmd == notHandledCmd -> do
@@ -450,10 +462,9 @@ packageArrived s@(Connected known stage) connId pkg
                                 info         = masterInfo details
                                 node         = masterInfoNodeEndPoints info
 
-                            newCid <- forceReconnect correlation node
-                            setts <- ask
-                            aws <- makeAwaitings setts reg
-                            att <- createConnectionAttempt
+                            newCid <- forceReconnect self correlation node
+                            aws <- makeAwaitings self reg
+                            att <- createConnectionAttempt self
 
                             let newState =
                                   Awaiting (exchangeToAwait exc : aws) att
@@ -462,10 +473,10 @@ packageArrived s@(Connected known stage) connId pkg
                             pure newState
 
                           -- In this case with just retry the operation.
-                          _ -> s <$ sendPkg (exchangeRequest exc)
+                          _ -> s <$ sendPkg self (exchangeRequest exc)
 
                       | otherwise ->
-                        Connected known (Active newReg) <$ reportResponse pkg
+                        Connected known (Active newReg) <$ reportResponse self pkg
 
   where
     cmd = packageCmd pkg
@@ -473,18 +484,15 @@ packageArrived s@(Connected known stage) connId pkg
     heartbeatResponse =
       heartbeatResponsePackage $ packageCorrelation pkg
 
-packageArrived s _ _ = ignored s
+packageArrived self s _ pkg = s <$ ignorePkg self pkg
 
 --------------------------------------------------------------------------------
-sendPackage :: Members '[Reader Settings, Driver, Output Transmission] r
-            => DriverState
-            -> Package
-            -> Sem r DriverState
-sendPackage cur pkg =
+sendPackage :: Monad m => Driver m -> DriverState -> Package -> m DriverState
+sendPackage self cur pkg =
   case cur of
     Init -> do
-      next <- react Init SystemInit
-      sendPackage next pkg
+      next <- react self Init SystemInit
+      sendPackage self next pkg
 
     Awaiting aws att state ->
       let aw = pkgToAwait pkg in
@@ -497,58 +505,53 @@ sendPackage cur pkg =
           pure (Connected cid $ Confirming (aw:aws) started pkgId state)
 
         Active reg -> do
-          exc <- makeExchange pkg
+          exc <- makeExchange self pkg
           Connected cid (Active (registerExchange exc reg))
-            <$ sendPkg pkg
+            <$ sendPkg self pkg
 
     Closed ->
-      cur <$ reportBadNews_ ConnectionClosed pkg
+      cur <$ reportBadNews_ self ConnectionClosed pkg
 
 --------------------------------------------------------------------------------
-tick :: forall r.  Members '[Reader Settings, Driver, Output Transmission] r
-     => DriverState
-     -> Sem r DriverState
-tick Init = pure Init
-tick Closed = pure Closed
-tick cur@(Awaiting aws att _) = do
-  setts <- ask
-  elapsed <- getElapsedTime
+tick :: Monad m => Driver m -> DriverState -> m DriverState
+tick self Init = pure Init
+tick self Closed = pure Closed
+tick self cur@(Awaiting aws att _) = do
+  setts <- getSettings self
+  elapsed <- getElapsedTime self
 
   if elapsed - connectionAttemptStarted att >= s_reconnect_delay setts
     then
       if maxRetryReached (s_retry setts) (connectionAttemptRetry att)
-        then maxReconnectReached
-        else reconnect att aws
+        then maxReconnectReached self
+        else reconnect self att aws
     else pure cur
-tick cur@(Connected cid state) = do
-  setts <- ask
+tick self cur@(Connected cid state) = do
+  setts <- getSettings self
 
   case state of
     Confirming aws started _ state -> do
-      elapsed <- getElapsedTime
+      elapsed <- getElapsedTime self
 
       if elapsed - started >= s_operationTimeout setts
         then
           case state of
             Authentication ->
-              switchToIdentification cid aws
+              switchToIdentification self cid aws
             Identification ->
-              close cid (PendingConfirmation aws) IdentificationFailure
+              close self cid (PendingConfirmation aws) IdentificationFailure
         else
           pure cur
     Active reg -> do
-      elapsed <- getElapsedTime
+      elapsed <- getElapsedTime self
       if elapsed - registryLastCheck reg >= s_operationTimeout setts
-        then Connected cid . Active <$> checkAndRetry setts elapsed reg
+        then Connected cid . Active <$> checkAndRetry self elapsed reg
         else pure cur
 
 --------------------------------------------------------------------------------
-reconnect :: Members '[Driver] r
-          => ConnectionAttempt
-          -> [Await]
-          -> Sem r DriverState
-reconnect att aws = do
-  started <- getElapsedTime
+reconnect :: Monad m => Driver m -> ConnectionAttempt -> [Await] -> m DriverState
+reconnect self att aws = do
+  started <- getElapsedTime self
 
   let newAtt =
         ConnectionAttempt
@@ -556,26 +559,22 @@ reconnect att aws = do
         , connectionAttemptStarted = started
         }
 
-  discovery (Awaiting aws newAtt Reconnecting)
+  discovery self (Awaiting aws newAtt Reconnecting)
 
 --------------------------------------------------------------------------------
-maxReconnectReached :: Member Driver r => Sem r DriverState
-maxReconnectReached = Closed <$ stop (OfflineError ConnectionMaxAttemptReached)
+maxReconnectReached :: Monad m => Driver m -> m DriverState
+maxReconnectReached self = Closed <$ stop self (OfflineError ConnectionMaxAttemptReached)
 
 --------------------------------------------------------------------------------
-switchToIdentification :: Members '[Reader Settings, Driver, Output Transmission] r
-                       => ConnectionId
-                       -> [Await]
-                       -> Sem r DriverState
-switchToIdentification connId aws = do
-  setts <- ask
-  pkg <- identifyClient setts
-  elapsed <- getElapsedTime
+switchToIdentification :: Monad m => Driver m -> ConnectionId -> [Await] -> m DriverState
+switchToIdentification self connId aws = do
+  pkg <- identifyClient self
+  elapsed <- getElapsedTime self
 
   let pkgId = packageCorrelation pkg
 
   Connected connId (Confirming aws elapsed pkgId Identification)
-    <$ sendPkg pkg
+    <$ sendPkg self pkg
 
 --------------------------------------------------------------------------------
 data ClosingContext
@@ -583,37 +582,26 @@ data ClosingContext
   | ConnectionWasActive Registry
 
 --------------------------------------------------------------------------------
-close :: Members '[Reader Settings, Output Transmission, Driver] r
-      => ConnectionId
-      -> ClosingContext
-      -> ConnectionError
-      -> Sem r DriverState
-close cid ctx e = do
-  closeConnection cid e
+close :: Monad m => Driver m -> ConnectionId -> ClosingContext -> ConnectionError -> m DriverState
+close self cid ctx e = do
+  closeConnection self cid e
   case ctx of
     PendingConfirmation aws -> do
-      att <- createConnectionAttempt
-      reconnect att aws
+      att <- createConnectionAttempt self
+      reconnect self att aws
     ConnectionWasActive reg -> do
-      cleanup reg
-      att <- createConnectionAttempt
-      reconnect att []
+      cleanup self reg
+      att <- createConnectionAttempt self
+      reconnect self att []
 
 --------------------------------------------------------------------------------
-ignored :: s -> Sem r s
-ignored = pure
-
---------------------------------------------------------------------------------
-sendAwaitingPkgs :: forall r. Members [Output Transmission, Driver] r
-                 => [Await]
-                 -> Sem r Registry
-sendAwaitingPkgs aws =
+sendAwaitingPkgs :: Monad m => Driver m -> [Await] -> m Registry
+sendAwaitingPkgs self aws =
   foldM go HashMap.empty aws >>= \reg ->
-    Registry reg <$> getElapsedTime
+    Registry reg <$> getElapsedTime self
   where
-    go :: Reg -> Await -> Sem r Reg
     go reg a = do
-      elapsed <- getElapsedTime
+      elapsed <- getElapsedTime self
 
       let pkg = awaitPackage a
           exc =
@@ -624,22 +612,18 @@ sendAwaitingPkgs aws =
             }
 
       HashMap.insert (packageCorrelation pkg) exc reg
-        <$ output (Send pkg)
+        <$ output self (Send pkg)
 
 --------------------------------------------------------------------------------
-makeAwaitings :: Member (Output Transmission) r
-              => Settings
-              -> Registry
-              -> Sem r [Await]
-makeAwaitings setts reg =
+makeAwaitings :: Monad m => Driver m -> Registry -> m [Await]
+makeAwaitings self reg = do
+  setts <- getSettings self
   fmap exchangeToAwait
-    <$> filterM go (HashMap.elems $ registryReg reg)
+    <$> filterM (go setts) (HashMap.elems $ registryReg reg)
   where
-    retry = s_operationRetry setts
-
-    go exc
-      | maxRetryReached retry (exchangeRetry exc) =
-        False <$ reportBadNews MaxRetriesReached exc
+    go setts exc
+      | maxRetryReached (s_operationRetry setts) (exchangeRetry exc) =
+        False <$ reportBadNews self MaxRetriesReached exc
       | otherwise = pure True
 
 --------------------------------------------------------------------------------
