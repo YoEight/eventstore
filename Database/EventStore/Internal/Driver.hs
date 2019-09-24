@@ -551,6 +551,8 @@ onCloseConnection self state e =
     Closed -> pure state
 
     Awaiting aws _ connState -> do
+      traverse_ (reportBadNews_ self ConnectionClosed . awaitPackage) aws
+
       case connState of
         ConnectionEstablishing conn ->
           closeConnection conn (FatalConnectionError e)
