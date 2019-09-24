@@ -15,6 +15,7 @@
 module Database.EventStore.Internal.Driver where
 
 --------------------------------------------------------------------------------
+import Control.Exception (Exception)
 import Control.Monad (forever, when, foldM, filterM)
 import Control.Monad.Loops (iterateM_)
 import Data.ByteString (ByteString)
@@ -88,6 +89,7 @@ data OnlineError
 --------------------------------------------------------------------------------
 data ConnectionError
   = IdentificationFailure
+  | forall e. Exception e => FatalConnectionError e
 
 --------------------------------------------------------------------------------
 data Driver m =
@@ -308,6 +310,7 @@ data Msg
   | ConnectionEstablished ConnectionId
   | PackageArrived ConnectionId Package
   | SendPackage Package
+  | forall e. Exception e => CloseConnection e
   | Tick
 
 --------------------------------------------------------------------------------
@@ -317,6 +320,7 @@ react self s (EstablishConnection ept) = establish self s ept
 react self s (ConnectionEstablished cid) = established self s cid
 react self s (PackageArrived connId pkg) = packageArrived self s connId pkg
 react self s (SendPackage pkg) = sendPackage self s pkg
+react self s (CloseConnection e) = onCloseConnection self s e
 react self s Tick = tick self s
 
 --------------------------------------------------------------------------------
@@ -533,6 +537,38 @@ sendPackage self cur pkg =
 
     Closed ->
       cur <$ reportBadNews_ self ConnectionClosed pkg
+
+--------------------------------------------------------------------------------
+onCloseConnection :: (Monad m, Exception e)
+                  => Driver m
+                  -> DriverState m
+                  -> e
+                  -> m (DriverState m)
+onCloseConnection self state e =
+  case state of
+    Init -> pure Closed
+
+    Closed -> pure state
+
+    Awaiting aws _ connState -> do
+      case connState of
+        ConnectionEstablishing conn ->
+          closeConnection conn (FatalConnectionError e)
+        _ -> pure ()
+
+      pure Closed
+
+    Connected conn connState -> do
+      closeConnection conn (FatalConnectionError e)
+
+      case connState of
+        Confirming aws _ _ _ ->
+          traverse_ (reportBadNews_ self ConnectionClosed . awaitPackage) aws
+
+        Active reg ->
+          cleanup self reg
+
+      pure Closed
 
 --------------------------------------------------------------------------------
 tick :: Monad m => Driver m -> DriverState m -> m (DriverState m)

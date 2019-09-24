@@ -12,6 +12,7 @@ module Database.EventStore.Internal.Combinator.Driver where
 --------------------------------------------------------------------------------
 import Control.Concurrent.Async.Lifted
 import qualified Control.Concurrent.STM.TMQueue as TMQueue
+import Control.Exception (Exception)
 import Data.Functor (void)
 import Data.Time (getCurrentTime)
 import Data.UUID.V4 (nextRandom)
@@ -94,8 +95,7 @@ createDriverImpl ref setts disc = do
         Left e -> do
           $logError
             [i| Failed to resolve TCP endpoint to which to connect #{e}.|]
-          -- TODO - Implement CloseConnection message.
-          -- liftIO $ publishMsg ref (CloseConnection e)
+          liftIO $ publishMsg ref (CloseConnection e)
         Right opt ->
           case opt of
             Nothing ->
