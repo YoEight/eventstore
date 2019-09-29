@@ -19,6 +19,8 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Install dependencies
+      env:
+        EVENTSTORE_HOST: eventstore
       run: |
         cabal --version
         cabal new-update
