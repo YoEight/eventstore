@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 171ce48c5ca32c8763beafe10906ae6d4b555cfc1b24872d3f56cef12b1d761d
+-- hash: 878022cb5c7de6f53130fb8aeb93f71f60af86fe7ca294f4bcebc57f128423da
 
 name:           eventstore
 version:        1.3.2
@@ -74,6 +74,7 @@ library
       Database.EventStore.Internal.OperationManager
       Database.EventStore.Internal.Operations
       Database.EventStore.Internal.Prelude
+      Database.EventStore.Internal.Runner
       Database.EventStore.Internal.Settings
       Database.EventStore.Internal.Stopwatch
       Database.EventStore.Internal.Stream
