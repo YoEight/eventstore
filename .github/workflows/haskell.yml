@@ -1,4 +1,4 @@
-name: Haskell CI
+name: CI
 
 on: [push]
 
@@ -10,6 +10,12 @@ jobs:
     container:
       image: haskell:8.6
 
+    services:
+      eventstore:
+        image: eventstore/eventstore:latest
+        ports:
+          - 1113:1113
+
     steps:
     - uses: actions/checkout@v1
     - name: Install dependencies
@@ -18,4 +24,4 @@ jobs:
         cabal new-update
     - name: Build
       run: |
-        cabal new-build
+        cabal new-test
