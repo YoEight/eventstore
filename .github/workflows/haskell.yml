@@ -1,0 +1,29 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    container:
+      image: haskell:8.6
+
+    services:
+      eventstore:
+        image: eventstore/eventstore:latest
+        ports:
+          - 1113/tcp
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: Install dependencies
+      run: |
+        cabal --version
+        cabal new-update
+    - name: Build
+      env:
+        EVENTSTORE_HOST: eventstore
+      run: |
+        cabal new-test
