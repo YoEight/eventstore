@@ -14,16 +14,16 @@ jobs:
       eventstore:
         image: eventstore/eventstore:latest
         ports:
-          - 1113:1113
+          - 1113/tcp
 
     steps:
     - uses: actions/checkout@v1
     - name: Install dependencies
-      env:
-        EVENTSTORE_HOST: eventstore
       run: |
         cabal --version
         cabal new-update
     - name: Build
+      env:
+        EVENTSTORE_HOST: eventstore
       run: |
         cabal new-test
