@@ -1,3 +1,7 @@
+1.3.3
+-----
+* Add `Pinned` system consumer strategy.
+
 1.3.2
 -----
 * Bug fix: Driver could end in a situation where it receives a close-connection message during
