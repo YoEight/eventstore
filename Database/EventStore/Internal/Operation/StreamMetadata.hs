@@ -26,6 +26,7 @@ import Data.Int
 import Data.Aeson (decode)
 
 --------------------------------------------------------------------------------
+import Database.EventStore.Internal.Exec (Exec)
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadEvent
@@ -41,33 +42,37 @@ metaStream s = "$$" <> s
 
 --------------------------------------------------------------------------------
 -- | Read stream metadata operation.
-readMetaStream :: Settings
-               -> Text
-               -> Maybe Credentials
-               -> Operation StreamMetadataResult
-readMetaStream setts s cred = construct $ do
-    traversing go <~ readEvent setts (metaStream s) (-1) False cred
-  where
-    go tmp =
-        onReadResult tmp $ \n e_num evt -> do
-            let bytes = recordedEventData $ resolvedEventOriginal evt
-            case decode $ fromStrict bytes of
-                Just pv -> pure $ StreamMetadataResult n e_num pv
-                Nothing -> Failed invalidFormat
+readMetaStream
+  :: Settings
+  -> Exec
+  -> Text
+  -> Maybe Credentials
+  -> IO (Async StreamMetadataResult)
+readMetaStream setts exec s cred
+  = async $
+      do as <- readEvent setts exec (metaStream s) (-1) False cred
+         tmp <- wait as
+         onReadResult tmp $ \n evtNum evt ->
+           do let bytes = recordedEventData $ resolvedEventOriginal evt
+              case decode $ fromStrict bytes of
+                Just pv -> pure $ StreamMetadataResult n evtNum pv
+                Nothing -> throw invalidFormat
 
 --------------------------------------------------------------------------------
 -- | Set stream metadata operation.
-setMetaStream :: Settings
-              -> Text
-              -> ExpectedVersion
-              -> Maybe Credentials
-              -> StreamMetadata
-              -> Operation WriteResult
-setMetaStream setts s v cred meta =
-    let stream = metaStream s
+setMetaStream
+  :: Settings
+  -> Exec
+  -> Text
+  -> ExpectedVersion
+  -> Maybe Credentials
+  -> StreamMetadata
+  -> IO (Async WriteResult)
+setMetaStream setts exec s v cred meta
+  = let stream = metaStream s
         json   = streamMetadataJSON meta
         evt    = createEvent StreamMetadataType Nothing (withJson json) in
-     writeEvents setts stream v cred [evt]
+    writeEvents setts exec stream v cred [evt]
 
 --------------------------------------------------------------------------------
 invalidFormat :: OperationError
@@ -79,14 +84,15 @@ streamNotFound = InvalidOperation "Read metadata on an inexistant stream"
 
 --------------------------------------------------------------------------------
 onReadResult :: ReadResult EventNumber ReadEvent
-             -> (Text -> Int64 -> ResolvedEvent -> Execution a)
-             -> Execution a
+             -> (Text -> Int64 -> ResolvedEvent -> IO a)
+             -> IO a
 onReadResult (ReadSuccess r) k =
     case r of
       ReadEvent s n e -> k s n e
-      _               -> Failed streamNotFound
-onReadResult ReadNoStream _          = Failed streamNotFound
-onReadResult (ReadStreamDeleted s) _ = Failed $ StreamDeleted s
-onReadResult ReadNotModified _       = Failed $ ServerError Nothing
-onReadResult (ReadError e) _         = Failed $ ServerError e
-onReadResult (ReadAccessDenied s) _  = Failed $ AccessDenied s
+      _ -> throw streamNotFound
+
+onReadResult ReadNoStream _          = throw streamNotFound
+onReadResult (ReadStreamDeleted s) _ = throw $ StreamDeleted s
+onReadResult ReadNotModified _       = throw $ ServerError Nothing
+onReadResult (ReadError e) _         = throw $ ServerError e
+onReadResult (ReadAccessDenied s) _  = throw $ AccessDenied s

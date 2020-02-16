@@ -23,7 +23,6 @@ import Data.Int
 import Data.Maybe
 
 --------------------------------------------------------------------------------
-import           Database.EventStore.Internal.Callback
 import           Database.EventStore.Internal.Communication
 import           Database.EventStore.Internal.Connection (connectionBuilder)
 import           Database.EventStore.Internal.Control hiding (subscribe)
@@ -121,11 +120,8 @@ sendEvents :: Connection
            -> [Event]
            -> Maybe Credentials
            -> IO (Async WriteResult)
-sendEvents Connection{..} evt_stream exp_ver evts cred = do
-    p <- newPromise
-    let op = Op.writeEvents _settings (streamIdRaw evt_stream) exp_ver cred evts
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+sendEvents Connection{..} evt_stream exp_ver evts cred =
+    Op.writeEvents _settings _exec (streamIdRaw evt_stream) exp_ver cred evts
 
 --------------------------------------------------------------------------------
 -- | Deletes given stream.
@@ -135,11 +131,8 @@ deleteStream :: Connection
              -> Maybe Bool       -- ^ Hard delete
              -> Maybe Credentials
              -> IO (Async Op.DeleteResult)
-deleteStream Connection{..} evt_stream exp_ver hard_del cred = do
-    p <- newPromise
-    let op = Op.deleteStream _settings (streamIdRaw evt_stream) exp_ver hard_del cred
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+deleteStream Connection{..} stream expVer hardDel cred =
+    Op.deleteStream _settings _exec (streamIdRaw stream) expVer hardDel cred
 
 --------------------------------------------------------------------------------
 -- | Represents a multi-request transaction with the EventStore.
@@ -170,11 +163,9 @@ startTransaction :: Connection
                  -> Maybe Credentials
                  -> IO (Async Transaction)
 startTransaction conn@Connection{..} evt_stream exp_ver cred = do
-    p <- newPromise
-    let op = Op.transactionStart _settings (streamIdRaw evt_stream) exp_ver cred
-    publishWith _exec (SubmitOperation p op)
+    as <- Op.transactionStart _settings _exec (streamIdRaw evt_stream) exp_ver cred
     async $ do
-        tid <- retrieve p
+        tid <- wait as
         return Transaction
                { _tStream  = streamIdRaw evt_stream
                , _tTransId = TransactionId tid
@@ -189,23 +180,17 @@ transactionWrite :: Transaction
                  -> Maybe Credentials
                  -> IO (Async ())
 transactionWrite Transaction{..} evts cred = do
-    p <- newPromise
     let Connection{..} = _tConn
         raw_id = _unTransId _tTransId
-        op     = Op.transactionWrite _settings _tStream _tExpVer raw_id evts cred
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+    Op.transactionWrite _settings _exec _tStream _tExpVer raw_id evts cred
 
 --------------------------------------------------------------------------------
 -- | Asynchronously commits this transaction.
 transactionCommit :: Transaction -> Maybe Credentials -> IO (Async WriteResult)
 transactionCommit Transaction{..} cred = do
-    p <- newPromise
     let Connection{..} = _tConn
         raw_id = _unTransId _tTransId
-        op     = Op.transactionCommit _settings _tStream _tExpVer raw_id cred
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+    Op.transactionCommit _settings _exec _tStream _tExpVer raw_id cred
 
 --------------------------------------------------------------------------------
 -- | There isn't such of thing in EventStore parlance. Basically, if you want to
@@ -221,13 +206,10 @@ readEvent :: Connection
           -> ResolveLink
           -> Maybe Credentials
           -> IO (Async (ReadResult EventNumber Op.ReadEvent))
-readEvent Connection{..} stream_id evtNum resLinkTos cred = do
-    p <- newPromise
-    let evt_num = eventNumberToInt64 evtNum
-        res_link_tos = resolveLinkToBool resLinkTos
-        op = Op.readEvent _settings (streamIdRaw stream_id) evt_num res_link_tos cred
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+readEvent Connection{..} stream evtNum resLinkTos cred = do
+    let evtNumRaw = eventNumberToInt64 evtNum
+        linkTos = resolveLinkToBool resLinkTos
+    Op.readEvent _settings _exec (streamIdRaw stream) evtNumRaw linkTos cred
 
 --------------------------------------------------------------------------------
 -- | When batch-reading a stream, this type-level function maps the result you
@@ -271,20 +253,15 @@ readEventsCommon :: Connection
                  -> Maybe Credentials
                  -> IO (Async (BatchResult t))
 readEventsCommon Connection{..} dir streamId start cnt resLinkTos cred = do
-    p <- newPromise
     let res_link_tos = resolveLinkToBool resLinkTos
-        op =
-            case streamId of
-                StreamName{} ->
-                    let name   = streamIdRaw streamId
-                        evtNum = eventNumberToInt64 start in
-                    Op.readStreamEvents _settings dir name evtNum cnt res_link_tos cred
-                All ->
-                    let Position c_pos p_pos = start in
-                    Op.readAllEvents _settings c_pos p_pos cnt res_link_tos dir cred
-
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+    case streamId of
+        StreamName{} ->
+            let name   = streamIdRaw streamId
+                evtNum = eventNumberToInt64 start in
+            Op.readStreamEvents _settings _exec dir name evtNum cnt res_link_tos cred
+        All ->
+            let Position c_pos p_pos = start in
+            Op.readAllEvents _settings _exec c_pos p_pos cnt res_link_tos dir cred
 
 --------------------------------------------------------------------------------
 -- | Subscribes to a stream.
@@ -340,11 +317,8 @@ setStreamMetadata :: Connection
                   -> Maybe Credentials
                   -> IO (Async WriteResult)
 setStreamMetadata Connection{..} evt_stream exp_ver metadata cred = do
-    p <- newPromise
     let name = streamIdRaw evt_stream
-        op = Op.setMetaStream _settings name exp_ver cred metadata
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+    Op.setMetaStream _settings _exec name exp_ver cred metadata
 
 --------------------------------------------------------------------------------
 -- | Asynchronously gets the metadata of a stream.
@@ -352,11 +326,8 @@ getStreamMetadata :: Connection
                   -> StreamName
                   -> Maybe Credentials
                   -> IO (Async StreamMetadataResult)
-getStreamMetadata Connection{..} evt_stream cred = do
-    p <- newPromise
-    let op = Op.readMetaStream _settings (streamIdRaw evt_stream) cred
-    publishWith _exec (SubmitOperation p op)
-    async (retrieve p)
+getStreamMetadata Connection{..} stream cred =
+    Op.readMetaStream _settings _exec (streamIdRaw stream) cred
 
 --------------------------------------------------------------------------------
 -- | Asynchronously create a persistent subscription group on a stream.
@@ -366,11 +337,8 @@ createPersistentSubscription :: Connection
                              -> PersistentSubscriptionSettings
                              -> Maybe Credentials
                              -> IO (Async (Maybe PersistActionException))
-createPersistentSubscription Connection{..} grp stream sett cred = do
-    p <- newPromise
-    let op = Op.createPersist grp (streamIdRaw stream) sett cred
-    publishWith _exec (SubmitOperation p op)
-    async (persistAsync p)
+createPersistentSubscription Connection{..} grp stream sett cred =
+    Op.createPersist _exec grp (streamIdRaw stream) sett cred
 
 --------------------------------------------------------------------------------
 -- | Asynchronously update a persistent subscription group on a stream.
@@ -380,11 +348,8 @@ updatePersistentSubscription :: Connection
                              -> PersistentSubscriptionSettings
                              -> Maybe Credentials
                              -> IO (Async (Maybe PersistActionException))
-updatePersistentSubscription Connection{..} grp stream sett cred = do
-    p <- newPromise
-    let op = Op.updatePersist grp (streamIdRaw stream) sett cred
-    publishWith _exec (SubmitOperation p op)
-    async (persistAsync p)
+updatePersistentSubscription Connection{..} grp stream sett cred =
+    Op.updatePersist _exec grp (streamIdRaw stream) sett cred
 
 --------------------------------------------------------------------------------
 -- | Asynchronously delete a persistent subscription group on a stream.
@@ -393,11 +358,8 @@ deletePersistentSubscription :: Connection
                              -> StreamName
                              -> Maybe Credentials
                              -> IO (Async (Maybe PersistActionException))
-deletePersistentSubscription Connection{..} grp stream cred = do
-    p <- newPromise
-    let op = Op.deletePersist grp (streamIdRaw stream) cred
-    publishWith _exec (SubmitOperation p op)
-    async (persistAsync p)
+deletePersistentSubscription Connection{..} grp stream cred =
+    Op.deletePersist _exec grp (streamIdRaw stream) cred
 
 --------------------------------------------------------------------------------
 -- | Asynchronously connect to a persistent subscription given a group on a
@@ -410,8 +372,3 @@ connectToPersistentSubscription :: Connection
                                 -> IO PersistentSubscription
 connectToPersistentSubscription Connection{..} group stream bufSize cred =
     newPersistentSubscription _exec group stream bufSize cred
-
---------------------------------------------------------------------------------
-persistAsync :: Callback (Maybe PersistActionException)
-             -> IO (Maybe PersistActionException)
-persistAsync = either throw return <=< tryRetrieve

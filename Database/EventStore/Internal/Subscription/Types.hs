@@ -135,4 +135,3 @@ data SubAction
   = Submit ResolvedEvent
   | Dropped SubDropReason
   | Confirmed SubDetails
-  | ConnectionReset

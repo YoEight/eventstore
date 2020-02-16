@@ -18,7 +18,6 @@ module Database.EventStore.Internal.Subscription.Persistent where
 import Data.UUID
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Control
 import Database.EventStore.Internal.Exec
@@ -32,106 +31,78 @@ import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-data Phase
-  = Pending
-  | Running SubDetails
-  | Closed (Either SomeException SubDropReason)
-
---------------------------------------------------------------------------------
 -- | The server remembers the state of the subscription. This allows for many
 --   different modes of operations compared to a regular or catchup subscription
 --   where the client holds the subscription state.
 --   (Need EventStore >= v3.1.0).
 data PersistentSubscription =
-  PersistentSubscription { _perExec   :: Exec
-                         , _perStream :: StreamName
-                         , _perCred   :: Maybe Credentials
-                         , _perPhase  :: TVar Phase
-                         , _perNext   :: STM (Maybe ResolvedEvent)
-                         }
+  PersistentSubscription
+  { _perExec :: Exec
+  , _perSubId :: UUID
+  , _perStream :: StreamName
+  , _perCred :: Maybe Credentials
+  , _perSubKey :: TVar (Maybe Text)
+  , _perChan :: Chan SubAction
+  }
 
 --------------------------------------------------------------------------------
 instance Subscription PersistentSubscription where
-  nextEventMaybeSTM = _perNext
+  nextSubEvent s = readChan (_perChan s)
 
-  getSubscriptionDetailsSTM s = do
-    p <- readTVar (_perPhase s)
-    case p of
-      Pending         -> retrySTM
-      Running details -> return details
-      Closed outcome  ->
-        case outcome of
-          Right r -> throwSTM (SubscriptionClosed $ Just r)
-          Left e  -> throwSTM e
-
-  unsubscribe s = subUnsubscribe (_perExec s) s
+  unsubscribe s = publishWith (_perExec s) (SendPackage pkg)
+    where
+      pkg = createUnsubscribePackage (_perSubId s)
 
 --------------------------------------------------------------------------------
 instance SubscriptionStream PersistentSubscription EventNumber where
     subscriptionStream = _perStream
 
 --------------------------------------------------------------------------------
-newPersistentSubscription :: Exec
-                          -> Text
-                          -> StreamName
-                          -> Int32
-                          -> Maybe Credentials
-                          -> IO PersistentSubscription
-newPersistentSubscription exec grp stream bufSize cred = do
-  phaseVar <- newTVarIO Pending
-  queue    <- newTQueueIO
+newPersistentSubscription
+  :: Exec
+  -> Text
+  -> StreamName
+  -> Int32
+  -> Maybe Credentials
+  -> IO PersistentSubscription
+newPersistentSubscription exec grp (StreamName stream) bufSize cred
+  = do (subId, varSubKey, chan) <- persist exec grp stream bufSize cred
+       let sub =
+             PersistentSubscription
+             { _perExec = exec
+             , _perSubId = subId
+             , _perCred = cred
+             , _perSubKey = varSubKey
+             , _perChan = chan
+             , _perStream = StreamName stream
+             }
 
-  let name = streamIdRaw stream
-      sub  = PersistentSubscription exec stream cred phaseVar $ do
-        p       <- readTVar phaseVar
-        isEmpty <- isEmptyTQueue queue
-        if isEmpty
-          then
-            case p of
-              Closed outcome ->
-                case outcome of
-                  Right r -> throwSTM (SubscriptionClosed $ Just r)
-                  Left e  -> throwSTM e
-              _ -> return Nothing
-          else Just <$> readTQueue queue
+       pure sub
 
-      callback (Left e) = atomically $
-          writeTVar phaseVar (Closed $ Left e)
-      callback (Right action) =
-        case action of
-          Confirmed details -> atomically $
-            writeTVar phaseVar (Running details)
-          Dropped r -> atomically $
-            writeTVar phaseVar (Closed $ Right r)
-          Submit e -> atomically $ do
-            readTVar phaseVar >>= \case
-              Running{} -> writeTQueue queue e
-              _         -> return ()
-          ConnectionReset -> atomically $
-            writeTVar phaseVar (Closed $ Right SubAborted)
-
-  cb <- newCallback callback
-  publishWith exec (SubmitOperation cb (persist grp name bufSize cred))
-  return sub
+--------------------------------------------------------------------------------
+persistentGetSubKey
+  :: PersistentSubscription
+  -> IO Text
+persistentGetSubKey sub
+  = atomically $
+      do subKeyMay <- readTVar (_perSubKey sub)
+         case subKeyMay of
+           Just key
+             -> pure key
+           Nothing
+             -> retrySTM
 
 --------------------------------------------------------------------------------
 -- | Acknowledges those event ids have been successfully processed.
-notifyEventsProcessed :: PersistentSubscription -> [UUID] -> IO ()
-notifyEventsProcessed PersistentSubscription{..} evts = do
-  details <- atomically $ do
-    p <- readTVar _perPhase
-    case p of
-      Closed outcome  ->
-        case outcome of
-          Right r -> throwSTM (SubscriptionClosed $ Just r)
-          Left e  -> throwSTM e
-      Pending   -> retrySTM
-      Running d -> return d
-
-  let uuid     = subId details
-      Just sid = subSubId details
-      pkg      = createAckPackage _perCred uuid sid evts
-  publishWith _perExec (SendPackage pkg)
+notifyEventsProcessed
+  :: PersistentSubscription
+  -> [UUID]
+  -> IO ()
+notifyEventsProcessed sub evts
+  = do subKey <- persistentGetSubKey sub
+       let uuid = _perSubId sub
+           pkg = createAckPackage (_perCred sub) uuid subKey evts
+       publishWith (_perExec sub) (SendPackage pkg)
 
 --------------------------------------------------------------------------------
 -- | Acknowledges that 'ResolvedEvent' has been successfully processed.
@@ -166,23 +137,14 @@ eventsFailed sub evts a r =
 
 --------------------------------------------------------------------------------
 -- | Acknowledges those event ids have failed to be processed successfully.
-notifyEventsFailed :: PersistentSubscription
-                   -> NakAction
-                   -> Maybe Text
-                   -> [UUID]
-                   -> IO ()
-notifyEventsFailed PersistentSubscription{..} act res evts = do
-  details <- atomically $ do
-    p <- readTVar _perPhase
-    case p of
-      Closed outcome  ->
-        case outcome of
-          Right r -> throwSTM (SubscriptionClosed $ Just r)
-          Left e  -> throwSTM e
-      Pending   -> retrySTM
-      Running d -> return d
-
-  let uuid     = subId details
-      Just sid = subSubId details
-      pkg      = createNakPackage _perCred uuid sid act res evts
-  publishWith _perExec (SendPackage pkg)
+notifyEventsFailed
+  :: PersistentSubscription
+  -> NakAction
+  -> Maybe Text -- Reason
+  -> [UUID]
+  -> IO ()
+notifyEventsFailed sub act res evts
+  = do subKey <- persistentGetSubKey sub
+       let uuid = _perSubId sub
+           pkg = createNakPackage (_perCred sub) uuid subKey act res evts
+       publishWith (_perExec sub) (SendPackage pkg)

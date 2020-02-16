@@ -12,8 +12,7 @@
 -- Re-exports several modules to ease internal testing.
 --------------------------------------------------------------------------------
 module Database.EventStore.Internal.Test
-  ( module Database.EventStore.Internal.Callback
-  , module Database.EventStore.Internal.Command
+  ( module Database.EventStore.Internal.Command
   , module Database.EventStore.Internal.Communication
   , module Database.EventStore.Internal.Connection
   , module Database.EventStore.Internal.Control
@@ -27,7 +26,6 @@ module Database.EventStore.Internal.Test
   , module Database.EventStore.Internal.Types
   ) where
 
-import Database.EventStore.Internal.Callback
 import Database.EventStore.Internal.Command
 import Database.EventStore.Internal.Communication
 import Database.EventStore.Internal.Connection

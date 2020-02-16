@@ -25,7 +25,6 @@ import Control.Monad.Reader
 import Data.Time
 
 --------------------------------------------------------------------------------
-import           Database.EventStore.Internal.Callback
 import           Database.EventStore.Internal.Command
 import           Database.EventStore.Internal.Communication
 import           Database.EventStore.Internal.Connection
@@ -36,7 +35,7 @@ import           Database.EventStore.Internal.Logger
 import           Database.EventStore.Internal.Operation
 import           Database.EventStore.Internal.Operation.Authenticate (newAuthenticatePkg)
 import           Database.EventStore.Internal.Operation.Identify (newIdentifyPkg)
-import qualified Database.EventStore.Internal.OperationManager as Operation
+import qualified Database.EventStore.Internal.Manager.Operation.Registry as Operation
 import           Database.EventStore.Internal.Prelude
 import           Database.EventStore.Internal.Stopwatch
 import           Database.EventStore.Internal.Types
@@ -70,7 +69,7 @@ atLeastEstablishingState = \case
   Init -> False
   Connected{} -> True
   Closed -> True
-  Connecting a s ->
+  Connecting _ s ->
     case s of
       Reconnecting -> False
       EndpointDiscovery -> False
@@ -156,7 +155,7 @@ data Internal =
            , _stage         :: IORef Stage
            , _last          :: IORef (Maybe EndPoint)
            , _sending       :: TVar Bool
-           , _opMgr         :: Operation.Manager
+           , _opMgr         :: Operation.Registry
            , _stopwatch     :: Stopwatch
            , _lastCheck     :: IORef NominalDiffTime
            , _lastConnected :: IORef Bool
@@ -171,20 +170,20 @@ incrPackageNumber Internal{..} = do
   monitorIncrPkgCount
 
 --------------------------------------------------------------------------------
-connectionManager :: ConnectionBuilder
+connectionManager :: Settings
+                  -> ConnectionBuilder
                   -> Discovery
                   -> Hub
                   -> IO ()
-connectionManager builder disc mainBus = do
+connectionManager setts builder disc mainBus = do
   stageRef <- newIORef Init
   let mkInternal = Internal disc builder stageRef
-      connRef    = ConnectionRef $ lookingUpConnectionWhenConnected stageRef
 
   stopwatch    <- newStopwatch
   timeoutCheck <- stopwatchElapsed stopwatch
   internal <- mkInternal <$> newIORef Nothing
                          <*> newTVarIO False
-                         <*> Operation.new connRef
+                         <*> Operation.registryNew (s_operationTimeout setts) (s_operationRetry setts)
                          <*> return stopwatch
                          <*> newIORef timeoutCheck
                          <*> newIORef False
@@ -195,7 +194,7 @@ connectionManager builder disc mainBus = do
   subscribe mainBus (onEstablish internal)
   subscribe mainBus (onEstablished internal)
   subscribe mainBus (onArrived internal)
-  subscribe mainBus (onSubmitOperation internal)
+  subscribe mainBus (onTransmit internal)
   subscribe mainBus (onConnectionError internal)
   subscribe mainBus (onConnectionClosed internal)
   subscribe mainBus (onCloseConnection internal)
@@ -318,7 +317,8 @@ clientIdentified self@Internal{..} =
       -- ms. This could lead the first operation to take time before gettings.
       -- FIXME: We might consider doing that hack only if it's the first time
       -- we connect with the server.
-      Operation.check _opMgr
+      pkgs <- Operation.registryCheckAndRetry _opMgr (connectionId conn)
+      traverse_ (enqueuePackage conn) pkgs
     _ -> pure ()
 
 --------------------------------------------------------------------------------
@@ -330,7 +330,7 @@ closeConnection :: Exception e => Internal -> e -> EventStore ()
 closeConnection self@Internal{..} cause = do
   $logDebug [i|CloseConnection: #{cause}.|]
   mConn <- lookupConnectionAndSwitchToClosed self
-  Operation.cleanup _opMgr
+  Operation.registryAbort _opMgr
   traverse_ (closeTcpConnection self cause) mConn
   $logInfo [i|CloseConnection: connection cleanup done for [#{cause}].|]
   publish (FatalException cause)
@@ -423,12 +423,15 @@ onTick self@Internal{..} _ = do
 
     (defaultConnecting -> True) -> manageHeartbeats self
 
-    Connected _ -> do
+    Connected conn -> do
       elapsed           <- stopwatchElapsed _stopwatch
       timeoutCheckStart <- readIORef _lastCheck
 
       when (elapsed - timeoutCheckStart >= s_operationTimeout setts) $ do
-        Operation.check _opMgr
+        $logDebug "Start check and retry..."
+        pkgs <- Operation.registryCheckAndRetry _opMgr (connectionId conn)
+        traverse_ (enqueuePackage conn) pkgs
+        $logDebug "Completed check and retry"
         atomicWriteIORef _lastCheck elapsed
 
     _ -> return ()
@@ -561,12 +564,9 @@ onArrived self@Internal{..} (PackageArrived conn pkg@Package{..}) = do
       | packageCmd == heartbeatRequestCmd =
         enqueuePackage conn heartbeatResponse
       | otherwise =
-        Operation.handle _opMgr pkg >>= \case
-          Nothing       -> $logWarn [i|Package not handled: #{pkg}|]
-          Just decision ->
-            case decision of
-              Operation.Handled        -> return ()
-              Operation.Reconnect node -> forceReconnect self node
+        Operation.registryHandle _opMgr pkg >>= \case
+          Nothing -> pure ()
+          Just node -> forceReconnect self node
 
     closedOrInit = \case
       Init -> True
@@ -605,17 +605,21 @@ onShutdown :: Internal -> SystemShutdown -> EventStore ()
 onShutdown self@Internal{..} _ = do
   $logDebug "Shutting down..."
   mConn <- lookupConnectionAndSwitchToClosed self
-  Operation.cleanup _opMgr
+  Operation.registryAbort _opMgr
   traverse_ dispose mConn
   $logDebug "Shutdown properly."
   publish (ServiceTerminated ConnectionManager)
 
 --------------------------------------------------------------------------------
-onSubmitOperation :: Internal -> SubmitOperation -> EventStore ()
-onSubmitOperation Internal{..} (SubmitOperation callback op) =
+onTransmit :: Internal -> Transmit -> EventStore ()
+onTransmit Internal{..} (Transmit m lifetime pkg) =
   readIORef _stage >>= \case
-    Closed -> reject callback Aborted
-    _      -> Operation.submit _opMgr op callback
+    Closed
+      -> mailboxFail m Aborted
+    Connected conn
+      -> do enqueuePackage conn pkg
+            Operation.registryRegister _opMgr (connectionId conn) lifetime pkg m
+    _ -> Operation.registryPostpone _opMgr m lifetime pkg
 
 --------------------------------------------------------------------------------
 onCloseConnection :: Internal -> CloseConnection -> EventStore ()
@@ -637,13 +641,6 @@ lookingUpConnection ref = go <$> readIORef ref
         Identification _ _ conn -> Just conn
         _ -> Nothing
     go _ = Nothing
-
---------------------------------------------------------------------------------
-lookingUpConnectionWhenConnected :: IORef Stage -> EventStore (Maybe Connection)
-lookingUpConnectionWhenConnected = fmap go . readIORef
-  where
-    go (Connected conn) = Just conn
-    go _                = Nothing
 
 --------------------------------------------------------------------------------
 onSendPackage :: Internal -> SendPackage -> EventStore ()

@@ -107,7 +107,7 @@ getSettings :: EventStore Settings
 getSettings = __settings <$> getEnv
 
 --------------------------------------------------------------------------------
-freshUUID :: EventStore UUID
+freshUUID :: MonadIO m => m UUID
 freshUUID = liftIO nextRandom
 
 --------------------------------------------------------------------------------

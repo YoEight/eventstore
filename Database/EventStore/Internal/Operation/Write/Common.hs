@@ -15,7 +15,7 @@ module Database.EventStore.Internal.Operation.Write.Common where
 import Data.Int
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Control (freshUUID)
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
@@ -32,9 +32,9 @@ data WriteResult
 
 --------------------------------------------------------------------------------
 -- | Constructs a 'NewEvent' from an 'Event'.
-eventToNewEvent :: Event -> Code o NewEvent
-eventToNewEvent evt = do
-    uuid <- maybe freshId return evt_id
+eventToNewEventIO :: Event -> IO NewEvent
+eventToNewEventIO evt = do
+    uuid <- maybe freshUUID pure evt_id
     return $ newEvent evt_type
                       uuid
                       evt_data_type

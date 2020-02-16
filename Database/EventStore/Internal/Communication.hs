@@ -18,8 +18,7 @@ module Database.EventStore.Internal.Communication where
 import Data.Typeable
 
 --------------------------------------------------------------------------------
-import Database.EventStore.Internal.Callback
-import Database.EventStore.Internal.Operation
+import Database.EventStore.Internal.Operation (Mailbox, Lifetime)
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Types
 
@@ -51,11 +50,6 @@ data FatalException
   deriving Typeable
 
 --------------------------------------------------------------------------------
-data SubmitOperation =
-  forall a. SubmitOperation (Callback a) (Operation a)
-  deriving Typeable
-
---------------------------------------------------------------------------------
 data ServiceTerminated = ServiceTerminated Service deriving Typeable
 
 --------------------------------------------------------------------------------
@@ -65,3 +59,6 @@ data NewTimer =
 
 --------------------------------------------------------------------------------
 newtype SendPackage = SendPackage Package deriving Typeable
+
+--------------------------------------------------------------------------------
+data Transmit = Transmit Mailbox Lifetime Package deriving Typeable

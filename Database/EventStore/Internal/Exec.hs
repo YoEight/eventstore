@@ -108,7 +108,7 @@ newExec setts mainBus builder disc = do
       hub      = asHub mainBus
 
   timerService hub
-  connectionManager builder disc hub
+  connectionManager setts builder disc hub
 
   subscribe mainBus (onInit internal)
   subscribe mainBus (onInitFailed internal)

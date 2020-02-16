@@ -24,6 +24,9 @@ import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Control (publishWith)
+import Database.EventStore.Internal.Communication (Transmit(..))
+import Database.EventStore.Internal.Exec (Exec)
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.ReadEvent.Message
 import Database.EventStore.Internal.Operation.Read.Common
@@ -47,24 +50,36 @@ data ReadEvent
 
 --------------------------------------------------------------------------------
 -- | Read a specific event given event number operation.
-readEvent :: Settings
-          -> Text
-          -> Int64
-          -> Bool
-          -> Maybe Credentials
-          -> Operation (ReadResult EventNumber ReadEvent)
-readEvent Settings{..} s evtn tos cred = construct $ do
-    let msg = newRequest s evtn tos s_requireMaster
-    resp <- send readEventCmd readEventCompletedCmd cred msg
-    let r         = getField $ _result resp
-        evt       = newResolvedEvent $ getField $ _indexedEvent resp
-        err       = getField $ _error resp
-        not_found = ReadSuccess $ ReadEventNotFound s evtn
-        found     = ReadSuccess $ ReadEvent s evtn evt
-    case r of
-        NOT_FOUND      -> yield not_found
-        NO_STREAM      -> yield ReadNoStream
-        STREAM_DELETED -> yield $ ReadStreamDeleted $ StreamName s
-        ERROR          -> yield (ReadError err)
-        ACCESS_DENIED  -> yield $ ReadAccessDenied $ StreamName s
-        SUCCESS        -> yield found
+readEvent
+  :: Settings
+  -> Exec
+  -> Text
+  -> Int64
+  -> Bool
+  -> Maybe Credentials
+  -> IO (Async (ReadResult EventNumber ReadEvent))
+readEvent Settings{..} exec stream evtn tos creds
+  = do m <- mailboxNew
+       async $
+         do let req = newRequest stream evtn tos s_requireMaster
+            pkg <- createPkg readEventCmd creds req
+            publishWith exec (Transmit m OneTime pkg)
+            outcome <- mailboxReadDecoded m
+            case outcome of
+              Left e
+                -> throw e
+              Right resp
+                -> let r = getField $ _result resp
+                       evt = newResolvedEvent $ getField $ _indexedEvent resp
+                       err = getField $ _error resp
+                       notFound = ReadSuccess $ ReadEventNotFound stream evtn
+                       found = ReadSuccess $ ReadEvent stream evtn evt in
+                   case r of
+                     NOT_FOUND      -> pure notFound
+                     NO_STREAM      -> pure ReadNoStream
+                     STREAM_DELETED -> pure $ ReadStreamDeleted $ StreamName stream
+                     ERROR          -> pure (ReadError err)
+                     ACCESS_DENIED  -> pure $ ReadAccessDenied $ StreamName stream
+                     SUCCESS        -> pure found
+
+
