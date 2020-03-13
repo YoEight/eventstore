@@ -4,10 +4,10 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: eb0a549811b0ef34603d09a6c439aa42e92e7611e283e09b16208eac25dbe148
+-- hash: bfc27727561771d5b077aa2818fb1ccf229a71f065e8be0f154662b70a5def61
 
 name:           eventstore
-version:        1.3.4
+version:        1.4.0
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
@@ -17,7 +17,7 @@ maintainer:     yo.eight@gmail.com
 copyright:      Yorick Laupa
 license:        BSD3
 license-file:   LICENSE
-tested-with:    GHC >= 7.8 && <= 8.6
+tested-with:    GHC >= 7.8 && <= 8.8
 build-type:     Simple
 extra-source-files:
     README.md
@@ -98,7 +98,6 @@ library
     , containers
     , dns >=3.0.1
     , dotnet-timespan
-    , ekg-core
     , exceptions
     , fast-logger
     , hashable

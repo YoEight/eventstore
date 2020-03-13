@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: haskell:8.6
+      image: haskell:8.8
 
     services:
       eventstore:
