@@ -13,7 +13,6 @@ module Database.EventStore.Internal.Settings where
 
 --------------------------------------------------------------------------------
 import Network.Connection (TLSSettings)
-import System.Metrics (Store)
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Logger
@@ -99,8 +98,10 @@ data Settings
         -- ^ Delay in which an operation will be retried if no response arrived.
       , s_operationRetry :: Retry
         -- ^ Retry strategy when an operation timeout.
-      , s_monitoring :: Maybe Store
-        -- ^ EKG metric store.
+      , s_monitoring :: MonitoringBackend
+        -- ^ Monitoring backend abstraction. You could implement one targetting
+        --   `ekg-core` for example. We will expose an `ekg-core` implementation
+        --   as soon as `ekg-core` supports GHC 8.8.*.
       , s_defaultConnectionName :: Maybe Text
         -- ^ Default connection name.
       , s_defaultUserCredentials :: Maybe Credentials
@@ -122,7 +123,7 @@ data Settings
 --   * 's_loggerDetailed'         = 'False'
 --   * 's_operationTimeout'       = 10 seconds
 --   * 's_operationRetry'         = 'atMost' 3
---   * 's_monitoring'             = 'Nothing'
+--   * 's_monitoring'             = 'noopMonitoringBackend'
 --   * 's_defaultConnectionName'  = 'Nothing'
 --   * 's_defaultUserCredentials' = 'Nothing'
 defaultSettings :: Settings
@@ -138,7 +139,7 @@ defaultSettings  = Settings
                    , s_loggerDetailed         = False
                    , s_operationTimeout       = 10 -- secs
                    , s_operationRetry         = atMost 3
-                   , s_monitoring             = Nothing
+                   , s_monitoring             = noopMonitoringBackend
                    , s_defaultConnectionName  = Nothing
                    , s_defaultUserCredentials = Nothing
                    }
@@ -152,3 +153,40 @@ defaultSSLSettings tls = defaultSettings { s_ssl = Just tls }
 -- | Millisecond timespan
 msDiffTime :: Float -> NominalDiffTime
 msDiffTime n = fromRational $ toRational (n / 1000)
+
+--------------------------------------------------------------------------------
+-- | Monitoring backend abstraction. Gathers all the metrics currently tracked
+--   by the client. Used only by the TCP interface. Be careful as
+--   'MonitoringBackend' is used in a very tight loop. Each
+--   function must not throw any exception or the client will end in a broken
+--   state.
+data MonitoringBackend =
+    MonitoringBackend
+    { monitoringBackendIncrPkgCount :: IO ()
+      -- ^ Called every time a TCP package is sent. We mean high-level TCP
+      --   package, used in EventStore TCP protocol.
+    , monitoringBackendIncrConnectionDrop :: IO ()
+      -- ^ Called every time the client has lost the connection.
+    , monitoringBackendAddDataTransmitted :: Int -> IO ()
+      -- ^ When the client sends a TCP package, it calls that function by
+      --   passing the size of the payload. The goal is to have a distrubtion
+      --   of the amount of data exchanged with the server.
+    , monitoringBackendIncrForceReconnect :: IO ()
+      -- ^ Called every time the client is asked by a node to connect to
+      --   another node. It happens only in cluster connection setting.
+    , monitoringBackendIncrHeartbeatTimeouts :: IO ()
+      -- ^ Called every time the client detects a heartbeat timeout from the
+      --   server.
+    }
+
+--------------------------------------------------------------------------------
+-- | A 'MonitoringBackend' that does nothing.
+noopMonitoringBackend :: MonitoringBackend
+noopMonitoringBackend =
+    MonitoringBackend
+    { monitoringBackendIncrPkgCount = pure ()
+    , monitoringBackendIncrConnectionDrop = pure ()
+    , monitoringBackendAddDataTransmitted = const (pure ())
+    , monitoringBackendIncrForceReconnect = pure ()
+    , monitoringBackendIncrHeartbeatTimeouts = pure ()
+    }

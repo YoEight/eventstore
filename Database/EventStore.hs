@@ -173,6 +173,9 @@ module Database.EventStore
     , LogLevel(..)
     , LogType(..)
     , LoggerFilter(..)
+      -- * Monitoring
+    , MonitoringBackend(..)
+    , noopMonitoringBackend
       -- * Misc
     , Command
     , DropReason(..)

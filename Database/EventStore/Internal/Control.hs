@@ -66,9 +66,6 @@ import GHC.Fingerprint
 import Control.Monad.Reader
 import Data.UUID
 import Data.UUID.V4
-import System.Metrics
-import System.Metrics.Counter hiding (add)
-import System.Metrics.Distribution
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Logger
@@ -77,10 +74,10 @@ import Database.EventStore.Internal.Settings
 
 --------------------------------------------------------------------------------
 data Env =
-  Env { __logRef   :: LoggerRef
-      , __settings :: Settings
-      , __bus      :: Bus
-      , __monitor  :: Maybe Monitoring
+  Env { __logRef   :: !LoggerRef
+      , __settings :: !Settings
+      , __bus      :: !Bus
+      , __monitor  :: !MonitoringBackend
       }
 
 --------------------------------------------------------------------------------
@@ -302,7 +299,7 @@ data Bus =
       , _busEventHandlers  :: IORef EventHandlers
       , _busQueue          :: TBMQueue Message
       , _workerAsync       :: Async ()
-      , _monitoring        :: Maybe Monitoring
+      , _monitoring        :: MonitoringBackend
       }
 
 --------------------------------------------------------------------------------
@@ -324,7 +321,7 @@ newBus ref setts = do
     Bus ref setts <$> newIORef mempty
                   <*> newTBMQueueIO 500
                   <*> async (worker b)
-                  <*> traverse configureMonitoring (s_monitoring setts)
+                  <*> pure (s_monitoring setts)
 
   return bus
 
@@ -375,55 +372,33 @@ publishing self@Bus{..} callbacks a = do
 --------------------------------------------------------------------------------
 -- Monitoring
 --------------------------------------------------------------------------------
-data Monitoring =
-  Monitoring
-  { _pkgCount     :: Counter
-  , _connDrops    :: Counter
-  , _dataTx       :: Distribution
-  , _forceReco    :: Counter
-  , _heartTimeout :: Counter
-  }
-
---------------------------------------------------------------------------------
-configureMonitoring :: Store -> IO Monitoring
-configureMonitoring store =
-  Monitoring <$> createCounter "eventstore.packages.received" store
-             <*> createCounter "eventstore.connection.drops" store
-             <*> createDistribution "eventstore.data.transmitted" store
-             <*> createCounter "eventstore.force_reconnect" store
-             <*> createCounter "eventstore.heartbeat.timeouts" store
 
 --------------------------------------------------------------------------------
 monitorIncrPkgCount :: EventStore ()
 monitorIncrPkgCount = do
   Env{..} <- getEnv
-  for_ __monitor  $ \Monitoring{..}->
-    liftIO $ inc _pkgCount
+  liftIO $ monitoringBackendIncrPkgCount __monitor
 
 --------------------------------------------------------------------------------
 monitorIncrConnectionDrop :: EventStore ()
 monitorIncrConnectionDrop = do
   Env{..} <- getEnv
-  for_ __monitor  $ \Monitoring{..}->
-    liftIO $ inc _connDrops
+  liftIO $ monitoringBackendIncrConnectionDrop __monitor
 
 --------------------------------------------------------------------------------
 monitorAddDataTransmitted :: Int -> EventStore ()
 monitorAddDataTransmitted siz = do
   Env{..} <- getEnv
-  for_ __monitor  $ \Monitoring{..}->
-    liftIO $ add _dataTx (fromIntegral siz)
+  liftIO $ monitoringBackendAddDataTransmitted __monitor siz
 
 --------------------------------------------------------------------------------
 monitorIncrForceReconnect :: EventStore ()
 monitorIncrForceReconnect = do
   Env{..} <- getEnv
-  for_ __monitor  $ \Monitoring{..}->
-    liftIO $ inc _forceReco
+  liftIO $ monitoringBackendIncrForceReconnect __monitor
 
 --------------------------------------------------------------------------------
 monitorIncrHeartbeatTimeouts :: EventStore ()
 monitorIncrHeartbeatTimeouts = do
   Env{..} <- getEnv
-  for_ __monitor  $ \Monitoring{..}->
-    liftIO $ inc _heartTimeout
+  liftIO $ monitoringBackendIncrHeartbeatTimeouts __monitor
