@@ -1,3 +1,10 @@
+1.4.0
+-----
+* Internal: Refactor operation and registry tcp internals.
+* Introduces `MonitoringBackend` to stop relying exclusively on `ekg-core`.
+* Supports GHC 8.8.*.
+* Exposes a stream processing interface for subscriptions.
+
 1.3.3
 -----
 * Add `Pinned` system consumer strategy.

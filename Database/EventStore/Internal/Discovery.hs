@@ -34,7 +34,7 @@ module Database.EventStore.Internal.Discovery
     ) where
 
 --------------------------------------------------------------------------------
-import Prelude (String)
+import Prelude (String, fail)
 import Data.Maybe
 
 --------------------------------------------------------------------------------

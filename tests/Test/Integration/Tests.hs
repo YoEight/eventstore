@@ -17,6 +17,7 @@
 module Test.Integration.Tests (spec) where
 
 --------------------------------------------------------------------------------
+import Prelude (fail)
 import Control.Concurrent.Async (wait)
 import Data.Aeson
 import Data.DotNet.TimeSpan
