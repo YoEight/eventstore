@@ -22,6 +22,9 @@ import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Control (publishWith)
+import Database.EventStore.Internal.Communication (Transmit(..))
+import Database.EventStore.Internal.Exec (Exec)
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadStreamEvents.Message
@@ -32,40 +35,46 @@ import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- | Batch read from a regular stream operation.
-readStreamEvents :: Settings
-                 -> ReadDirection
-                 -> Text
-                 -> Int64
-                 -> Int32
-                 -> Bool
-                 -> Maybe Credentials
-                 -> Operation (ReadResult EventNumber StreamSlice)
-readStreamEvents Settings{..} dir s st cnt tos cred = construct $ do
-    let req_cmd =
-            case dir of
-                Forward  -> readStreamEventsForwardCmd
-                Backward -> readStreamEventsBackwardCmd
-        resp_cmd =
-            case dir of
-                Forward  -> readStreamEventsForwardCompletedCmd
-                Backward -> readStreamEventsBackwardCompletedCmd
+readStreamEvents
+  :: Settings
+  -> Exec
+  -> ReadDirection
+  -> Text
+  -> Int64
+  -> Int32
+  -> Bool
+  -> Maybe Credentials
+  -> IO (Async (ReadResult EventNumber StreamSlice))
+readStreamEvents Settings{..} exec dir stream st cnt tos cred
+  = do m <- mailboxNew
+       async $
+         do let reqCmd =
+                  case dir of
+                    Forward  -> readStreamEventsForwardCmd
+                    Backward -> readStreamEventsBackwardCmd
 
-        msg = newRequest s st cnt tos s_requireMaster
-    resp <- send req_cmd resp_cmd cred msg
-    let r     = getField $ _result resp
-        es    = getField $ _events resp
-        evts  = fmap newResolvedEvent es
-        err   = getField $ _error resp
-        eos   = getField $ _endOfStream resp
-        nxt   = getField $ _nextNumber resp
-        found =
-            if null evts && eos
-            then SliceEndOfStream
-            else Slice evts (if eos then Nothing else Just $ EventNumber nxt)
-    case r of
-        NO_STREAM      -> yield ReadNoStream
-        STREAM_DELETED -> yield $ ReadStreamDeleted $ StreamName s
-        NOT_MODIFIED   -> yield ReadNotModified
-        ERROR          -> yield (ReadError err)
-        ACCESS_DENIED  -> yield $ ReadAccessDenied $ StreamName s
-        SUCCESS        -> yield (ReadSuccess found)
+                req = newRequest stream st cnt tos s_requireMaster
+            pkg <- createPkg reqCmd cred req
+            publishWith exec (Transmit m OneTime pkg)
+            outcome <- mailboxReadDecoded m
+            case outcome of
+              Left e
+                -> throw e
+              Right resp
+                -> let r     = getField $ _result resp
+                       es    = getField $ _events resp
+                       evts  = fmap newResolvedEvent es
+                       err   = getField $ _error resp
+                       eos   = getField $ _endOfStream resp
+                       nxt   = getField $ _nextNumber resp
+                       found =
+                           if null evts && eos
+                           then SliceEndOfStream
+                           else Slice evts (if eos then Nothing else Just $ EventNumber nxt) in
+                   case r of
+                     NO_STREAM -> pure ReadNoStream
+                     STREAM_DELETED -> pure $ ReadStreamDeleted $ StreamName stream
+                     NOT_MODIFIED -> pure ReadNotModified
+                     ERROR -> pure (ReadError err)
+                     ACCESS_DENIED -> pure $ ReadAccessDenied $ StreamName stream
+                     SUCCESS -> pure (ReadSuccess found)

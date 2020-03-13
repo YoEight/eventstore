@@ -52,8 +52,6 @@ module Database.EventStore
     , eventNumber
     , rawEventNumber
     , eventNumberToInt64
-     -- * Common Operation types
-    , OperationMaxAttemptReached(..)
      -- * Read Operations
     , StreamMetadataResult(..)
     , BatchResult
@@ -110,30 +108,21 @@ module Database.EventStore
     , transactionWrite
       -- * Subscription
     , SubscriptionClosed(..)
-    , SubscriptionId
     , SubscriptionStream(..)
     , Subscription
     , SubDropReason(..)
     , SubDetails
-    , waitConfirmation
-    , unsubscribeConfirmed
-    , unsubscribeConfirmedSTM
-    , waitUnsubscribeConfirmed
-    , nextEventMaybeSTM
-    , getSubscriptionDetailsSTM
+    , SubAction(..)
     , unsubscribe
+    , nextSubEvent
+    , streamSubEvents
+    , streamSubResolvedEvents
       -- * Volatile Subscription
     , RegularSubscription
     , subscribe
-    , getSubscriptionId
-    , nextEvent
-    , nextEventMaybe
       -- * Catch-up Subscription
     , CatchupSubscription
     , subscribeFrom
-    , waitTillCatchup
-    , hasCaughtUp
-    , hasCaughtUpSTM
      -- * Persistent Subscription
     , PersistentSubscription
     , PersistentSubscriptionSettings(..)
@@ -226,5 +215,4 @@ import           Database.EventStore.Internal.Subscription.Message
 import           Database.EventStore.Internal.Subscription.Persistent
 import           Database.EventStore.Internal.Subscription.Types
 import           Database.EventStore.Internal.Subscription.Regular
-import           Database.EventStore.Internal.Manager.Operation.Registry
 import           Database.EventStore.Internal.Types

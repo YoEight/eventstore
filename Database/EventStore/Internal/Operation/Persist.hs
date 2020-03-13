@@ -17,6 +17,9 @@ import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Communication (Transmit(..))
+import Database.EventStore.Internal.Control (publishWith)
+import Database.EventStore.Internal.Exec (Exec)
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Settings
@@ -25,57 +28,51 @@ import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-persist :: Text -> Text -> Int32 -> Maybe Credentials -> Operation SubAction
-persist grp stream bufSize cred =
-  construct (issueRequest grp stream bufSize cred)
+persist
+  :: Exec
+  -> Text
+  -> Text
+  -> Int32
+  -> Maybe Credentials
+  -> IO (UUID, TVar (Maybe Text), Chan SubAction)
+persist exec grp stream bufSize cred
+  = do m <- mailboxNew
+       subM <- newChan
+       var <- newTVarIO Nothing
+       let req = _connectToPersistentSubscription grp stream bufSize
+       pkg <- createPkg connectToPersistentSubscriptionCmd cred req
+       let theSubId = packageCorrelation pkg
+       publishWith exec (Transmit m (KeepAlive subscriptionDroppedCmd) pkg)
+       _ <- async $ keepLooping $
+         do outcome <- mailboxRead m
+            case outcome of
+              Left _
+                -> Break () <$ writeChan subM (Dropped SubAborted)
+              Right respPkg
+                | packageCmd respPkg == subscriptionDroppedCmd
+                -> let Right resp = decodePkg respPkg
+                       reason = fromMaybe D_Unsubscribed (getField $ dropReason resp)
+                       subReason = toSubDropReason reason in
+                   Break () <$ writeChan subM (Dropped subReason)
+                | packageCmd respPkg == persistentSubscriptionConfirmationCmd
+                -> do let Right resp = decodePkg respPkg
+                          lcp = getField $ pscLastCommitPos resp
+                          subSubId = getField $ pscId resp
+                          len = getField $ pscLastEvtNumber resp
+                          details =
+                            SubDetails
+                            { subId = theSubId
+                            , subCommitPos = lcp
+                            , subLastEventNum = len
+                            , subSubId = Just subSubId
+                            }
+                      atomically $ writeTVar var (Just subSubId)
+                      Loop <$ writeChan subM (Confirmed details)
+                | packageCmd respPkg == persistentSubscriptionStreamEventAppearedCmd
+                -> let Right resp = decodePkg respPkg
+                       evt = newResolvedEvent $ getField $ psseaEvt resp in
+                   Loop <$ writeChan subM (Submit evt)
+                | otherwise
+                -> pure Loop
 
---------------------------------------------------------------------------------
-issueRequest :: Text -> Text -> Int32 -> Maybe Credentials -> Code SubAction ()
-issueRequest grp stream bufSize cred = do
-  let req = _connectToPersistentSubscription grp stream bufSize
-  request connectToPersistentSubscriptionCmd cred req
-    [ Expect subscriptionDroppedCmd $ \_ d ->
-        handleDropped d
-    , Expect persistentSubscriptionConfirmationCmd $ \sid c -> do
-        let lcp      = getField $ pscLastCommitPos c
-            subSubId = getField $ pscId c
-            len      = getField $ pscLastEvtNumber c
-            details  =
-              SubDetails
-              { subId           = sid
-              , subCommitPos    = lcp
-              , subLastEventNum = len
-              , subSubId        = Just subSubId
-              }
-        yield (Confirmed details)
-        live sid
-    ]
-
---------------------------------------------------------------------------------
-eventAppeared :: PersistentSubscriptionStreamEventAppeared -> Code SubAction ()
-eventAppeared e = do
-  let evt = newResolvedEvent $ getField $ psseaEvt e
-  yield (Submit evt)
-
---------------------------------------------------------------------------------
-live :: UUID -> Code SubAction ()
-live subscriptionId = loop
-  where
-    loop =
-      waitForOr subscriptionId connectionReset
-        [ Expect subscriptionDroppedCmd $ \_ d ->
-            handleDropped d
-        , Expect persistentSubscriptionStreamEventAppearedCmd $ \_ e -> do
-            eventAppeared e
-            loop
-        ]
-
---------------------------------------------------------------------------------
-connectionReset :: Code SubAction ()
-connectionReset = yield ConnectionReset
-
---------------------------------------------------------------------------------
-handleDropped :: SubscriptionDropped -> Code SubAction ()
-handleDropped d = do
-  let reason = fromMaybe D_Unsubscribed (getField $ dropReason d)
-  yield (Dropped $ toSubDropReason reason)
+       pure (theSubId, var, subM)

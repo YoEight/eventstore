@@ -1,13 +1,13 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.31.2.
+-- This file has been generated from package.yaml by hpack version 0.33.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: bf11e2eb3f56e21967cbcbcdbafbb405a8955a6942e4b7f12ddaae7597d57737
+-- hash: eb0a549811b0ef34603d09a6c439aa42e92e7611e283e09b16208eac25dbe148
 
 name:           eventstore
-version:        1.3.3
+version:        1.3.4
 synopsis:       EventStore TCP Client
 description:    EventStore TCP Client <https://eventstore.org>
 category:       Database
@@ -34,7 +34,6 @@ library
       Database.EventStore.Internal.Test
   other-modules:
       Database.EventStore.Internal
-      Database.EventStore.Internal.Callback
       Database.EventStore.Internal.Command
       Database.EventStore.Internal.Communication
       Database.EventStore.Internal.Connection
@@ -67,7 +66,6 @@ library
       Database.EventStore.Internal.Operation.Write.Common
       Database.EventStore.Internal.Operation.WriteEvents
       Database.EventStore.Internal.Operation.WriteEvents.Message
-      Database.EventStore.Internal.OperationManager
       Database.EventStore.Internal.Operations
       Database.EventStore.Internal.Prelude
       Database.EventStore.Internal.Settings

@@ -17,6 +17,9 @@ import Data.UUID
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Communication (Transmit(..))
+import Database.EventStore.Internal.Control (publishWith)
+import Database.EventStore.Internal.Exec (Exec)
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Settings
@@ -26,57 +29,49 @@ import Database.EventStore.Internal.Subscription.Types
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-volatile :: StreamId t -> Bool -> Maybe Credentials -> Operation SubAction
-volatile streamId tos cred = construct (issueRequest stream tos cred)
+volatile
+  :: Exec
+  -> StreamId t
+  -> Bool
+  -> Maybe Credentials
+  -> IO (UUID, Chan SubAction)
+volatile exec streamId tos cred
+  = do m <- mailboxNew
+       subM <- newChan
+       let req = subscribeToStream stream tos
+       pkg <- createPkg subscribeToStreamCmd cred req
+       let theSubId = packageCorrelation pkg
+       publishWith exec (Transmit m (KeepAlive subscriptionDroppedCmd) pkg)
+       _ <- async $ keepLooping $
+         do outcome <- mailboxRead m
+            case outcome of
+              Left _
+                -> Break () <$ writeChan subM (Dropped SubAborted)
+              Right respPkg
+                | packageCmd respPkg == subscriptionDroppedCmd
+                -> let Right resp = decodePkg respPkg
+                       reason = fromMaybe D_Unsubscribed (getField $ dropReason resp)
+                       subReason = toSubDropReason reason in
+                   Break () <$ writeChan subM (Dropped subReason)
+                | packageCmd respPkg == subscriptionConfirmationCmd
+                -> let Right resp = decodePkg respPkg
+                       lcp = getField $ subscribeLastCommitPos resp
+                       len = getField $ subscribeLastEventNumber resp
+                       details =
+                         SubDetails
+                         { subId = theSubId
+                         , subCommitPos = lcp
+                         , subLastEventNum = len
+                         , subSubId = Nothing
+                         } in
+                   Loop <$ writeChan subM (Confirmed details)
+                | packageCmd respPkg == streamEventAppearedCmd
+                -> let Right resp = decodePkg respPkg
+                       evt = newResolvedEventFromBuf $ getField $ streamResolvedEvent resp in
+                   Loop <$ writeChan subM (Submit evt)
+                | otherwise
+                -> pure Loop
+
+       pure (theSubId, subM)
   where
     stream = streamIdRaw streamId
-
---------------------------------------------------------------------------------
-issueRequest :: Text -> Bool -> Maybe Credentials -> Code SubAction ()
-issueRequest stream tos cred = do
-  let req = subscribeToStream stream tos
-  request subscribeToStreamCmd cred req
-    [ Expect subscriptionDroppedCmd $ \_ d ->
-        handleDropped d
-    , Expect subscriptionConfirmationCmd $ \sid c -> do
-        let lcp     = getField $ subscribeLastCommitPos c
-            len     = getField $ subscribeLastEventNumber c
-            details =
-              SubDetails
-              { subId           = sid
-              , subCommitPos    = lcp
-              , subLastEventNum = len
-              , subSubId        = Nothing
-              }
-        yield (Confirmed details)
-        live sid
-    ]
-
---------------------------------------------------------------------------------
-eventAppeared :: StreamEventAppeared -> Code SubAction ()
-eventAppeared e = do
-  let evt = newResolvedEventFromBuf $ getField $ streamResolvedEvent e
-  yield (Submit evt)
-
---------------------------------------------------------------------------------
-live :: UUID -> Code SubAction ()
-live subscriptionId = loop
-  where
-    loop =
-      waitForOr subscriptionId connectionReset
-        [ Expect subscriptionDroppedCmd $ \_ d ->
-            handleDropped d
-        , Expect streamEventAppearedCmd $ \_ e -> do
-            eventAppeared e
-            loop
-        ]
-
---------------------------------------------------------------------------------
-connectionReset :: Code SubAction ()
-connectionReset = yield ConnectionReset
-
---------------------------------------------------------------------------------
-handleDropped :: SubscriptionDropped -> Code SubAction ()
-handleDropped d = do
-  let reason = fromMaybe D_Unsubscribed (getField $ dropReason d)
-  yield (Dropped $ toSubDropReason reason)

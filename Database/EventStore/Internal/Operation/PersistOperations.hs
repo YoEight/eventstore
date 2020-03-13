@@ -20,6 +20,9 @@ import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Communication (Transmit(..))
+import Database.EventStore.Internal.Control (publishWith)
+import Database.EventStore.Internal.Exec (Exec)
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Prelude
 import Database.EventStore.Internal.Subscription.Message
@@ -28,55 +31,76 @@ import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
-persistOperation :: Text
-                 -> Text
-                 -> Maybe Credentials
-                 -> PersistAction
-                 -> Operation (Maybe PersistActionException)
-persistOperation grp stream cred tpe = construct go
-  where
-    go =
-      case tpe of
-        PersistCreate ss -> do
-          let req = _createPersistentSubscription grp stream ss
-          resp <- send createPersistentSubscriptionCmd
-                       createPersistentSubscriptionCompletedCmd cred req
-          let result = createRException $ getField $ cpscResult resp
-          yield result
-        PersistUpdate ss -> do
-          let req = _updatePersistentSubscription grp stream ss
-          resp <- send updatePersistentSubscriptionCmd
-                       updatePersistentSubscriptionCompletedCmd cred req
-          let result = updateRException $ getField $ upscResult resp
-          yield result
-        PersistDelete -> do
-          let req = _deletePersistentSubscription grp stream
-          resp <- send deletePersistentSubscriptionCmd
-                       deletePersistentSubscriptionCompletedCmd cred req
-          let result = deleteRException $ getField $ dpscResult resp
-          yield result
+persistOperation
+  :: Exec
+  -> Text
+  -> Text
+  -> Maybe Credentials
+  -> PersistAction
+  -> IO (Async (Maybe PersistActionException))
+persistOperation exec grp stream cred tpe
+  = do m <- mailboxNew
+       async $
+         case tpe of
+           PersistCreate ss
+             -> do let req = _createPersistentSubscription grp stream ss
+                   pkg <- createPkg createPersistentSubscriptionCmd cred req
+                   publishWith exec (Transmit m OneTime pkg)
+                   outcome <- mailboxReadDecoded m
+                   case outcome of
+                     Left e
+                       -> throw e
+                     Right resp
+                       -> pure $ createRException $ getField $ cpscResult resp
+           PersistUpdate ss
+             -> do let req = _updatePersistentSubscription grp stream ss
+                   pkg <- createPkg updatePersistentSubscriptionCmd cred req
+                   publishWith exec (Transmit m OneTime pkg)
+                   outcome <- mailboxReadDecoded m
+                   case outcome of
+                     Left e
+                       -> throw e
+                     Right resp
+                       -> pure $ updateRException $ getField $ upscResult resp
+           PersistDelete
+             -> do let req = _deletePersistentSubscription grp stream
+                   pkg <- createPkg deletePersistentSubscriptionCmd cred req
+                   publishWith exec (Transmit m OneTime pkg)
+                   outcome <- mailboxReadDecoded m
+                   case outcome of
+                     Left e
+                       -> throw e
+                     Right resp
+                       -> pure $ deleteRException $ getField $ dpscResult resp
 
 --------------------------------------------------------------------------------
-createPersist :: Text
-              -> Text
-              -> PersistentSubscriptionSettings
-              -> Maybe Credentials
-              -> Operation (Maybe PersistActionException)
-createPersist grp stream ss cred =
-  persistOperation grp stream cred (PersistCreate ss)
+createPersist
+  :: Exec
+  -> Text
+  -> Text
+  -> PersistentSubscriptionSettings
+  -> Maybe Credentials
+  -> IO (Async (Maybe PersistActionException))
+createPersist exec grp stream ss cred
+  = persistOperation exec grp stream cred (PersistCreate ss)
 
 --------------------------------------------------------------------------------
-updatePersist :: Text
-              -> Text
-              -> PersistentSubscriptionSettings
-              -> Maybe Credentials
-              -> Operation (Maybe PersistActionException)
-updatePersist grp stream ss cred =
-  persistOperation grp stream cred (PersistUpdate ss)
+updatePersist
+  :: Exec
+  -> Text
+  -> Text
+  -> PersistentSubscriptionSettings
+  -> Maybe Credentials
+  -> IO (Async (Maybe PersistActionException))
+updatePersist exec grp stream ss cred
+  = persistOperation exec grp stream cred (PersistUpdate ss)
 
 --------------------------------------------------------------------------------
-deletePersist :: Text
-              -> Text
-              -> Maybe Credentials
-              -> Operation (Maybe PersistActionException)
-deletePersist grp stream cred = persistOperation grp stream cred PersistDelete
+deletePersist
+  :: Exec
+  -> Text
+  -> Text
+  -> Maybe Credentials
+  -> IO (Async (Maybe PersistActionException))
+deletePersist exec grp stream cred
+  = persistOperation exec grp stream cred PersistDelete

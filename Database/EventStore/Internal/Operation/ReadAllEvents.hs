@@ -22,6 +22,9 @@ import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Control (publishWith)
+import Database.EventStore.Internal.Communication (Transmit(..))
+import Database.EventStore.Internal.Exec (Exec)
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Read.Common
 import Database.EventStore.Internal.Operation.ReadAllEvents.Message
@@ -32,35 +35,43 @@ import Database.EventStore.Internal.Types
 
 --------------------------------------------------------------------------------
 -- | Batch read on $all stream operation.
-readAllEvents :: Settings
-              -> Int64
-              -> Int64
-              -> Int32
-              -> Bool
-              -> ReadDirection
-              -> Maybe Credentials
-              -> Operation AllSlice
-readAllEvents Settings{..} c_pos p_pos max_c tos dir cred = construct $ do
-    let msg = newRequest c_pos p_pos max_c tos s_requireMaster
-        cmd = case dir of
-            Forward  -> readAllEventsForwardCmd
-            Backward -> readAllEventsBackwardCmd
+readAllEvents
+  :: Settings
+  -> Exec
+  -> Int64
+  -> Int64
+  -> Int32
+  -> Bool
+  -> ReadDirection
+  -> Maybe Credentials
+  -> IO (Async AllSlice)
+readAllEvents Settings{..} exec c_pos p_pos max_c tos dir cred
+  = do m <- mailboxNew
+       async $
+         do let req = newRequest c_pos p_pos max_c tos s_requireMaster
+                cmd =
+                  case dir of
+                    Forward  -> readAllEventsForwardCmd
+                    Backward -> readAllEventsBackwardCmd
 
-        resp_cmd = case dir of
-            Forward  -> readAllEventsForwardCompletedCmd
-            Backward -> readAllEventsBackwardCompletedCmd
-    resp <- send cmd resp_cmd cred msg
-    let r      = getField $ _Result resp
-        err    = getField $ _Error resp
-        nc_pos = getField $ _NextCommitPosition resp
-        np_pos = getField $ _NextPreparePosition resp
-        es     = getField $ _Events resp
-        evts   = fmap newResolvedEventFromBuf es
-        eos    = null evts
-        n_pos  = Position nc_pos np_pos
-        slice  =
-            if eos then SliceEndOfStream else Slice evts (Just n_pos)
-    case fromMaybe SUCCESS r of
-        ERROR         -> serverError err
-        ACCESS_DENIED -> accessDenied All
-        _             -> yield slice
+            pkg <- createPkg cmd cred req
+            publishWith exec (Transmit m OneTime pkg)
+            outcome <- mailboxReadDecoded m
+            case outcome of
+              Left e
+                -> throw e
+              Right resp
+                -> let r = getField $ _Result resp
+                       err = getField $ _Error resp
+                       nc_pos = getField $ _NextCommitPosition resp
+                       np_pos = getField $ _NextPreparePosition resp
+                       es = getField $ _Events resp
+                       evts = fmap newResolvedEventFromBuf es
+                       eos = null evts
+                       n_pos = Position nc_pos np_pos
+                       slice =
+                           if eos then SliceEndOfStream else Slice evts (Just n_pos) in
+                   case fromMaybe SUCCESS r of
+                     ERROR -> throw $ ServerError err
+                     ACCESS_DENIED -> throw $ AccessDenied All
+                     _ -> pure slice

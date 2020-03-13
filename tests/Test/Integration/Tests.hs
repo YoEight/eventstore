@@ -38,22 +38,20 @@ import Database.EventStore
     , Slice(..)
     , ConnectionType(..)
     , Connection
+    , SubAction(..)
+    , acknowledge
     , getStreamMetadata
     , sendEvent
     , sendEvents
     , setStreamMetadata
-    , nextEvent
-    , notifyEventsProcessed
-    , waitConfirmation
+    , nextSubEvent
+    , streamSubEvents
     , connectToPersistentSubscription
     , unsubscribe
     , createPersistentSubscription
     , deletePersistentSubscription
     , updatePersistentSubscription
-    , nextEventMaybe
-    , waitUnsubscribeConfirmed
     , subscribeFrom
-    , waitTillCatchup
     , readEventsBackward
     , readEventsForward
     , subscribe
@@ -78,7 +76,9 @@ import Database.EventStore.Internal.Test hiding
     , transactionCommit
     , i
     )
+import Data.Maybe (fromJust)
 import Database.EventStore.Streaming
+import qualified Streaming.Prelude as Streaming
 import Test.Common
 
 --------------------------------------------------------------------------------
@@ -260,21 +260,34 @@ subscribeTest conn = do
               ]
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     sub  <- subscribe conn stream NoResolveLink Nothing
-    _    <- waitConfirmation sub
-    _    <- sendEvents conn stream anyVersion evts Nothing >>= wait
-    let loop 3 = return []
-        loop i = do
-            e <- nextEvent sub
-            fmap (resolvedEventDataAsJson e:) $ loop (i+1)
+    confirmChan <- newChan
+    resultChan <- newChan
 
-    nxt_js <- loop (0 :: Int)
-    assertEqual "Events should be equal" jss (catMaybes nxt_js)
-    unsubscribe sub
-    let action = do
-            _ <- nextEvent sub
-            return False
-    res <- catch action $ \(_ :: SubscriptionClosed) -> return True
-    assertBool "Should have raised an exception" res
+
+    fork $
+      do let loop state@(acc, cnt)
+               | cnt == 3
+               = writeChan resultChan (reverse acc)
+
+               | otherwise
+               = do tpe <- nextSubEvent sub
+                    case tpe of
+                      Confirmed _
+                        -> do writeChan confirmChan ()
+                              loop state
+
+                      Submit evt
+                        -> loop (evt:acc, cnt+1)
+
+                      Dropped _
+                        -> writeChan resultChan (reverse acc)
+         loop ([],0)
+
+    readChan confirmChan
+    _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
+    result <- fmap (fromJust . resolvedEventDataAsJson) <$> readChan resultChan
+
+    assertEqual "Events should match" jss result
 
 --------------------------------------------------------------------------------
 subscribeFromTest :: Connection -> IO ()
@@ -294,73 +307,75 @@ subscribeFromTest conn = do
         evts2  = fmap (createEvent "foo" Nothing . withJson) jss2
     _   <- sendEvents conn stream anyVersion evts Nothing >>= wait
     sub <- subscribeFrom conn stream NoResolveLink Nothing (Just 1) Nothing
-    _   <- waitConfirmation sub
-    _   <- sendEvents conn stream anyVersion evts2 Nothing >>= wait
+    confirmChan <- newChan
+    resultChan <- newChan
 
-    let loop [] = do
-            m <- nextEventMaybe sub
-            case m of
-                Just _  -> fail "should not have more events at the point."
-                Nothing -> return ()
-        loop (x:xs) = do
-            evt <- nextEvent sub
-            case recordedEventDataAsJson $ resolvedEventOriginal evt of
-                Just e | e == x    -> loop xs
-                       | otherwise -> fail "Out of order event's appeared."
-                _ -> fail "Can't deserialized event"
 
-    loop alljss
-    unsubscribe sub
-    waitUnsubscribeConfirmed sub
-    let action = do
-            _ <- nextEvent sub
-            return False
-    res <- catch action $ \(_ :: SubscriptionClosed) -> return True
-    assertBool "Should have raised an exception" res
+    fork $
+      do let loop state@(acc, cnt)
+               | cnt == 6
+               = writeChan resultChan (reverse acc)
 
---------------------------------------------------------------------------------
-data SubNoStreamTest
-  = SubNoStreamTestSuccess
-  | SubNoStreamTestTimeout
-  deriving (Eq, Show)
+               | otherwise
+               = do tpe <- nextSubEvent sub
+                    case tpe of
+                      Confirmed _
+                        -> do writeChan confirmChan ()
+                              loop state
+
+                      Submit evt
+                        -> do loop (evt:acc, cnt+1)
+
+                      Dropped _
+                        -> writeChan resultChan (reverse acc)
+         loop ([],0)
+
+    readChan confirmChan
+    _ <- sendEvents conn stream anyVersion evts2 Nothing >>= wait
+    result <- fmap (fromJust . resolvedEventDataAsJson) <$> readChan resultChan
+
+    assertEqual "Events should match" alljss result
 
 --------------------------------------------------------------------------------
 subscribeFromNoStreamTest :: Connection -> IO ()
 subscribeFromNoStreamTest conn = do
   stream <- freshStreamId
   sub <- subscribeFrom conn stream NoResolveLink Nothing Nothing Nothing
-  let loop [] = do
-          m <- nextEventMaybe sub
-          case m of
-              Just _  -> fail "should not have more events at the point."
-              Nothing -> return ()
-      loop (x:xs) = do
-          evt <- nextEvent sub
-          case recordedEventDataAsJson $ resolvedEventOriginal evt of
-              Just e | e == x    -> loop xs
-                     | otherwise -> fail "Out of order event's appeared."
-              _ -> fail "Can't deserialized event"
+  confirmChan <- newChan
+  resultChan <- newChan
 
-      subAction = do
-          waitTillCatchup sub
-          let jss = [ object [ "1" .= (1 :: Int)]
-                    , object [ "2" .= (2 :: Int)]
-                    , object [ "3" .= (3 :: Int)]
-                    ]
 
-              evts = fmap (createEvent "foo" Nothing . withJson) jss
+  fork $
+    do let loop state@(acc, cnt)
+             | cnt == 3
+             = writeChan resultChan (reverse acc)
 
-          _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
-          loop jss
-          return SubNoStreamTestSuccess
-      timeout = do
-          threadDelay (12 * secs)
-          return SubNoStreamTestTimeout
+             | otherwise
+             = do tpe <- nextSubEvent sub
+                  case tpe of
+                    Confirmed _
+                      -> do writeChan confirmChan ()
+                            loop state
 
-  res <- race subAction timeout
-  case res of
-    Left r -> assertEqual "Wrong test result" SubNoStreamTestSuccess r
-    Right r -> assertEqual "Wrong test result" SubNoStreamTestSuccess r
+                    Submit evt
+                      -> loop (evt:acc, cnt+1)
+
+                    Dropped _
+                      -> writeChan resultChan (reverse acc)
+       loop ([],0)
+
+  readChan confirmChan
+  let jss = [ object [ "1" .= (1 :: Int)]
+            , object [ "2" .= (2 :: Int)]
+            , object [ "3" .= (3 :: Int)]
+            ]
+
+      evts = fmap (createEvent "foo" Nothing . withJson) jss
+
+  _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
+  result <- fmap (fromJust . resolvedEventDataAsJson) <$> readChan resultChan
+
+  assertEqual "Events should match" jss result
 
 --------------------------------------------------------------------------------
 setStreamMetadataTest :: Connection -> IO ()
@@ -483,29 +498,35 @@ connectToPersistentTest conn = do
         evts = fmap (createEvent "foo" Nothing . withJson) jss
     stream <- freshStreamId
     _   <- createPersistentSubscription conn "group" stream def Nothing >>= wait
-    _   <- sendEvents conn stream anyVersion evts Nothing >>= wait
     sub <- connectToPersistentSubscription conn "group" stream 1 Nothing
-    _   <- waitConfirmation sub
-    r   <- nextEvent sub
-    case resolvedEventDataAsJson r of
-        Just js_evt -> assertEqual "event 1 should match" js1 js_evt
-        _           -> fail "Deserialization error"
+    confirmChan <- newChan
+    resultChan <- newChan
 
-    notifyEventsProcessed sub [resolvedEventOriginalId r]
+    fork $
+      do let loop state@(acc, cnt)
+               | cnt == 2
+               = writeChan resultChan (reverse acc)
 
-    r2 <- nextEvent sub
-    case resolvedEventDataAsJson r2 of
-        Just js_evt -> assertEqual "event 2 should match" js2 js_evt
-        _           -> fail "Deserialization error"
+               | otherwise
+               = do tpe <- nextSubEvent sub
+                    case tpe of
+                      Confirmed _
+                        -> do writeChan confirmChan ()
+                              loop state
 
-    notifyEventsProcessed sub [resolvedEventOriginalId r2]
+                      Submit evt
+                        -> do acknowledge sub evt
+                              loop (evt:acc, cnt+1)
 
-    unsubscribe sub
-    let action = do
-            _ <- nextEvent sub
-            return False
-    res <- catch action $ \(_ :: SubscriptionClosed) -> return True
-    assertBool "Should have raised an exception" res
+                      Dropped _
+                        -> writeChan resultChan (reverse acc)
+         loop ([],0)
+
+    readChan confirmChan
+    _ <- sendEvents conn stream anyVersion evts Nothing >>= wait
+    result <- fmap (fromJust . resolvedEventDataAsJson) <$> readChan resultChan
+
+    assertEqual "Both events should match" [js1,js2] result
 
 --------------------------------------------------------------------------------
 maxAgeTest :: Connection -> IO ()

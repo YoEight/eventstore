@@ -21,6 +21,10 @@ import Data.ProtocolBuffers
 
 --------------------------------------------------------------------------------
 import Database.EventStore.Internal.Command
+import Database.EventStore.Internal.Communication (Transmit(..))
+import Database.EventStore.Internal.Control (publishWith)
+import Database.EventStore.Internal.Exec
+import Database.EventStore.Internal.Operation (OpResult(..))
 import Database.EventStore.Internal.Operation
 import Database.EventStore.Internal.Operation.Write.Common
 import Database.EventStore.Internal.Operation.WriteEvents.Message
@@ -29,32 +33,45 @@ import Database.EventStore.Internal.Settings
 import Database.EventStore.Internal.Stream
 import Database.EventStore.Internal.Types
 
---------------------------------------------------------------------------------
--- | Write events operation.
-writeEvents :: Settings
-            -> Text
-            -> ExpectedVersion
-            -> Maybe Credentials
-            -> [Event]
-            -> Operation WriteResult
-writeEvents Settings{..} s v cred evts = construct $ do
-    nevts <- traverse eventToNewEvent evts
-    let msg = newRequest s (expVersionInt64 v) nevts s_requireMaster
-    resp <- send writeEventsCmd writeEventsCompletedCmd cred msg
-    let r            = getField $ _result resp
-        com_pos      = getField $ _commitPosition resp
-        prep_pos     = getField $ _preparePosition resp
-        lst_num      = getField $ _lastNumber resp
-        com_pos_int  = fromMaybe (-1) com_pos
-        prep_pos_int = fromMaybe (-1) prep_pos
-        pos          = Position com_pos_int prep_pos_int
-        res          = WriteResult lst_num pos
-    case r of
-        OP_SUCCESS                -> yield res
-        OP_PREPARE_TIMEOUT        -> retry
-        OP_FORWARD_TIMEOUT        -> retry
-        OP_COMMIT_TIMEOUT         -> retry
-        OP_WRONG_EXPECTED_VERSION -> wrongVersion s v
-        OP_STREAM_DELETED         -> streamDeleted $ StreamName s
-        OP_INVALID_TRANSACTION    -> invalidTransaction
-        OP_ACCESS_DENIED          -> accessDenied (StreamName s)
+-------------------------------------------------------------------------------
+writeEvents
+  :: Settings
+  -> Exec
+  -> Text
+  -> ExpectedVersion
+  -> Maybe Credentials
+  -> [Event]
+  -> IO (Async WriteResult)
+writeEvents setts exec stream version creds evts
+  = do m <- mailboxNew
+       async $
+         do nevts <- traverse eventToNewEventIO evts
+            let req = newRequest stream (expVersionInt64 version) nevts (s_requireMaster setts)
+
+            pkg <- createPkg writeEventsCmd creds req
+
+            keepLooping $ do
+              publishWith exec (Transmit m OneTime pkg)
+              outcome <- mailboxReadDecoded m
+              case outcome of
+                Left e
+                  -> throw e
+                Right resp
+                  -> let r = getField $ _result resp
+                         com_pos = getField $ _commitPosition resp
+                         prep_pos = getField $ _preparePosition resp
+                         lst_num = getField $ _lastNumber resp
+                         com_pos_int = fromMaybe (-1) com_pos
+                         prep_pos_int = fromMaybe (-1) prep_pos
+                         pos = Position com_pos_int prep_pos_int
+                         res = WriteResult lst_num pos in
+                     case r of
+                         OP_SUCCESS -> pure $ Break res
+                         OP_PREPARE_TIMEOUT -> pure Loop
+                         OP_FORWARD_TIMEOUT -> pure Loop
+                         OP_COMMIT_TIMEOUT -> pure Loop
+                         OP_WRONG_EXPECTED_VERSION -> throw $ WrongExpectedVersion stream version
+                         OP_STREAM_DELETED -> throw $ StreamDeleted $ StreamName stream
+                         OP_INVALID_TRANSACTION -> throw InvalidTransaction
+                         OP_ACCESS_DENIED -> throw $ AccessDenied (StreamName stream)
+
