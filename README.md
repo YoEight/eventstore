@@ -11,7 +11,7 @@ Requirements
   * 64bits system
   * GHC        >= 8.0.3
   * Cabal      >= 1.18
-  * EventStore >= 4
+  * EventStore >= 4 (Doesn't support EventStore 2020 Preview yet, previously named version 6).
 
 *Note: If you use this client version >= to `1.1`, it will only supports EventStore >= 4.0.0.*
 
@@ -26,10 +26,8 @@ $ cabal install eventstore
 
 * From source
 ```
-$ git clone https://gitlab.com/YoEight/eventstore-hs.git
+$ git clone https://github.com/YoEight/eventstore.git
 $ cd eventstore
-$ cabal install --only-dependencies
-$ cabal configure
 $ cabal install
 ```
 
@@ -37,8 +35,6 @@ How to test
 ===========
 Tests are available. Those assume a server is running on `127.0.0.1` and `1113` port.
 ```
-$ cabal install --only-dependencies --enable-tests
-$ cabal configure --enable-tests
 $ cabal test
 ```
 
