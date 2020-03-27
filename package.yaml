@@ -1,9 +1,9 @@
 name: eventstore
-version: 1.4.0
+version: 1.4.1
 homepage: https://github.com/YoEight/eventstore
 tested-with: GHC >= 8.0 && <= 8.8
 synopsis: EventStore TCP Client
-description: EventStore TCP Client <https://eventstore.org>
+description: EventStore TCP Client <https://eventstore.com>
 license: BSD3
 license-file: LICENSE
 author: Yorick Laupa

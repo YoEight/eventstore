@@ -4,7 +4,7 @@ EventStore Haskell TCP client
 [Talk and exchange ideas in our dedicated Discord Server]
 
 That driver supports 100% of EventStore features !
-More information about the GetEventStore database can be found there: https://eventstore.org/
+More information about the GetEventStore database can be found there: https://eventstore.com/
 
 Requirements
 ============

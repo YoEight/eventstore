@@ -4,12 +4,12 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: ddd7a1bceafaa54e7b8bf636d520fca1eaa6569f66fe19640603f77e065c9469
+-- hash: ce06cc20eb2ef61c0d52dc888830182016c2f8c1d036e25d6e481d12b9d0ae76
 
 name:           eventstore
-version:        1.4.0
+version:        1.4.1
 synopsis:       EventStore TCP Client
-description:    EventStore TCP Client <https://eventstore.org>
+description:    EventStore TCP Client <https://eventstore.com>
 category:       Database
 homepage:       https://github.com/YoEight/eventstore
 author:         Yorick Laupa
