@@ -1,3 +1,7 @@
+1.4.1
+-----
+* Update EventStore website link in documentation.
+
 1.4.0
 -----
 * Internal: Refactor operation and registry tcp internals.
