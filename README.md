@@ -1,3 +1,6 @@
+# REPO HAS MOVED!
+## This client is now officiallly supported by EventStore Ltd. The code is now hosted here: https://github.com/EventStore/EventStoreDB-Client-Haskell
+
 EventStore Haskell TCP client
 =============================
 
